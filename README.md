@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> Repository archived. Contents have been transferred to a monorepo.
+> Head to [saphyr's repository](https://github.com/saphyr-rs/saphyr) for the monorepo, or [here](https://github.com/saphyr-rs/saphyr/tree/master/parser) for the parser subdirectory.
+
+
 # saphyr-parser
 
 [saphyr-parser](https://github.com/saphyr-rs/saphyr-parser) is a fully compliant YAML 1.2
