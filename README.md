@@ -1,8 +1,10 @@
 # granit-parser
 
-YAML is hard. Much more than I had anticipated. If you are exploring dark corners of YAML that yaml-rust2 supports but yaml-rust doesn't, I'm curious to know what it is. 
+> “YAML is hard. Much more than I had anticipated. If you are exploring dark corners of YAML ... I'm curious to know what it is.”
+>
+> — Ethiraric
 
-A YAML 1.2 parser in pure Rust with strict compliance and seamless integration with [`serde-saphyr`](https://crates.io/crates/serde-saphyr).
+granit-parser is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std, and seamless integration with [`serde-saphyr`](https://crates.io/crates/serde-saphyr).
 
 This crate started as a fork of [`saphyr-parser`](https://crates.io/crates/saphyr-parser) that descencds from [`yaml-rust`](https://github.com/chyh1990/yaml-rust), with influences from `libyaml` and `yaml-cpp`. The project has since diverged significantly and is now maintained as an independent project.
 
