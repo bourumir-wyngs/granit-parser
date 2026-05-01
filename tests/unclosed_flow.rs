@@ -77,19 +77,13 @@ fn first_error(input: &str) -> (String, usize) {
 #[test]
 fn mismatched_sequence_closed_by_mapping_brace_reports_mismatch() {
     let (err, index) = first_error("[}");
-    assert!(
-        err.contains("mismatched bracket"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(err, "mismatched bracket '[' closed by '}'");
     assert_eq!(index, 0);
 }
 
 #[test]
 fn mismatched_mapping_closed_by_sequence_bracket_reports_mismatch() {
     let (err, index) = first_error("{]");
-    assert!(
-        err.contains("mismatched bracket"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(err, "mismatched bracket '{' closed by ']'");
     assert_eq!(index, 0);
 }
