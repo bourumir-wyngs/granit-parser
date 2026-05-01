@@ -285,6 +285,66 @@ fn test_flow_sequence_empty_key_with_value() {
 }
 
 #[test]
+fn test_flow_mapping_quoted_key_colon_on_next_line() {
+    assert_eq!(
+        run_parser("{\"foo\"\n: \"bar\"}\n").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::MappingStart(0, None),
+            Event::Scalar("foo".into(), ScalarStyle::DoubleQuoted, 0, None),
+            Event::Scalar("bar".into(), ScalarStyle::DoubleQuoted, 0, None),
+            Event::MappingEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
+fn test_flow_mapping_plain_key_spans_line_break() {
+    assert_eq!(
+        run_parser("- { single line: value}\n- { multi\n  line: value}\n").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::SequenceStart(0, None),
+            Event::MappingStart(0, None),
+            Event::Scalar("single line".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::MappingStart(0, None),
+            Event::Scalar("multi line".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
+fn test_flow_mapping_key_and_colon_on_separate_lines() {
+    assert_eq!(
+        run_parser("k: {\n k\n :\n v\n }\n").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::MappingStart(0, None),
+            Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(0, None),
+            Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("v".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::MappingEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
 fn test_pr12() {
     assert_eq!(
         run_parser("---\n- |\n  a").unwrap(),

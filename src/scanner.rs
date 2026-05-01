@@ -1199,8 +1199,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn stale_simple_keys(&mut self) -> ScanResult {
         for sk in &mut self.simple_keys {
             if sk.possible
-                && (sk.mark.line < self.mark.line
-                    || sk.mark.index() + 1024 < self.mark.index())
+                // If not in a flow construct, simple keys cannot span multiple lines.
+                && self.flow_level == 0
+                && (sk.mark.line < self.mark.line || sk.mark.index() + 1024 < self.mark.index())
             {
                 if sk.required {
                     return Err(ScanError::new_str(self.mark, "simple key expect ':'"));
