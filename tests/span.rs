@@ -198,3 +198,19 @@ fn test_block_utf8() {
         ],
     );
 }
+
+#[test]
+fn test_flow_sequence_explicit_mapping_end_span_order() {
+    let input = "[? a: [b], ? c: &x d, ? e: !t f]";
+    let mut last_end = 0usize;
+
+    for parsed in Parser::new_from_str(input) {
+        let (_event, span) = parsed.unwrap();
+        let (_, end) = span_offsets(input, span.start, span.end);
+        assert!(
+            end >= last_end,
+            "event end span regressed: current end {end} < previous end {last_end}"
+        );
+        last_end = end;
+    }
+}

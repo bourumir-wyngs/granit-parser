@@ -7,7 +7,7 @@
 use crate::{
     input::{str::StrInput, BorrowedInput},
     scanner::{ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
-    BufferedInput, Marker,
+    BufferedInput,
 };
 
 use alloc::{
@@ -36,7 +36,7 @@ enum State {
     FlowSequenceEntry,
     FlowSequenceEntryMappingKey,
     FlowSequenceEntryMappingValue,
-    FlowSequenceEntryMappingEnd(Marker),
+    FlowSequenceEntryMappingEnd,
     FlowMappingFirstKey,
     FlowMappingKey,
     FlowMappingValue,
@@ -449,7 +449,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
             State::FlowSequenceEntryMappingKey
             | State::FlowSequenceEntryMappingValue
-            | State::FlowSequenceEntryMappingEnd(_) => {
+            | State::FlowSequenceEntryMappingEnd => {
                 "unexpected EOF while parsing an implicit flow mapping"
             }
             State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
@@ -648,7 +648,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
             State::FlowSequenceEntryMappingKey => self.flow_sequence_entry_mapping_key(),
             State::FlowSequenceEntryMappingValue => self.flow_sequence_entry_mapping_value(),
-            State::FlowSequenceEntryMappingEnd(mark) => self.flow_sequence_entry_mapping_end(mark),
+            State::FlowSequenceEntryMappingEnd => self.flow_sequence_entry_mapping_end(),
             State::FlowMappingEmptyValue => self.flow_mapping_value(true),
 
             /* impossible */
@@ -956,7 +956,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
                     State::FlowSequenceEntryMappingKey
                     | State::FlowSequenceEntryMappingValue
-                    | State::FlowSequenceEntryMappingEnd(_) => {
+                    | State::FlowSequenceEntryMappingEnd => {
                         "unexpected EOF while parsing an implicit flow mapping"
                     }
                     State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
@@ -1259,27 +1259,28 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.state = State::FlowSequenceEntryMappingValue;
                 let Token(span, ref tok) = *self.peek_token()?;
                 if matches!(tok, TokenType::FlowEntry | TokenType::FlowSequenceEnd) {
-                    self.state = State::FlowSequenceEntryMappingEnd(span.end);
+                    self.state = State::FlowSequenceEntryMappingEnd;
                     Ok((Event::empty_scalar(), span))
                 } else {
-                    self.push_state(State::FlowSequenceEntryMappingEnd(span.end));
+                    self.push_state(State::FlowSequenceEntryMappingEnd);
                     self.parse_node(false, false)
                 }
             }
             Token(mark, _) => {
-                self.state = State::FlowSequenceEntryMappingEnd(mark.end);
+                self.state = State::FlowSequenceEntryMappingEnd;
                 Ok((Event::empty_scalar(), mark))
             }
         }
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn flow_sequence_entry_mapping_end<'a>(&mut self, mark: Marker) -> ParseResult<'a>
+    fn flow_sequence_entry_mapping_end<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
     {
         self.state = State::FlowSequenceEntry;
-        Ok((Event::MappingEnd, Span::empty(mark)))
+        let Token(span, _) = *self.peek_token()?;
+        Ok((Event::MappingEnd, Span::empty(span.start)))
     }
 
     /// Resolve a tag from the handle and the suffix.
