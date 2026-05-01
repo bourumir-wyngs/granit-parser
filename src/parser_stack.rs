@@ -417,8 +417,11 @@ where
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
-        if self.current.is_some() {
-            return self.current.take().map(Ok);
+        if let Some(token) = self.current.take() {
+            if let Event::StreamEnd = token.0 {
+                self.stream_end_emitted = true;
+            }
+            return Some(Ok(token));
         }
         if self.stream_end_emitted {
             return None;

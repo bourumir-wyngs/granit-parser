@@ -8,12 +8,25 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
-    Event, Marker, Parser, ParserTrait, Span, SpannedEventReceiver, StrInput,
+    BorrowedInput, Event, Marker, Parser, ParserTrait, ScalarStyle, Span, SpannedEventReceiver,
+    StrInput,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
 
-fn collect_events<'a>(stack: &mut MyStack<'a>) -> Result<Vec<Event<'a>>, String> {
+fn test_span() -> Span {
+    Span::empty(Marker::new(0, 1, 0))
+}
+
+fn plain_scalar(value: &'static str, anchor_id: usize) -> Event<'static> {
+    Event::Scalar(value.into(), ScalarStyle::Plain, anchor_id, None)
+}
+
+fn collect_events<'a, I, T>(stack: &mut ParserStack<'a, I, T>) -> Result<Vec<Event<'a>>, String>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'a>,
+{
     let mut events = Vec::new();
     loop {
         match stack.next_event() {
@@ -29,6 +42,16 @@ fn collect_events<'a>(stack: &mut MyStack<'a>) -> Result<Vec<Event<'a>>, String>
         }
     }
     Ok(events)
+}
+
+fn find_anchor_id(events: &[Event], value: &str) -> Option<usize> {
+    events.iter().find_map(|event| {
+        if let Event::Scalar(scalar, _, anchor_id, _) = event {
+            (scalar.as_ref() == value).then_some(*anchor_id)
+        } else {
+            None
+        }
+    })
 }
 
 fn format_events(events: &[Event]) -> Vec<String> {
@@ -526,5 +549,215 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
             *id, 2,
             "Parent parser should not reuse anchor IDs after replay without anchors"
         );
+    }
+}
+
+#[test]
+fn replay_parser_peek_next_and_load_track_collection_anchors() {
+    let span = test_span();
+    let replay_events = vec![
+        (Event::StreamStart, span),
+        (Event::DocumentStart(false), span),
+        (Event::SequenceStart(4, None), span),
+        (Event::SequenceEnd, span),
+        (Event::MappingStart(7, None), span),
+        (Event::MappingEnd, span),
+        (Event::DocumentEnd, span),
+        (Event::StreamEnd, span),
+    ];
+    let mut replay = ReplayParser::new(replay_events, 1);
+
+    assert!(matches!(
+        replay.peek().unwrap().unwrap().0,
+        Event::StreamStart
+    ));
+    assert!(matches!(
+        replay.next_event().unwrap().unwrap().0,
+        Event::StreamStart
+    ));
+
+    let mut recv = TestReceiver { events: Vec::new() };
+    replay.load(&mut recv, true).unwrap();
+
+    assert_eq!(replay.get_anchor_offset(), 8);
+    assert_eq!(
+        format_events(&recv.events),
+        vec![
+            "DocStart",
+            "SeqStart",
+            "SeqEnd",
+            "MapStart",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
+fn replay_parser_load_single_stops_at_document_end() {
+    let span = test_span();
+    let replay_events = vec![
+        (Event::StreamStart, span),
+        (Event::DocumentStart(false), span),
+        (plain_scalar("first", 0), span),
+        (Event::DocumentEnd, span),
+        (Event::DocumentStart(false), span),
+        (plain_scalar("second", 0), span),
+        (Event::DocumentEnd, span),
+        (Event::StreamEnd, span),
+    ];
+    let mut replay = ReplayParser::new(replay_events, 1);
+    let mut recv = TestReceiver { events: Vec::new() };
+
+    replay.load(&mut recv, false).unwrap();
+
+    assert_eq!(
+        format_events(&recv.events),
+        vec!["StreamStart", "DocStart", "Scalar(first)", "DocEnd"]
+    );
+}
+
+#[test]
+fn default_empty_stack_peek_and_next_emit_stream_end_once() {
+    let mut stack: MyStack = ParserStack::default();
+
+    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(
+        stack.next_event().unwrap().unwrap().0,
+        Event::StreamEnd
+    ));
+    assert!(stack.next_event().is_none());
+}
+
+#[test]
+fn parser_stack_resolve_without_resolver_reports_error() {
+    let mut stack: MyStack = ParserStack::new();
+
+    let err = stack.resolve("missing").unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("No include resolver set for parser stack."));
+}
+
+#[test]
+fn iter_parser_inherits_anchor_offset_and_reports_stack() {
+    let mut stack: ParserStack<'static, alloc::vec::IntoIter<char>, StrInput<'static>> =
+        ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("k1: &a v1\nk3: &c v3"),
+        "parent".to_string(),
+    );
+
+    loop {
+        let ev = stack.next_event().unwrap().unwrap().0;
+        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+            break;
+        }
+    }
+    assert_eq!(stack.current_anchor_offset(), 2);
+
+    let iter = "k2: &b v2".chars().collect::<Vec<_>>().into_iter();
+    stack.push_iter_parser(Parser::new_from_iter(iter), "iter".to_string());
+
+    assert_eq!(
+        stack.stack(),
+        vec!["parent".to_string(), "iter".to_string()]
+    );
+    assert_eq!(stack.current_anchor_offset(), 2);
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(find_anchor_id(&events, "v2"), Some(2));
+    assert_eq!(find_anchor_id(&events, "v3"), Some(3));
+}
+
+#[test]
+fn custom_parser_inherits_anchor_offset_and_reports_stack() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("k1: &a v1\nk3: &c v3"),
+        "parent".to_string(),
+    );
+
+    loop {
+        let ev = stack.next_event().unwrap().unwrap().0;
+        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+            break;
+        }
+    }
+    assert_eq!(stack.current_anchor_offset(), 2);
+
+    stack.push_custom_parser(
+        Parser::new(StrInput::new("k2: &b v2")),
+        "custom".to_string(),
+    );
+
+    assert_eq!(
+        stack.stack(),
+        vec!["parent".to_string(), "custom".to_string()]
+    );
+    assert_eq!(stack.current_anchor_offset(), 2);
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(find_anchor_id(&events, "v2"), Some(2));
+    assert_eq!(find_anchor_id(&events, "v3"), Some(3));
+}
+
+#[test]
+fn custom_parser_with_current_primes_next_event() {
+    let mut stack: MyStack = ParserStack::new();
+    let span = test_span();
+    stack.push_custom_parser_with_current(
+        Parser::new(StrInput::new("k: v")),
+        "custom".to_string(),
+        (plain_scalar("primed", 0), span),
+    );
+
+    assert_eq!(stack.stack(), vec!["custom".to_string()]);
+
+    let (event, event_span) = stack.next_event().unwrap().unwrap();
+    assert_eq!(event, plain_scalar("primed", 0));
+    assert_eq!(event_span, span);
+}
+
+#[test]
+fn replay_parser_without_stream_end_is_popped_at_eof() {
+    let span = test_span();
+    let mut stack: MyStack = ParserStack::new();
+
+    stack.push_replay_parser(
+        ReplayParser::new(vec![(plain_scalar("only", 0), span)], 1),
+        "replay".to_string(),
+    );
+
+    assert!(matches!(
+        stack.next_event().unwrap().unwrap().0,
+        Event::Scalar(..)
+    ));
+    assert!(matches!(
+        stack.next_event().unwrap().unwrap().0,
+        Event::StreamEnd
+    ));
+    assert!(stack.next_event().is_none());
+}
+
+#[test]
+fn parser_stack_peek_surfaces_parse_error() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: [1, 2"), "bad".to_string());
+
+    loop {
+        match stack.peek() {
+            Some(Ok(_)) => {
+                stack.next_event().unwrap().unwrap();
+            }
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                break;
+            }
+            None => panic!("expected parse error before the stream ended"),
+        }
     }
 }
