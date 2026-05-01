@@ -1259,7 +1259,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 let Token(span, ref tok) = *self.peek_token()?;
                 if matches!(tok, TokenType::FlowEntry | TokenType::FlowSequenceEnd) {
                     self.state = State::FlowSequenceEntryMappingEnd;
-                    Ok((Event::empty_scalar(), span))
+                    Ok((Event::empty_scalar(), Span::empty(span.start)))
                 } else {
                     self.push_state(State::FlowSequenceEntryMappingEnd);
                     self.parse_node(false, false)
