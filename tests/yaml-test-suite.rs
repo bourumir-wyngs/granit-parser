@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     fs::{self, DirEntry},
+    path::Path,
     process::ExitCode,
 };
 
@@ -11,6 +12,8 @@ use granit_parser::{
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
+
+const YAML_TEST_SUITE_SRC: &str = "tests/yaml-test-suite/src";
 
 struct YamlTest {
     yaml_visual: String,
@@ -35,9 +38,9 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    if !std::path::Path::new("tests/yaml-test-suite").is_dir() {
+    if !Path::new(YAML_TEST_SUITE_SRC).is_dir() {
         eprintln!("===================================================================");
-        eprintln!("/!\\ yaml-test-suite directory not found, Skipping tests /!\\");
+        eprintln!("/!\\ yaml-test-suite/src directory not found, Skipping tests /!\\");
         eprintln!("If you intend to contribute to the library, restore the test suite.");
         eprintln!("===================================================================");
         return Ok(ExitCode::SUCCESS);
@@ -47,7 +50,7 @@ fn main() -> Result<ExitCode> {
     if arguments.test_threads.is_none() {
         arguments.test_threads = Some(1);
     }
-    let tests: Vec<Vec<_>> = std::fs::read_dir("tests/yaml-test-suite/src")?
+    let tests: Vec<Vec<_>> = fs::read_dir(YAML_TEST_SUITE_SRC)?
         .map(|entry| -> Result<_> {
             let entry = entry?;
             let tests = load_tests_from_file(&entry)?;
