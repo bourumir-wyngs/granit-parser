@@ -1054,7 +1054,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let span: Span = {
             match *self.peek_token()? {
                 Token(mark, TokenType::FlowMappingEnd) => mark,
-                Token(mark, _) => {
+                Token(_, _) => {
                     if !first {
                         match *self.peek_token()? {
                             Token(_, TokenType::FlowEntry) => self.skip(),
@@ -1090,7 +1090,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                         }
                     }
 
-                    mark
+                    match *self.peek_token()? {
+                        Token(mark, _) => mark,
+                    }
                 }
             }
         };
