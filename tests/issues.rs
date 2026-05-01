@@ -285,6 +285,64 @@ fn test_flow_sequence_empty_key_with_value() {
 }
 
 #[test]
+fn test_flow_sequence_empty_key_state_is_flow_scoped() {
+    assert_eq!(
+        run_parser("[ : [foo] ]").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::SequenceStart(0, None),
+            Event::MappingStart(0, None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::SequenceStart(0, None),
+            Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
+            Event::SequenceEnd,
+            Event::MappingEnd,
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+
+    assert_eq!(
+        run_parser("[ : {a: b} ]").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::SequenceStart(0, None),
+            Event::MappingStart(0, None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(0, None),
+            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::MappingEnd,
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+
+    assert_eq!(
+        run_parser("[{}, : foo]").unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            Event::SequenceStart(0, None),
+            Event::MappingStart(0, None),
+            Event::MappingEnd,
+            Event::MappingStart(0, None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
 fn test_flow_mapping_quoted_key_colon_on_next_line() {
     assert_eq!(
         run_parser("{\"foo\"\n: \"bar\"}\n").unwrap(),

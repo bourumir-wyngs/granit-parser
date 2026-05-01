@@ -536,13 +536,13 @@ pub struct Scanner<'input, T> {
     token_available: bool,
     /// Whether all characters encountered since the last newline were whitespace.
     leading_whitespace: bool,
-    /// Whether we started a flow mapping.
+    /// Whether we started a flow mapping at each flow nesting level.
     ///
     /// This is used to detect implicit flow mapping starts such as:
     /// ```yaml
     /// [ : foo ] # { null: "foo" }
     /// ```
-    flow_mapping_started: bool,
+    flow_mapping_started: smallvec::SmallVec<[bool; 8]>,
     /// An array of states, representing whether flow sequences have implicit mappings.
     ///
     /// When a flow mapping is possible (when encountering the first `[` or a `,` in a sequence),
@@ -877,7 +877,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             tokens_parsed: 0,
             token_available: false,
             leading_whitespace: true,
-            flow_mapping_started: false,
+            flow_mapping_started: smallvec::SmallVec::new(),
             implicit_flow_mapping_states: smallvec::SmallVec::new(),
             flow_markers: smallvec::SmallVec::new(),
             interrupted_plain_by_comment: None,
@@ -2103,8 +2103,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
 
         if tok == TokenType::FlowMappingStart {
-            self.flow_mapping_started = true;
+            self.flow_mapping_started.push(true);
         } else {
+            self.flow_mapping_started.push(false);
             self.implicit_flow_mapping_states
                 .push(ImplicitMappingState::Possible);
         }
@@ -2148,6 +2149,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // We are out exiting the flow sequence, nesting goes down 1 level.
             self.implicit_flow_mapping_states.pop();
         }
+        self.flow_mapping_started.pop();
 
         self.decrease_flow_level();
 
@@ -2177,6 +2179,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.allow_simple_key();
 
         self.end_implicit_mapping(self.mark, self.flow_level);
+        if self.current_flow_collection_is_sequence() {
+            self.set_current_flow_mapping_started(false);
+        }
 
         let start_mark = self.mark;
         self.skip_non_blank();
@@ -3300,7 +3305,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             );
         } else {
             // The scanner, upon emitting a `Key`, will prepend a `MappingStart` event.
-            self.flow_mapping_started = true;
+            self.set_current_flow_mapping_started(true);
         }
 
         self.remove_simple_key()?;
@@ -3359,8 +3364,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn fetch_value(&mut self) -> ScanResult {
         let sk = self.simple_keys.last().unwrap().clone();
         let start_mark = self.mark;
-        let is_implicit_flow_mapping =
-            !self.implicit_flow_mapping_states.is_empty() && !self.flow_mapping_started;
+        let is_implicit_flow_mapping = self.current_flow_collection_is_sequence()
+            && !self.current_flow_mapping_started()
+            && !self.implicit_flow_mapping_states.is_empty();
         if is_implicit_flow_mapping {
             *self.implicit_flow_mapping_states.last_mut().unwrap() =
                 ImplicitMappingState::Inside(self.flow_level);
@@ -3573,13 +3579,32 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     ///
     /// [`implicit_flow_mapping_states`]: Self::implicit_flow_mapping_states
     fn end_implicit_mapping(&mut self, mark: Marker, flow_level: u8) {
-        if let Some(implicit_mapping) = self.implicit_flow_mapping_states.last_mut() {
-            if *implicit_mapping == ImplicitMappingState::Inside(flow_level) {
-                self.flow_mapping_started = false;
-                *implicit_mapping = ImplicitMappingState::Possible;
-                self.tokens
-                    .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd));
-            }
+        if self
+            .implicit_flow_mapping_states
+            .last()
+            .is_some_and(|state| *state == ImplicitMappingState::Inside(flow_level))
+        {
+            *self.implicit_flow_mapping_states.last_mut().unwrap() =
+                ImplicitMappingState::Possible;
+            self.set_current_flow_mapping_started(false);
+            self.tokens
+                .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd));
+        }
+    }
+
+    fn current_flow_collection_is_sequence(&self) -> bool {
+        self.flow_markers
+            .last()
+            .is_some_and(|(_, bracket)| *bracket == '[')
+    }
+
+    fn current_flow_mapping_started(&self) -> bool {
+        self.flow_mapping_started.last().copied().unwrap_or(false)
+    }
+
+    fn set_current_flow_mapping_started(&mut self, started: bool) {
+        if let Some(current) = self.flow_mapping_started.last_mut() {
+            *current = started;
         }
     }
 }
