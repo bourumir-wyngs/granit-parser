@@ -681,6 +681,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             self.skip();
         }
 
+        // Anchors are scoped to a single document.
+        self.anchors.clear();
+
         match *self.peek_token()? {
             Token(span, TokenType::StreamEnd) => {
                 self.state = State::End;
@@ -1503,6 +1506,28 @@ bar
 
         let err = parser.next().unwrap().unwrap_err();
         assert!(format!("{err}").contains("the handle wasn't declared"));
+    }
+
+    #[test]
+    fn test_pull_parser_clears_anchors_between_documents() {
+        let mut parser = Parser::new_from_str("--- &a value
+--- *a
+");
+
+        for event in parser.by_ref() {
+            let (event, _) = event.unwrap();
+            if matches!(event, Event::DocumentEnd) {
+                break;
+            }
+        }
+
+        match parser.next().unwrap().unwrap().0 {
+            Event::DocumentStart(true) => {}
+            _ => panic!("expected explicit second document start"),
+        }
+
+        let err = parser.next().unwrap().unwrap_err();
+        assert!(format!("{err}").contains("unknown anchor"));
     }
 
     #[test]
