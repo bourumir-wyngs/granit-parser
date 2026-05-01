@@ -1,7 +1,6 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScalarStyle, ScanError};
+use granit_parser::{Event, Parser, ScalarStyle, ScanError};
 
 /// Run the parser through the string.
 ///

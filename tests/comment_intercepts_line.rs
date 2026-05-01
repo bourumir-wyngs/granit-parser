@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser};
+use granit_parser::{Event, Parser};
 
 /// Comment intercepting the multiline text is invalid YAML (case BS4K)
 #[test]

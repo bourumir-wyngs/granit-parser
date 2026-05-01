@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScanError};
+use granit_parser::{Event, Parser, ScanError};
 
 fn collect_scalars(input: &str) -> Result<Vec<String>, ScanError> {
     let mut out = Vec::new();

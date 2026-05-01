@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Parser, ScanError};
+use granit_parser::{Parser, ScanError};
 
 // ZYU8: Directive variants
 // In YAML 1.2, a directive name is any non\u{2011}space, non\u{2011}line\u{2011}break sequence of characters

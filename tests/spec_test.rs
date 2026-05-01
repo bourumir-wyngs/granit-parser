@@ -2,8 +2,7 @@
 #![allow(non_upper_case_globals)]
 extern crate granit_parser;
 
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, EventReceiver, Parser, ScalarStyle};
+use granit_parser::{Event, EventReceiver, Parser, ScalarStyle};
 
 // These names match the names used in the C++ test suite.
 #[allow(clippy::enum_variant_names)]

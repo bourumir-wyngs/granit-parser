@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScanError};
+use granit_parser::{Event, Parser, ScanError};
 
 const README: &str = include_str!("../README.md");
 

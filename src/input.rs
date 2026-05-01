@@ -454,7 +454,7 @@ pub trait Input {
     fn skip_while_non_breakz(&mut self) -> usize {
         let mut count = 0;
         while !is_breakz(self.look_ch()) {
-            count += self.peek().len_utf8();
+            count += 1;
             self.skip();
         }
         count

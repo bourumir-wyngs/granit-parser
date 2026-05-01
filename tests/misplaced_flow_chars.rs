@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScalarStyle};
+use granit_parser::{Event, Parser, ScalarStyle};
 
 #[test]
 fn misplaced_closing_bracket_at_col_0() {

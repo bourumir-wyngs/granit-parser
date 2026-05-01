@@ -481,3 +481,57 @@ fn test_replay_parser_updates_anchor_offset() {
         );
     }
 }
+
+#[test]
+fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("k1: &a v1\nk2: &b v2"),
+        "parent".to_string(),
+    );
+
+    loop {
+        let ev = stack.next_event().unwrap().unwrap().0;
+        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+            break;
+        }
+    }
+
+    let span = Span::empty(Marker::new(0, 1, 0));
+    let replay_events = vec![
+        (Event::StreamStart, span),
+        (Event::DocumentStart(false), span),
+        (Event::MappingStart(0, None), span),
+        (
+            Event::Scalar(
+                "included".into(),
+                granit_parser::ScalarStyle::Plain,
+                0,
+                None,
+            ),
+            span,
+        ),
+        (
+            Event::Scalar("value".into(), granit_parser::ScalarStyle::Plain, 0, None),
+            span,
+        ),
+        (Event::MappingEnd, span),
+        (Event::DocumentEnd, span),
+        (Event::StreamEnd, span),
+    ];
+
+    stack.push_replay_parser(ReplayParser::new(replay_events, 1), "replay".to_string());
+
+    let events = collect_events(&mut stack).unwrap();
+    let v2_ev = events
+        .iter()
+        .find(|e| matches!(e, Event::Scalar(v, _, _, _) if v.as_ref() == "v2"))
+        .unwrap();
+
+    if let Event::Scalar(_, _, id, _) = v2_ev {
+        assert_eq!(
+            *id, 2,
+            "Parent parser should not reuse anchor IDs after replay without anchors"
+        );
+    }
+}

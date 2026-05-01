@@ -1,12 +1,13 @@
 #![allow(unused_assignments)]
 
-use hashlink::LinkedHashMap;
-use miette::{bail, Diagnostic, NamedSource, Result, SourceSpan};
+use std::ops::Range;
+
+use granit_parser::{Event, Parser, ScanError, Span};
+use miette::{bail, miette, Diagnostic, NamedSource, Result, SourceSpan};
 use rustyline::{error::ReadlineError, DefaultEditor};
-use saphyr::{LoadableYamlNode, MarkedYaml};
 use thiserror::Error;
 
-/// A REPL to navigate a YAML document from the spans.
+/// A REPL to navigate a YAML document from the spans emitted by `granit-parser`.
 ///
 /// See [`read_action`] for commands.
 fn main() {
@@ -14,25 +15,21 @@ fn main() {
     match args.as_slice() {
         [_, filename] => {
             let contents = std::fs::read_to_string(filename).unwrap();
-            let yaml = MarkedYaml::load_from_str(&contents)
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap();
+            let yaml = load_first_document(&contents).unwrap();
             walk(&contents, &yaml);
         }
         _ => {
-            eprintln!("Usage: walker <file.yaml>");
+            eprintln!("Usage: walk <file.yaml>");
         }
     }
 }
 
-fn walk(contents: &str, yaml: &MarkedYaml<'_>) {
+fn walk(contents: &str, yaml: &WalkNode) {
     let mut stack = vec![];
     let mut io = DefaultEditor::new().unwrap();
     stack.push(yaml);
 
-    print(contents.to_string(), yaml);
+    print(contents, yaml);
 
     loop {
         let err = match read_action(&mut io) {
@@ -48,43 +45,182 @@ fn walk(contents: &str, yaml: &MarkedYaml<'_>) {
         match err {
             Ok(()) => {
                 io.clear_screen().unwrap();
-                print(contents.to_string(), stack.last().unwrap());
+                print(contents, stack.last().unwrap());
             }
             Err(e) => eprintln!("{e}"),
         }
     }
 }
 
-fn print(contents: String, yaml: &MarkedYaml<'_>) {
-    let range = yaml.span.start.index()..yaml.span.end.index();
+fn print(contents: &str, yaml: &WalkNode) {
+    let range = source_range(contents, yaml.span);
     eprintln!(
         "{:?}",
         miette::Error::new(FakeErr {
-            src: NamedSource::new("<input>", contents),
+            src: NamedSource::new("<input>", contents.to_owned()),
             span: range.into(),
         })
     );
 }
 
+fn load_first_document(contents: &str) -> Result<WalkNode> {
+    let mut parser = Parser::new_from_str(contents);
+
+    while let Some(event) = parser.next() {
+        let (event, span) = event.map_err(|err| miette!("{err}"))?;
+        match event {
+            Event::StreamStart => {}
+            Event::DocumentStart(_) => return load_document_node(&mut parser, span),
+            Event::StreamEnd => bail!("No YAML document found"),
+            event => return build_node(event, span, &mut parser),
+        }
+    }
+
+    bail!("No YAML document found")
+}
+
+fn load_document_node<'input>(
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+    document_span: Span,
+) -> Result<WalkNode> {
+    while let Some(event) = parser.next() {
+        let (event, span) = event.map_err(|err| miette!("{err}"))?;
+        match event {
+            Event::DocumentEnd | Event::StreamEnd => {
+                return Ok(WalkNode {
+                    span: Span::empty(document_span.end),
+                    data: WalkData::Scalar,
+                });
+            }
+            Event::StreamStart | Event::DocumentStart(_) => {}
+            event => return build_node(event, span, parser),
+        }
+    }
+
+    bail!("Document ended before a node was emitted")
+}
+
+fn build_node<'input>(
+    event: Event<'input>,
+    span: Span,
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+) -> Result<WalkNode> {
+    match event {
+        Event::Scalar(..) | Event::Alias(..) => Ok(WalkNode {
+            span,
+            data: WalkData::Scalar,
+        }),
+        Event::SequenceStart(..) => build_sequence(span, parser),
+        Event::MappingStart(..) => build_mapping(span, parser),
+        Event::Nothing => bail!("Unexpected internal parser event"),
+        Event::StreamStart
+        | Event::StreamEnd
+        | Event::DocumentStart(_)
+        | Event::DocumentEnd
+        | Event::SequenceEnd
+        | Event::MappingEnd => bail!("Unexpected event while building node: {event:?}"),
+    }
+}
+
+fn build_sequence<'input>(
+    start_span: Span,
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+) -> Result<WalkNode> {
+    let mut items = Vec::new();
+
+    loop {
+        let (event, span) = next_event(parser)?;
+        if matches!(event, Event::SequenceEnd) {
+            return Ok(WalkNode {
+                span: span_from_bounds(start_span, span),
+                data: WalkData::Sequence(items),
+            });
+        }
+        if matches!(event, Event::DocumentEnd | Event::StreamEnd) {
+            bail!("Sequence ended before SequenceEnd was emitted");
+        }
+        items.push(build_node(event, span, parser)?);
+    }
+}
+
+fn build_mapping<'input>(
+    start_span: Span,
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+) -> Result<WalkNode> {
+    let mut items = Vec::new();
+
+    loop {
+        let (event, span) = next_event(parser)?;
+        if matches!(event, Event::MappingEnd) {
+            return Ok(WalkNode {
+                span: span_from_bounds(start_span, span),
+                data: WalkData::Mapping(items),
+            });
+        }
+        if matches!(event, Event::DocumentEnd | Event::StreamEnd) {
+            bail!("Mapping ended before MappingEnd was emitted");
+        }
+
+        let key = build_node(event, span, parser)?;
+        let (event, span) = next_event(parser)?;
+        if matches!(
+            event,
+            Event::MappingEnd | Event::DocumentEnd | Event::StreamEnd
+        ) {
+            bail!("Mapping key was not followed by a value");
+        }
+        let value = build_node(event, span, parser)?;
+        items.push((key, value));
+    }
+}
+
+fn next_event<'input>(
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+) -> Result<(Event<'input>, Span)> {
+    match parser.next() {
+        Some(Ok(event)) => Ok(event),
+        Some(Err(err)) => Err(miette!("{err}")),
+        None => bail!("Unexpected end of parser event stream"),
+    }
+}
+
+fn span_from_bounds(start: Span, end: Span) -> Span {
+    Span::new(start.start, end.end)
+}
+
+fn source_range(contents: &str, span: Span) -> Range<usize> {
+    span.byte_range().unwrap_or_else(|| {
+        char_to_byte_index(contents, span.start.index())
+            ..char_to_byte_index(contents, span.end.index())
+    })
+}
+
+fn char_to_byte_index(contents: &str, char_index: usize) -> usize {
+    contents
+        .char_indices()
+        .nth(char_index)
+        .map_or(contents.len(), |(byte_index, _)| byte_index)
+}
+
 fn step_in(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
-        saphyr::YamlData::Sequence(seq) => do_step_in_seq(stack, seq)?,
-        saphyr::YamlData::Mapping(map) => do_step_in_value(stack, map)?,
-        _ => bail!("Not in a mapping or a sequence"),
+        WalkData::Sequence(seq) => do_step_in_seq(stack, seq)?,
+        WalkData::Mapping(map) => do_step_in_value(stack, map)?,
+        WalkData::Scalar => bail!("Not in a mapping or a sequence"),
     }
     Ok(())
 }
 
 fn step_in_key(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
-        saphyr::YamlData::Mapping(map) => do_step_in_key(stack, map),
+        WalkData::Mapping(map) => do_step_in_key(stack, map),
         _ => bail!("Not in a mapping"),
     }
 }
 
 fn step_in_value(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
-        saphyr::YamlData::Mapping(map) => do_step_in_value(stack, map),
+        WalkData::Mapping(map) => do_step_in_value(stack, map),
         _ => bail!("Not in a mapping"),
     }
 }
@@ -99,18 +235,18 @@ fn next(stack: &mut Stack<'_>) -> Result<()> {
     pos.idx += 1;
 
     match &parent.data {
-        saphyr::YamlData::Sequence(seq) => {
+        WalkData::Sequence(seq) => {
             if pos.idx == seq.len() {
                 bail!("Reached end of the sequence");
             } else {
                 stack.push(&seq[pos.idx]);
             }
         }
-        saphyr::YamlData::Mapping(map) => {
+        WalkData::Mapping(map) => {
             if pos.idx == map.len() {
                 bail!("Reached end of the map");
             } else {
-                let (key, value) = map.iter().nth(pos.idx).unwrap();
+                let (key, value) = &map[pos.idx];
                 if pos.kvtype == KVType::Key {
                     stack.push(key);
                 } else {
@@ -118,7 +254,7 @@ fn next(stack: &mut Stack<'_>) -> Result<()> {
                 }
             }
         }
-        _ => unreachable!(),
+        WalkData::Scalar => unreachable!(),
     }
     Ok(())
 }
@@ -136,18 +272,18 @@ fn prev(stack: &mut Stack<'_>) -> Result<()> {
     pos.idx -= 1;
 
     match &parent.data {
-        saphyr::YamlData::Sequence(seq) => {
+        WalkData::Sequence(seq) => {
             stack.push(&seq[pos.idx]);
         }
-        saphyr::YamlData::Mapping(map) => {
-            let (key, value) = map.iter().nth(pos.idx).unwrap();
+        WalkData::Mapping(map) => {
+            let (key, value) = &map[pos.idx];
             if pos.kvtype == KVType::Key {
                 stack.push(key);
             } else {
                 stack.push(value);
             }
         }
-        _ => unreachable!(),
+        WalkData::Scalar => unreachable!(),
     }
     Ok(())
 }
@@ -161,7 +297,7 @@ fn fin(stack: &mut Stack<'_>) -> Result<()> {
     }
 }
 
-fn do_step_in_seq<'a>(stack: &mut Stack<'a>, seq: &'a YamlSeq<'a>) -> Result<()> {
+fn do_step_in_seq<'a>(stack: &mut Stack<'a>, seq: &'a YamlSeq) -> Result<()> {
     if seq.is_empty() {
         bail!("Sequence is empty");
     } else {
@@ -170,27 +306,38 @@ fn do_step_in_seq<'a>(stack: &mut Stack<'a>, seq: &'a YamlSeq<'a>) -> Result<()>
     }
 }
 
-fn do_step_in_key<'a>(stack: &mut Stack<'a>, map: &'a YamlMap<'a>) -> Result<()> {
-    if let Some(node) = map.keys().next() {
-        stack.push(node);
+fn do_step_in_key<'a>(stack: &mut Stack<'a>, map: &'a YamlMap) -> Result<()> {
+    if let Some((key, _)) = map.first() {
+        stack.push(key);
         Ok(())
     } else {
         bail!("Mapping is empty");
     }
 }
 
-fn do_step_in_value<'a>(stack: &mut Stack<'a>, map: &'a YamlMap<'a>) -> Result<()> {
-    if let Some(node) = map.values().next() {
-        stack.push(node);
+fn do_step_in_value<'a>(stack: &mut Stack<'a>, map: &'a YamlMap) -> Result<()> {
+    if let Some((_, value)) = map.first() {
+        stack.push(value);
         Ok(())
     } else {
         bail!("Mapping is empty");
     }
 }
 
-type Stack<'a> = Vec<&'a MarkedYaml<'a>>;
-type YamlMap<'a> = LinkedHashMap<MarkedYaml<'a>, MarkedYaml<'a>>;
-type YamlSeq<'a> = Vec<MarkedYaml<'a>>;
+type Stack<'a> = Vec<&'a WalkNode>;
+type YamlMap = Vec<(WalkNode, WalkNode)>;
+type YamlSeq = Vec<WalkNode>;
+
+struct WalkNode {
+    span: Span,
+    data: WalkData,
+}
+
+enum WalkData {
+    Scalar,
+    Sequence(YamlSeq),
+    Mapping(YamlMap),
+}
 
 #[derive(Error, Debug, Diagnostic)]
 #[error("")]
@@ -213,35 +360,34 @@ enum KVType {
     Value,
 }
 
-fn pos_in_parent<'a>(node: &'a MarkedYaml<'a>, parent: &'a MarkedYaml<'a>) -> PositionInParent {
-    let span = node.span;
+fn pos_in_parent<'a>(node: &'a WalkNode, parent: &'a WalkNode) -> PositionInParent {
     let mut pos = PositionInParent {
         idx: 0,
         kvtype: KVType::Key,
     };
     match &parent.data {
-        saphyr::YamlData::Sequence(seq) => {
+        WalkData::Sequence(seq) => {
             for (idx, sibling) in seq.iter().enumerate() {
-                if sibling.span == span {
+                if core::ptr::eq(sibling, node) {
                     pos.idx = idx;
                     return pos;
                 }
             }
             unreachable!();
         }
-        saphyr::YamlData::Mapping(map) => {
+        WalkData::Mapping(map) => {
             for (idx, (key, value)) in map.iter().enumerate() {
                 pos.idx = idx;
-                if key.span == span {
+                if core::ptr::eq(key, node) {
                     return pos;
-                } else if value.span == span {
+                } else if core::ptr::eq(value, node) {
                     pos.kvtype = KVType::Value;
                     return pos;
                 }
             }
             unreachable!();
         }
-        _ => unreachable!(),
+        WalkData::Scalar => unreachable!(),
     }
 }
 

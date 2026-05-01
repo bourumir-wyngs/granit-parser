@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScanError, Span};
+use granit_parser::{Event, Parser, ScanError, Span};
 
 /// Run the parser through the string.
 ///

@@ -152,6 +152,13 @@ where
 }
 
 /// A parser implementation that utilizes a stack for parsing.
+///
+/// Note: `ParserStack` deliberately suppresses nested [`Event::StreamStart`] /
+/// [`Event::DocumentStart`] events when more than one parser is stacked, and the tests assert
+/// outputs where a nested parser starts directly with [`Event::MappingStart`] before the parent
+/// stream/document wrapper appears.
+///
+/// That is exactly what we want for `!include`-style subtree injection.
 pub struct ParserStack<'input, I = core::iter::Empty<char>, T = StrInput<'input>>
 where
     I: Iterator<Item = char>,
@@ -205,10 +212,10 @@ where
                 events.push(event?);
             }
 
-            self.parsers.push(AnyParser::Replay {
-                parser: ReplayParser::new(events, parser.get_anchor_offset()),
-                name: include_str.into(),
-            });
+            self.push_replay_parser(
+                ReplayParser::new(events, parser.get_anchor_offset()),
+                include_str.into(),
+            );
             Ok(())
         } else {
             Err(ScanError::new(
@@ -247,7 +254,12 @@ where
     }
 
     /// Pushes a replay parser onto the stack.
-    pub fn push_replay_parser(&mut self, parser: ReplayParser<'input>, name: String) {
+    pub fn push_replay_parser(&mut self, mut parser: ReplayParser<'input>, name: String) {
+        if let Some(parent) = self.parsers.last() {
+            let inherited = parent.get_anchor_offset();
+            parser.set_anchor_offset(parser.get_anchor_offset().max(inherited));
+        }
+
         self.parsers.push(AnyParser::Replay { parser, name });
     }
 
@@ -285,6 +297,13 @@ where
             .collect()
     }
 
+    fn propagate_anchor_offset_from_popped(&mut self, popped: &AnyParser<'input, I, T>) {
+        if let Some(parent) = self.parsers.last_mut() {
+            let next_offset = parent.get_anchor_offset().max(popped.get_anchor_offset());
+            parent.set_anchor_offset(next_offset);
+        }
+    }
+
     fn next_event_impl(&mut self) -> Result<(Event<'input>, Span), ScanError> {
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
@@ -308,9 +327,7 @@ where
                         return Ok((Event::StreamEnd, span));
                     }
                     let popped = self.parsers.pop().unwrap();
-                    if let Some(parent) = self.parsers.last_mut() {
-                        parent.set_anchor_offset(popped.get_anchor_offset());
-                    }
+                    self.propagate_anchor_offset_from_popped(&popped);
                 }
                 None => {
                     if self.parsers.len() == 1 {
@@ -321,15 +338,11 @@ where
                         ));
                     }
                     let popped = self.parsers.pop().unwrap();
-                    if let Some(parent) = self.parsers.last_mut() {
-                        parent.set_anchor_offset(popped.get_anchor_offset());
-                    }
+                    self.propagate_anchor_offset_from_popped(&popped);
                 }
                 Some(Err(e)) => {
                     let popped = self.parsers.pop().unwrap();
-                    if let Some(parent) = self.parsers.last_mut() {
-                        parent.set_anchor_offset(popped.get_anchor_offset());
-                    }
+                    self.propagate_anchor_offset_from_popped(&popped);
                     return Err(e);
                 }
                 Some(Ok((Event::DocumentEnd, span))) => {
@@ -348,9 +361,7 @@ where
                     match peek_res {
                         Some(Ok((Event::StreamEnd, _))) | None => {
                             let popped = self.parsers.pop().unwrap();
-                            if let Some(parent) = self.parsers.last_mut() {
-                                parent.set_anchor_offset(popped.get_anchor_offset());
-                            }
+                            self.propagate_anchor_offset_from_popped(&popped);
                         }
                         _ => {
                             return Err(ScanError::new_str(

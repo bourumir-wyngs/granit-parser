@@ -1,6 +1,5 @@
 use core::str;
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScanError};
+use granit_parser::{Event, Parser, ScanError};
 
 /// Run the parser through the string.
 ///

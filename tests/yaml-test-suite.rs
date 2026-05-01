@@ -6,8 +6,7 @@ use std::{
 
 use libtest_mimic::{run, Arguments, Failed, Trial};
 
-use granit_parser as saphyr_parser;
-use saphyr_parser::{
+use granit_parser::{
     Event, Marker, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
 };
 

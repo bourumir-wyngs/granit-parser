@@ -127,7 +127,7 @@ impl Display for Tag {
         if self.handle == "!" {
             write!(f, "!{}", self.suffix)
         } else {
-            write!(f, "{}!{}", self.handle, self.suffix)
+            write!(f, "{}{}", self.handle, self.suffix)
         }
     }
 }
@@ -1412,9 +1412,19 @@ impl<'input, T: BorrowedInput<'input>> Iterator for Parser<'input, T> {
 
 #[cfg(test)]
 mod test {
-    use alloc::vec::Vec;
+    use alloc::{borrow::ToOwned, string::ToString, vec::Vec};
 
-    use super::{Event, EventReceiver, Parser};
+    use super::{Event, EventReceiver, Parser, Tag};
+
+    #[test]
+    fn display_resolved_core_tag_without_extra_bang() {
+        let tag = Tag {
+            handle: "tag:yaml.org,2002:".to_owned(),
+            suffix: "str".to_owned(),
+        };
+
+        assert_eq!(tag.to_string(), "tag:yaml.org,2002:str");
+    }
 
     #[test]
     fn test_peek_eq_parse() {

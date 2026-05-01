@@ -1,6 +1,5 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, Span, SpannedEventReceiver};
+use granit_parser::{Event, Parser, Span, SpannedEventReceiver};
 use std::{env, fs::File, io::prelude::*};
 
 /// A sink which discards any event sent.
@@ -47,7 +46,7 @@ fn main() {
     let percentile95 = sorted_times[((95 * iterations) / 100) as usize];
 
     if output_yaml {
-        println!("parser: yaml-rust2");
+        println!("parser: granit-parser");
         println!("input: {}", args[1]);
         println!("average: {avg}");
         println!("min: {min}");

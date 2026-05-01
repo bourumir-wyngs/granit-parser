@@ -1,5 +1,4 @@
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScalarStyle, ScanError};
+use granit_parser::{Event, Parser, ScalarStyle, ScanError};
 
 // Regression guards for StrInput::next_can_be_plain_scalar simplification.
 // YAML 1.2 7.3.3: indicator characters can end a plain scalar in certain positions.

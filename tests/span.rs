@@ -1,7 +1,6 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser as saphyr_parser;
-use saphyr_parser::{Event, Parser, ScanError};
+use granit_parser::{Event, Marker, Parser, ScanError};
 
 fn char_index_to_byte_index(s: &str, char_index: usize) -> usize {
     if char_index == 0 {
@@ -13,11 +12,7 @@ fn char_index_to_byte_index(s: &str, char_index: usize) -> usize {
         .unwrap_or_else(|| s.len())
 }
 
-fn span_offsets(
-    input: &str,
-    start: saphyr_parser::Marker,
-    end: saphyr_parser::Marker,
-) -> (usize, usize) {
+fn span_offsets(input: &str, start: Marker, end: Marker) -> (usize, usize) {
     let start_b = start
         .byte_offset()
         .unwrap_or_else(|| char_index_to_byte_index(input, start.index()));

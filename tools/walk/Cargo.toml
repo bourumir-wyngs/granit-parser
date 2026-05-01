@@ -1,29 +1,31 @@
 [package]
 name = "walk"
-readme = "README.md"
 authors = [
+  # Provided versions up to 0.0.6 inclusive
   "Ethiraric <ethiraric@gmail.com>",
   "David Aguilar <davvid@gmail.com>",
-  "Yuheng Chen <yuhengchen@sensetime.com>"
+  "Yuheng Chen <yuhengchen@sensetime.com>",
+
+  # Later versions
+  "Bourumir Wyngs <bourumir-wyngs@gmail.com>"
 ]
 categories = [ "encoding", "parser-implementations" ]
-description = "A fully YAML 1.2 compliant YAML library"
-documentation = "https://docs.rs/saphyr"
+description = "A span navigation tool for granit-parser"
+documentation = "https://docs.rs/granit-parser/latest/granit_parser"
 edition = "2021"
-keywords = [ "yaml", "parser" ]
+keywords = [ "yaml", "parser", "spans" ]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/saphyr-rs/saphyr"
+repository = "https://github.com/bourumir-wyngs/granit-parser"
 rust-version = "1.81.0"
-version = "0.0.6"
+version = "0.0.1"
 
 [features]
 debug_prints = []
 
 [dependencies]
-hashlink = "0.10"
+granit-parser = { path = "../.." }
 miette = { version = "7.5.0", features = ["fancy"] }
 rustyline = "17.0.2"
-saphyr = "0.0.6"
 thiserror = { version = ">= 2.0.15, <= 2.0.18", default-features = false }
 
 [lints.rust]

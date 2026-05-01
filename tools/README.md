@@ -1,16 +1,16 @@
 # `granit-parser` tools
 This directory contains tools that are used to develop the crate.
-Due to dependency management, only some of them are available as binaries from the `saphyr-parser` crate.
+Due to dependency management, only some of them are available as binaries from the root `granit-parser` crate.
 
 | Tool | Invocation |
 |------|------------|
 | `dump_events` | `cargo run --bin dump_events -- [...]` |
-| `run_bench` | `cargo run --bin run_bench -- [...]` |
-| `time_parse` | `cargo run --bin time_parse -- [...]` |
-| `walk` | `cargo run --bin walk -- [...]` |
+| `run_parser` | `cargo run --bin run_parser -- [...]` |
+| `time_parser` | `cargo run --bin time_parser -- [...]` |
+| `walk` | `cargo run --manifest-path tools/walk/Cargo.toml -- [...]` |
 
 ## `dump_events`
-This is a debugging helper for the parser. It outputs events emitted by the parser for a given file. This can be paired with the `SAPHYR_DEBUG` environment variable to have an in-depth overview of which steps the scanner and the parser are taking.
+This is a debugging helper for the parser. It outputs events emitted by the parser for a given file.
 
 ### Example
 Consider the following `input.yaml` YAML file:
@@ -158,23 +158,23 @@ Parser state: DocumentStart
 
 While this cannot be shown in Markdown, the output is colored so that it is a bit easier to read.
 
-## `run_bench`
+## `run_parser`
 This is a benchmarking helper that runs the parser on the given file a given number of times and is able to extract simple metrics out of the results. The `--output-yaml` flag can be specified to make the output a YAML file that can be fed into other tools.
 
 This binary is made to be used by `bench_compare`.
 
-Synopsis: `run_bench input.yaml <iterations> [--output-yaml]`
+Synopsis: `run_parser input.yaml <iterations> [--output-yaml]`
 
 ### Examples
 ```sh
-$> cargo run --release --bin run_bench -- bench_yaml/big.yaml 10
+$> cargo run --release --bin run_parser -- bench_yaml/big.yaml 10
 Average: 1.631936191s
 Min: 1.629654651s
 Max: 1.633045284s
 95%: 1.633045284s
 
-$> cargo run --release --bin run_bench -- bench_yaml/big.yaml 10 --output-yaml
-parser: saphyr
+$> cargo run --release --bin run_parser -- bench_yaml/big.yaml 10 --output-yaml
+parser: granit-parser
 input: bench_yaml/big.yaml
 average: 1649847674
 min: 1648277149
@@ -194,25 +194,25 @@ times:
   - 1651936305
 ```
 
-## `time_parse`
+## `time_parser`
 This is a benchmarking helper that times how long it takes for the parser to emit all events. It calls the parser on the given input file, receives parsing events and then immediately discards them. It is advised to run this tool with `--release`.
 
 ### Examples
 Loading a small file could output the following:
 ```sh
-$> cargo run --release --bin time_parse -- input.yaml
+$> cargo run --release --bin time_parser -- input.yaml
 Loaded 0MiB in 14.189µs
 ```
 
 While loading a larger file could output the following:
 ```sh
-$> cargo run --release --bin time_parse -- bench_yaml/big.yaml
+$> cargo run --release --bin time_parser -- bench_yaml/big.yaml
 Loaded 220MiB in 1.612677853s
 ```
 
 ## `walk`
 A simple REPL to visualize spans of a YAML file.
 
-Synopsis: `walk input.yaml`
+Synopsis: `cargo run --manifest-path tools/walk/Cargo.toml -- input.yaml`
 
 For commands, refer to `read_action` in `walk.rs`.

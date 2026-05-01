@@ -6,7 +6,7 @@ authors = [
 ]
 license = "MIT OR Apache-2.0"
 description = "A helper to generate large YAML files"
-repository = "https://github.com/Ethiraric/yaml-rust2"
+repository = "https://github.com/bourumir-wyngs/granit-parser"
 readme = "README.md"
 edition = "2018"
 
