@@ -89,6 +89,6 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: bourumir-wyngs/serde-saphyr
+          slug: bourumir-wyngs/granit-parser
           files: lcov.info
           fail_ci_if_error: true
