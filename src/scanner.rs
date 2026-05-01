@@ -2422,10 +2422,27 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if self.mark.col < indent && (self.mark.col as isize) > self.indent {
-            return Err(ScanError::new_str(
-                self.mark,
-                "wrongly indented line in block scalar",
-            ));
+            if self.indent < 0 && self.mark.col == 0 {
+                self.input.lookahead(4);
+                if self.input.next_is_document_start()
+                    || self.input.next_is_document_end()
+                    || self.input.peek() == '#'
+                {
+                    // At the root level, an explicit indentation indicator can still yield an
+                    // empty scalar when the next line is a document marker or comment.
+                    // In this case, the scalar is terminated rather than under-indented.
+                } else {
+                    return Err(ScanError::new_str(
+                        self.mark,
+                        "wrongly indented line in block scalar",
+                    ));
+                }
+            } else {
+                return Err(ScanError::new_str(
+                    self.mark,
+                    "wrongly indented line in block scalar",
+                ));
+            }
         }
 
         let mut line_buffer = String::with_capacity(100);
