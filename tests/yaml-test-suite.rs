@@ -1,10 +1,13 @@
-use std::fs::{self, DirEntry};
+use std::{
+    borrow::Cow,
+    fs::{self, DirEntry},
+    process::ExitCode,
+};
 
-use libtest_mimic::{run_tests, Arguments, Outcome, Test};
+use libtest_mimic::{run, Arguments, Failed, Trial};
 
-use saphyr::{yaml, Yaml, YamlLoader};
-use saphyr_parser::{
-    Event, Marker, Parser, ScanError, Span, SpannedEventReceiver, TScalarStyle, Tag,
+use granit_parser::{
+    Event, Marker, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -16,10 +19,33 @@ struct YamlTest {
     expected_error: bool,
 }
 
-fn main() -> Result<()> {
+#[derive(Default)]
+struct RawYamlTest {
+    yaml_visual: Option<String>,
+    expected_events: Option<String>,
+    expected_error: Option<bool>,
+    skip: Option<bool>,
+}
+
+fn main() -> Result<ExitCode> {
+    if cfg!(miri) {
+        eprintln!("========================================================");
+        eprintln!("/!\\ yaml-test-suite is skipped under Miri isolation /!\\");
+        eprintln!("========================================================");
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    if !std::path::Path::new("tests/yaml-test-suite").is_dir() {
+        eprintln!("===================================================================");
+        eprintln!("/!\\ yaml-test-suite directory not found, Skipping tests /!\\");
+        eprintln!("If you intend to contribute to the library, restore the test suite.");
+        eprintln!("===================================================================");
+        return Ok(ExitCode::SUCCESS);
+    }
+
     let mut arguments = Arguments::from_args();
-    if arguments.num_threads.is_none() {
-        arguments.num_threads = Some(1);
+    if arguments.test_threads.is_none() {
+        arguments.test_threads = Some(1);
     }
     let tests: Vec<Vec<_>> = std::fs::read_dir("tests/yaml-test-suite/src")?
         .map(|entry| -> Result<_> {
@@ -29,17 +55,17 @@ fn main() -> Result<()> {
         })
         .collect::<Result<_>>()?;
     let mut tests: Vec<_> = tests.into_iter().flatten().collect();
-    tests.sort_by_key(|t| t.name.clone());
+    tests.sort_by(|a, b| a.name().cmp(b.name()));
 
-    run_tests(&arguments, tests, run_yaml_test).exit();
+    Ok(run(&arguments, tests).exit_code())
 }
 
-fn run_yaml_test(test: &Test<YamlTest>) -> Outcome {
-    let desc = &test.data;
-    let reporter = parse_to_events(&desc.yaml);
+#[allow(clippy::needless_pass_by_value)]
+fn run_yaml_test(data: YamlTest) -> Result<(), Failed> {
+    let reporter = parse_to_events(&data.yaml);
     let actual_events = reporter.as_ref().map(|reporter| &reporter.events);
-    let events_diff = actual_events.map(|events| events_differ(events, &desc.expected_events));
-    let error_text = match (&events_diff, desc.expected_error) {
+    let events_diff = actual_events.map(|events| events_differ(events, &data.expected_events));
+    let error_text = match (&events_diff, data.expected_error) {
         (Ok(x), true) => Some(format!("no error when expected: {x:#?}")),
         (Err(_), true) | (Ok(None), false) => None,
         (Err(e), false) => Some(format!("unexpected error {e:?}")),
@@ -47,17 +73,17 @@ fn run_yaml_test(test: &Test<YamlTest>) -> Outcome {
     };
 
     if let Some(mut txt) = error_text {
-        add_error_context(&mut txt, desc, events_diff.err().map(|e| e.marker()));
-        Outcome::Failed { msg: Some(txt) }
+        add_error_context(&mut txt, &data, events_diff.err().map(ScanError::marker));
+        Err(txt.into())
     } else if let Some((mut msg, span)) = reporter
         .as_ref()
         .ok()
         .and_then(|reporter| reporter.span_failures.first().cloned())
     {
-        add_error_context(&mut msg, desc, Some(&span.start));
-        Outcome::Failed { msg: Some(msg) }
+        add_error_context(&mut msg, &data, Some(&span.start));
+        Err(msg.into())
     } else {
-        Outcome::Passed
+        Ok(())
     }
 }
 
@@ -85,56 +111,233 @@ fn add_error_context(text: &mut String, desc: &YamlTest, marker: Option<&Marker>
     }
 }
 
-fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Test<YamlTest>>> {
+fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Trial>> {
     let file_name = entry.file_name().to_string_lossy().to_string();
     let test_name = file_name
         .strip_suffix(".yaml")
         .ok_or("unexpected filename")?;
-    let tests = YamlLoader::load_from_str(&fs::read_to_string(entry.path())?)?;
-    let tests = tests[0].as_vec().ok_or("no test list found in file")?;
+    let tests = parse_yaml_suite_file(&fs::read_to_string(entry.path())?)
+        .map_err(|e| format!("While reading {file_name}: {e}"))?;
+    let test_count = tests.len();
 
     let mut result = vec![];
-    let mut current_test = yaml::Hash::new();
-    for (idx, test_data) in tests.iter().enumerate() {
-        let name = if tests.len() > 1 {
+    let mut current_test = RawYamlTest::default();
+    for (idx, test_data) in tests.into_iter().enumerate() {
+        let name = if test_count > 1 {
             format!("{test_name}-{idx:02}")
         } else {
             test_name.to_string()
         };
 
         // Test fields except `fail` are "inherited"
-        let test_data = test_data.as_hash().unwrap();
-        current_test.remove(&Yaml::String("fail".into()));
-        for (key, value) in test_data.clone() {
-            current_test.insert(key, value);
+        current_test.expected_error = None;
+        if test_data.yaml_visual.is_some() {
+            current_test.yaml_visual = test_data.yaml_visual;
+        }
+        if test_data.expected_events.is_some() {
+            current_test.expected_events = test_data.expected_events;
+        }
+        if test_data.expected_error.is_some() {
+            current_test.expected_error = test_data.expected_error;
+        }
+        if test_data.skip.is_some() {
+            current_test.skip = test_data.skip;
         }
 
-        let current_test = Yaml::Hash(current_test.clone()); // Much better indexing
-
-        if current_test["skip"] != Yaml::BadValue {
+        if current_test.skip == Some(true) {
             continue;
         }
 
-        result.push(Test {
-            name,
-            kind: String::new(),
-            is_ignored: false,
-            is_bench: false,
-            data: YamlTest {
-                yaml_visual: current_test["yaml"].as_str().unwrap().to_string(),
-                yaml: visual_to_raw(current_test["yaml"].as_str().unwrap()),
-                expected_events: visual_to_raw(current_test["tree"].as_str().unwrap()),
-                expected_error: current_test["fail"].as_bool() == Some(true),
-            },
-        });
+        let yaml_visual = current_test
+            .yaml_visual
+            .clone()
+            .ok_or_else(|| format!("{name}: missing yaml field"))?;
+        let expected_events = current_test
+            .expected_events
+            .clone()
+            .ok_or_else(|| format!("{name}: missing tree field"))?;
+        let expected_error = current_test.expected_error == Some(true);
+
+        result.push(Trial::test(name, move || {
+            run_yaml_test(YamlTest {
+                yaml: visual_to_raw(&yaml_visual),
+                expected_events: visual_to_raw(&expected_events),
+                yaml_visual,
+                expected_error,
+            })
+        }));
     }
     Ok(result)
 }
 
-fn parse_to_events(source: &str) -> Result<EventReporter, ScanError> {
-    let mut reporter = EventReporter::default();
+fn parse_yaml_suite_file(source: &str) -> Result<Vec<RawYamlTest>> {
+    let lines: Vec<_> = source.lines().collect();
+    let mut tests = Vec::new();
+    let mut current = None;
+    let mut idx = 0;
+
+    while idx < lines.len() {
+        let line = lines[idx];
+        if line == "---" || line.trim().is_empty() {
+            idx += 1;
+            continue;
+        }
+
+        if let Some(field) = line.strip_prefix("- ") {
+            if let Some(test) = current.take() {
+                tests.push(test);
+            }
+            current = Some(RawYamlTest::default());
+            let test = current.as_mut().unwrap();
+            idx = parse_suite_field(field, &lines, idx + 1, test)?;
+        } else if let Some(field) = line.strip_prefix("  ") {
+            let test = current
+                .as_mut()
+                .ok_or_else(|| format!("field before first test at line {}", idx + 1))?;
+            if field.starts_with(' ') {
+                idx += 1;
+                continue;
+            }
+            idx = parse_suite_field(field, &lines, idx + 1, test)?;
+        } else {
+            return Err(format!("unexpected line {}: {line:?}", idx + 1).into());
+        }
+    }
+
+    if let Some(test) = current {
+        tests.push(test);
+    }
+
+    Ok(tests)
+}
+
+fn parse_suite_field(
+    field: &str,
+    lines: &[&str],
+    next_idx: usize,
+    test: &mut RawYamlTest,
+) -> Result<usize> {
+    let (key, value) = field
+        .split_once(':')
+        .ok_or_else(|| format!("malformed test field: {field:?}"))?;
+    let value = value.trim_start();
+
+    if value.starts_with('|') {
+        let (value, next_idx) = parse_literal_block(lines, next_idx, value)?;
+        match key {
+            "yaml" => test.yaml_visual = Some(value),
+            "tree" => test.expected_events = Some(value),
+            _ => {}
+        }
+        Ok(next_idx)
+    } else {
+        match key {
+            "fail" => test.expected_error = Some(value == "true"),
+            "skip" => test.skip = Some(true),
+            _ => {}
+        }
+        Ok(next_idx)
+    }
+}
+
+fn parse_literal_block(
+    lines: &[&str],
+    start_idx: usize,
+    indicator: &str,
+) -> Result<(String, usize)> {
+    let mut idx = start_idx;
+    let mut block_lines = Vec::new();
+
+    while let Some(line) = lines.get(idx) {
+        if line.trim().is_empty() {
+            block_lines.push(*line);
+            idx += 1;
+            continue;
+        }
+
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        if indent <= 2 {
+            break;
+        }
+
+        block_lines.push(*line);
+        idx += 1;
+    }
+
+    let explicit_indent = indicator
+        .strip_prefix('|')
+        .and_then(|suffix| suffix.chars().find_map(|ch| ch.to_digit(10)))
+        .map(|indent| indent as usize + 2);
+    let detected_indent = block_lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start_matches(' ').len())
+        .min();
+    let indent = explicit_indent.or(detected_indent).unwrap_or(0);
+
+    let mut block = String::new();
+    for line in block_lines {
+        if line.trim().is_empty() {
+            block.push('\n');
+        } else if let Some(content) = line.get(indent..) {
+            block.push_str(content);
+            block.push('\n');
+        } else {
+            return Err(
+                format!("literal block line is indented less than {indent}: {line:?}").into(),
+            );
+        }
+    }
+
+    if !block.is_empty() {
+        while block.ends_with('\n') {
+            block.pop();
+        }
+        block.push('\n');
+    }
+
+    Ok((block, idx))
+}
+
+fn parse_to_events(source: &str) -> Result<EventReporter<'_>, ScanError> {
+    let mut str_events = vec![];
+    let mut str_error = None;
+    let mut iter_events = vec![];
+    let mut iter_error = None;
+
+    // Parse as string
     for x in Parser::new_from_str(source) {
-        let x = x?;
+        match x {
+            Ok(event) => str_events.push(event),
+            Err(e) => {
+                str_error = Some(e);
+                break;
+            }
+        }
+    }
+    // Parse as iter
+    for x in Parser::new_from_iter(source.chars()) {
+        match x {
+            Ok(event) => iter_events.push(event),
+            Err(e) => {
+                iter_error = Some(e);
+                break;
+            }
+        }
+    }
+
+    // No matter the input, we should parse into the same events.
+    assert_eq!(str_events, iter_events);
+    // Or the same error.
+    assert_eq!(str_error, iter_error);
+    // If we had an error, return it so the test fails.
+    if let Some(err) = str_error {
+        return Err(err);
+    }
+
+    // Put events into the reporter, for comparison with the test suite.
+    let mut reporter = EventReporter::default();
+    for x in str_events {
         reporter.on_event(x.0, x.1);
     }
     Ok(reporter)
@@ -142,14 +345,14 @@ fn parse_to_events(source: &str) -> Result<EventReporter, ScanError> {
 
 #[derive(Default)]
 /// A [`SpannedEventReceiver`] checking for inconsistencies in event [`Spans`].
-pub struct EventReporter {
+pub struct EventReporter<'input> {
     pub events: Vec<String>,
-    last_span: Option<(Event, Span)>,
+    last_span: Option<(Event<'input>, Span)>,
     pub span_failures: Vec<(String, Span)>,
 }
 
-impl SpannedEventReceiver for EventReporter {
-    fn on_event(&mut self, ev: Event, span: Span) {
+impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
+    fn on_event(&mut self, ev: Event<'input>, span: Span) {
         if let Some((last_ev, last_span)) = self.last_span.take() {
             if span.start.index() < last_span.start.index()
                 || span.end.index() < last_span.end.index()
@@ -170,28 +373,27 @@ impl SpannedEventReceiver for EventReporter {
             Event::DocumentEnd => "-DOC".into(),
 
             Event::SequenceStart(idx, tag) => {
-                format!("+SEQ{}{}", format_index(idx), format_tag(&tag))
+                format!("+SEQ{}{}", format_index(idx), format_tag(tag.as_ref()))
             }
             Event::SequenceEnd => "-SEQ".into(),
 
             Event::MappingStart(idx, tag) => {
-                format!("+MAP{}{}", format_index(idx), format_tag(&tag))
+                format!("+MAP{}{}", format_index(idx), format_tag(tag.as_ref()))
             }
             Event::MappingEnd => "-MAP".into(),
 
             Event::Scalar(ref text, style, idx, ref tag) => {
                 let kind = match style {
-                    TScalarStyle::Plain => ":",
-                    TScalarStyle::SingleQuoted => "'",
-                    TScalarStyle::DoubleQuoted => r#"""#,
-                    TScalarStyle::Literal => "|",
-                    TScalarStyle::Folded => ">",
+                    ScalarStyle::Plain => ":",
+                    ScalarStyle::SingleQuoted => "'",
+                    ScalarStyle::DoubleQuoted => r#"""#,
+                    ScalarStyle::Literal => "|",
+                    ScalarStyle::Folded => ">",
                 };
                 format!(
-                    "=VAL{}{} {}{}",
+                    "=VAL{}{} {kind}{}",
                     format_index(idx),
-                    format_tag(tag),
-                    kind,
+                    format_tag(tag.as_ref()),
                     escape_text(text)
                 )
             }
@@ -224,7 +426,7 @@ fn escape_text(text: &str) -> String {
     text
 }
 
-fn format_tag(tag: &Option<Tag>) -> String {
+fn format_tag(tag: Option<&Cow<'_, Tag>>) -> String {
     if let Some(tag) = tag {
         format!(" <{}{}>", tag.handle, tag.suffix)
     } else {
@@ -259,13 +461,13 @@ fn events_differ(actual: &[String], expected: &str) -> Option<String> {
 fn visual_to_raw(yaml: &str) -> String {
     let mut yaml = yaml.to_owned();
     for (pat, replacement) in [
-        ("␣", " "),
-        ("»", "\t"),
-        ("—", ""), // Tab line continuation ——»
-        ("←", "\r"),
-        ("⇔", "\u{FEFF}"),
-        ("↵", ""), // Trailing newline marker
-        ("∎\n", ""),
+        ("\u{2423}", " "),
+        ("\u{BB}", "\t"),
+        ("\u{2014}", ""), // Tab line continuation \u{2014}\u{2014}\u{BB}
+        ("\u{2190}", "\r"),
+        ("\u{21D4}", "\u{FEFF}"),
+        ("\u{21B5}", ""), // Trailing newline marker
+        ("\u{220E}\n", ""),
     ] {
         yaml = yaml.replace(pat, replacement);
     }
@@ -298,8 +500,7 @@ fn expected_events(expected_tree: &str) -> Vec<String> {
                 let idx = anchors
                     .iter()
                     .enumerate()
-                    .filter(|(_, v)| v == &name)
-                    .last()
+                    .rfind(|(_, v)| v == &name)
                     .unwrap()
                     .0;
                 s = s.replace(&s[start..], &format!("*{}", idx + 1));

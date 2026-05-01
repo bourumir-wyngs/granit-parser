@@ -1,10 +1,39 @@
-pub mod buffered;
-pub mod str;
+//! Utilities to create a source of input to the parser.
+//!
+//! [`Input`] must be implemented for the parser to fetch input. Make sure your needs aren't
+//! covered by the [`BufferedInput`].
+
+use alloc::string::String;
+
+pub(crate) mod buffered;
+pub(crate) mod str;
 
 #[allow(clippy::module_name_repetitions)]
 pub use buffered::BufferedInput;
 
-use crate::char_traits::{
+/// A trait for inputs that can provide borrowed slices with a specific lifetime.
+///
+/// This trait enables zero-copy (`Cow::Borrowed`) token values for inputs that keep a stable
+/// backing string. The key difference from [`Input::slice_bytes`] is that this method returns
+/// a slice with the input's original lifetime `'a`, not tied to `&self`.
+///
+/// For inputs that support zero-copy (like [`str::StrInput`]), this returns `Some(&'a str)`.
+/// For streaming inputs that don't have stable backing storage, this returns `None`.
+pub trait BorrowedInput<'a>: Input {
+    /// Return a borrowed slice of the underlying source between two byte offsets.
+    ///
+    /// Unlike [`Input::slice_bytes`], this returns a slice with the input's lifetime `'a`,
+    /// allowing the slice to outlive the borrow of `&self`.
+    ///
+    /// `start` and `end` are byte offsets as returned by [`Input::byte_offset`]. The interval is
+    /// half-open: `[start, end)`.
+    ///
+    /// Returns `None` if the input does not support zero-copy slicing.
+    #[must_use]
+    fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'a str>;
+}
+
+pub use crate::char_traits::{
     is_alpha, is_blank, is_blank_or_breakz, is_break, is_breakz, is_digit, is_flow, is_z,
 };
 
@@ -82,6 +111,54 @@ pub trait Input {
     /// [`Input::lookahead`].
     #[must_use]
     fn peek_nth(&self, n: usize) -> char;
+
+    /// Return the current byte offset in the underlying source, if available.
+    ///
+    /// This is an *optional* capability that enables zero-copy (`Cow::Borrowed`) token values
+    /// for inputs that keep a stable backing string (notably [`str::StrInput`]).
+    ///
+    /// The returned value (when `Some`) is the number of bytes that have been consumed so far,
+    /// i.e. an offset into the original source string.
+    ///
+    /// # Correctness contract
+    /// Implementations returning `Some(_)` must satisfy all of the following:
+    ///
+    /// - The offset is a valid UTF-8 boundary in the underlying source.
+    /// - The offset is monotonically non-decreasing as characters are consumed.
+    /// - The underlying source is stable for the duration of parsing (no reallocation/mutation)
+    ///   so that slices returned by [`Input::slice_bytes`] remain valid.
+    ///
+    /// Inputs that cannot provide stable slicing (e.g. stream/iterator inputs) must return
+    /// `None`.
+    #[inline]
+    #[must_use]
+    fn byte_offset(&self) -> Option<usize> {
+        None
+    }
+
+    /// Return a borrowed slice of the underlying source between two byte offsets.
+    ///
+    /// This is an *optional* capability used to produce `Cow::Borrowed` values without
+    /// allocating.
+    ///
+    /// `start` and `end` are byte offsets as returned by [`Input::byte_offset`]. The interval is
+    /// half-open: `[start, end)`.
+    ///
+    /// # Correctness contract
+    /// Implementations returning `Some(&str)` must ensure:
+    ///
+    /// - `start <= end`.
+    /// - Both offsets are valid UTF-8 boundaries.
+    /// - The returned `&str` is a view into the stable underlying source associated with this
+    ///   input.
+    ///
+    /// Implementations that return `None` from [`Input::byte_offset`] must also return `None`
+    /// here.
+    #[inline]
+    #[must_use]
+    fn slice_bytes(&self, _start: usize, _end: usize) -> Option<&str> {
+        None
+    }
 
     /// Look for the next character and return it.
     ///
@@ -204,6 +281,7 @@ pub trait Input {
                     );
                 }
                 '#' => {
+                    self.skip(); // Skip over '#'
                     while !is_breakz(self.look_ch()) {
                         self.skip();
                         chars_consumed += 1;
@@ -392,12 +470,12 @@ pub trait Input {
     ///
     /// [blanks]: is_blank
     fn skip_while_blank(&mut self) -> usize {
-        let mut n_chars = 0;
+        let mut n_bytes = 0;
         while is_blank(self.look_ch()) {
-            n_chars += 1;
+            n_bytes += self.peek().len_utf8();
             self.skip();
         }
-        n_chars
+        n_bytes
     }
 
     /// Fetch characters from the input while we encounter letters and store them in `out`.
@@ -408,13 +486,60 @@ pub trait Input {
     /// Return the number of characters that were consumed. The number of characters returned can
     /// be used to advance the index and column, since no end-of-line character will be consumed.
     fn fetch_while_is_alpha(&mut self, out: &mut String) -> usize {
-        let mut n_chars = 0;
+        let mut n_bytes = 0;
         while is_alpha(self.look_ch()) {
-            n_chars += 1;
-            out.push(self.peek());
+            let c = self.peek();
+            n_bytes += c.len_utf8();
+            out.push(c);
             self.skip();
         }
-        n_chars
+        n_bytes
+    }
+
+    /// Fetch characters as long as they satisfy `is_yaml_non_space(c)`.
+    ///
+    /// The characters are consumed from the input.
+    ///
+    /// # Return
+    /// Return the number of characters that were consumed. The number of characters returned can
+    /// be used to advance the index and column, since no end-of-line character will be consumed.
+    fn fetch_while_is_yaml_non_space(&mut self, out: &mut String) -> usize {
+        let mut chars_consumed = 0;
+        loop {
+            let c = self.look_ch();
+            if !crate::char_traits::is_yaml_non_space(c) || is_z(c) {
+                break;
+            }
+            let c = self.peek();
+            out.push(c);
+            self.skip();
+            chars_consumed += 1;
+        }
+        chars_consumed
+    }
+
+    /// Fetch a chunk of plain scalar characters.
+    ///
+    /// This optimization method allows the input to batch process characters.
+    /// Returns (stopped, `chars_consumed`).
+    /// stopped is true if the chunk ended because of a non-plain-scalar character.
+    fn fetch_plain_scalar_chunk(
+        &mut self,
+        out: &mut String,
+        count: usize,
+        flow_level_gt_0: bool,
+    ) -> (bool, usize) {
+        let mut chars_consumed = 0;
+        for _ in 0..count {
+            self.lookahead(1);
+            if self.next_is_blank_or_breakz() || !self.next_can_be_plain_scalar(flow_level_gt_0) {
+                return (true, chars_consumed);
+            }
+            out.push(self.peek());
+            self.skip();
+            chars_consumed += 1;
+        }
+        (false, chars_consumed)
     }
 }
 
@@ -440,6 +565,7 @@ impl SkipTabs {
     /// Whether tabs were found while skipping whitespace.
     ///
     /// This function must be called after a call to `skip_ws_to_eol`.
+    #[must_use]
     pub fn found_tabs(self) -> bool {
         matches!(self, SkipTabs::Result(true, _))
     }
@@ -447,6 +573,7 @@ impl SkipTabs {
     /// Whether a valid YAML whitespace has been found in skipped-over content.
     ///
     /// This function must be called after a call to `skip_ws_to_eol`.
+    #[must_use]
     pub fn has_valid_yaml_ws(self) -> bool {
         matches!(self, SkipTabs::Result(_, true))
     }

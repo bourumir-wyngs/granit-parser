@@ -1,13 +1,12 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-
-use saphyr_parser::{Event, Parser, Span, SpannedEventReceiver};
+use granit_parser::{Event, Parser, Span, SpannedEventReceiver};
 use std::{env, fs::File, io::prelude::*};
 
 /// A sink which discards any event sent.
 struct NullSink {}
 
-impl SpannedEventReceiver for NullSink {
-    fn on_event(&mut self, _: Event, _: Span) {}
+impl<'a> SpannedEventReceiver<'a> for NullSink {
+    fn on_event(&mut self, _: Event<'a>, _: Span) {}
 }
 
 /// Parse the given input, returning elapsed time in nanoseconds.
@@ -47,7 +46,7 @@ fn main() {
     let percentile95 = sorted_times[((95 * iterations) / 100) as usize];
 
     if output_yaml {
-        println!("parser: yaml-rust2");
+        println!("parser: granit-parser");
         println!("input: {}", args[1]);
         println!("average: {avg}");
         println!("min: {min}");

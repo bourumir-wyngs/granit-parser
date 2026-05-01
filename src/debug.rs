@@ -1,10 +1,9 @@
 //! Debugging helpers.
 //!
 //! Debugging is governed by two conditions:
-//!   1. The build mode. Debugging code is not emitted in release builds and thus not available.
-//!   2. The `SAPHYR_DEBUG` environment variable. If built in debug mode, the program must be fed
-//!      the `SAPHYR_DEBUG` variable in its environment. While debugging code is present in debug
-//!      build, debug helpers will only trigger if that variable is set when running the program.
+//!   1. The `debug_prints` feature. Debugging code is not emitted unless that feature is enabled.
+//!   2. The local [`ENABLED`] constant below. Flip it to `true` in a local build when you want
+//!      the debug helpers to print.
 
 // If a debug build, use stuff in the debug submodule.
 #[cfg(feature = "debug_prints")]
@@ -21,20 +20,22 @@ macro_rules! debug_print {
 #[macro_use]
 #[allow(clippy::module_inception)]
 mod debug {
-    use std::sync::OnceLock;
+    /// Local compile-time toggle for debug prints.
+    ///
+    /// This avoids runtime environment-variable reads while still keeping the output opt-in.
+    const ENABLED: bool = false;
 
     /// If debugging is [`enabled`], print the format string on the error output.
     macro_rules! debug_print {
     ($($arg:tt)*) => {{
         if $crate::debug::enabled() {
-            eprintln!($($arg)*)
+            std::eprintln!($($arg)*)
         }
     }};
     }
 
     /// Return whether debugging features are enabled in this execution.
     pub fn enabled() -> bool {
-        static ENABLED: OnceLock<bool> = OnceLock::new();
-        *ENABLED.get_or_init(|| std::env::var("SAPHYR_DEBUG").is_ok())
+        ENABLED
     }
 }

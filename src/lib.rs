@@ -4,41 +4,65 @@
 
 //! YAML 1.2 parser implementation in pure Rust.
 //!
-//! **If you want to load to a YAML Rust structure or manipulate YAML objects, use `saphyr` instead
-//! of `saphyr-parser`. This crate contains only the parser.**
+//! `granit-parser` is a low-level event parser. It reads YAML input and yields a stream of
+//! [`Event`] values paired with their source [`Span`].
 //!
-//! This is YAML 1.2 parser implementation and low-level parsing API for YAML. It allows users to
-//! fetch a stream of YAML events from a stream of characters/bytes.
+//! Add it to your project:
+//!
+//! ```sh
+//! cargo add granit-parser
+//! ```
 //!
 //! # Usage
 //!
-//! This crate is [on github](https://github.com/saphyr-rs/saphyr-parser) and can be used by adding
-//! `saphyr-parser` to the dependencies in your project's `Cargo.toml`.
+//! ```rust
+//! use granit_parser::{Event, Parser};
 //!
-//! ```toml
-//! [dependencies]
-//! saphyr-parser = "0.0.2"
+//! # fn main() -> Result<(), granit_parser::ScanError> {
+//! let yaml = "items:\n  - milk\n  - bread\n";
+//!
+//! for next in Parser::new_from_str(yaml) {
+//!     let (event, _span) = next?;
+//!     if let Event::Scalar(value, ..) = event {
+//!         println!("{value}");
+//!     }
+//! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Features
-//! **Note:** With all features disabled, this crate's MSRV is `1.65.0`.
+//! **Note:** This crate's MSRV is `1.81.0`.
 //!
 //! #### `debug_prints`
 //! Enables the `debug` module and usage of debug prints in the scanner and the parser. Do not
 //! enable if you are consuming the crate rather than working on it as this can significantly
-//! decrease performance.
+//! decrease performance. Output remains opt-in behind a local compile-time toggle in
+//! `src/debug.rs`.
 //!
-//! The MSRV for this feature is `1.70.0`.
+//! This feature does not raise the MSRV further.
+//!
+//! This feature is _not_ `no_std` compatible.
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(feature = "debug_prints")]
+extern crate std;
 
 mod char_traits;
 #[macro_use]
 mod debug;
-mod input;
+pub mod input;
 mod parser;
+/// A stack-based parser implementation.
+pub mod parser_stack;
 mod scanner;
 
-pub use crate::input::{str::StrInput, BufferedInput};
-pub use crate::parser::{Event, EventReceiver, Parser, SpannedEventReceiver, Tag};
-pub use crate::scanner::{Marker, ScanError, Span, TScalarStyle};
+pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
+pub use crate::parser::{Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, Tag};
+pub use crate::scanner::{Marker, ScalarStyle, ScanError, Scanner, Span, Token, TokenType};

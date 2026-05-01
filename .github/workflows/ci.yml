@@ -20,6 +20,30 @@ jobs:
       - name: Run format checks
         run: cargo fmt --check
 
+  msrv:
+    name: MSRV checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - run: rustup toolchain install 1.81.0 --profile minimal --no-self-update
+      - name: Check MSRV
+        run: cargo +1.81.0 check --all-targets
+
+  no_std:
+    name: no_std checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - run: rustup toolchain install stable --profile minimal --no-self-update
+      - run: rustup target add wasm32v1-none --toolchain stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run library tests without default features
+        run: cargo test --lib --no-default-features
+      - name: Check library for no_std target
+        run: cargo check --lib --no-default-features --target wasm32v1-none
+
   test:
     name: Test using Rust ${{ matrix.rust }} on ${{ matrix.os }}
     strategy:

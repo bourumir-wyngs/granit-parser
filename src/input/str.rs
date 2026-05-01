@@ -1,14 +1,21 @@
 use crate::{
-    char_traits::{
-        is_alpha, is_blank, is_blank_or_breakz, is_break, is_breakz, is_digit, is_flow, is_z,
-    },
-    input::{Input, SkipTabs},
+    char_traits::{is_blank_or_breakz, is_breakz, is_flow},
+    input::{BorrowedInput, Input, SkipTabs},
 };
+use alloc::string::String;
 
 /// A parser input that uses a `&str` as source.
 #[allow(clippy::module_name_repetitions)]
 pub struct StrInput<'a> {
+    /// The full, original input string.
+    ///
+    /// This is kept to support O(1) byte-offset capture and zero-copy slicing via the optional
+    /// [`Input::byte_offset`] / [`Input::slice_bytes`] APIs.
+    original: &'a str,
     /// The input str buffer.
+    ///
+    /// This is a moving window into [`Self::original`]. All consuming operations advance this
+    /// slice.
     buffer: &'a str,
     /// The number of characters we have looked ahead.
     ///
@@ -22,13 +29,24 @@ impl<'a> StrInput<'a> {
     #[must_use]
     pub fn new(input: &'a str) -> Self {
         Self {
+            original: input,
             buffer: input,
             lookahead: 0,
         }
     }
+
+    /// Return the number of bytes consumed from the original input.
+    ///
+    /// This is an O(1) operation derived from the invariant that [`Self::buffer`] is always a
+    /// suffix of [`Self::original`].
+    #[inline]
+    #[must_use]
+    fn consumed_bytes(&self) -> usize {
+        self.original.len() - self.buffer.len()
+    }
 }
 
-impl<'a> Input for StrInput<'a> {
+impl Input for StrInput<'_> {
     #[inline]
     fn lookahead(&mut self, x: usize) {
         // We already have all characters that we need.
@@ -78,9 +96,15 @@ impl<'a> Input for StrInput<'a> {
 
     #[inline]
     fn skip(&mut self) {
-        let mut chars = self.buffer.chars();
-        if chars.next().is_some() {
-            self.buffer = chars.as_str();
+        if !self.buffer.is_empty() {
+            let b = self.buffer.as_bytes()[0];
+            if b < 0x80 {
+                self.buffer = &self.buffer[1..];
+            } else {
+                let mut chars = self.buffer.chars();
+                chars.next();
+                self.buffer = chars.as_str();
+            }
         }
     }
 
@@ -97,11 +121,26 @@ impl<'a> Input for StrInput<'a> {
 
     #[inline]
     fn peek(&self) -> char {
-        self.buffer.chars().next().unwrap_or('\0')
+        if self.buffer.is_empty() {
+            return '\0';
+        }
+        let b = self.buffer.as_bytes()[0];
+        if b < 0x80 {
+            b as char
+        } else {
+            self.buffer.chars().next().unwrap()
+        }
     }
 
     #[inline]
     fn peek_nth(&self, n: usize) -> char {
+        if n == 0 {
+            return self.peek();
+        }
+        let bytes = self.buffer.as_bytes();
+        if n == 1 && bytes.len() >= 2 && bytes[0] < 0x80 && bytes[1] < 0x80 {
+            return bytes[1] as char;
+        }
         let mut chars = self.buffer.chars();
         for _ in 0..n {
             if chars.next().is_none() {
@@ -109,6 +148,18 @@ impl<'a> Input for StrInput<'a> {
             }
         }
         chars.next().unwrap_or('\0')
+    }
+
+    #[inline]
+    fn byte_offset(&self) -> Option<usize> {
+        Some(self.consumed_bytes())
+    }
+
+    #[inline]
+    fn slice_bytes(&self, start: usize, end: usize) -> Option<&str> {
+        debug_assert!(start <= end);
+        debug_assert!(end <= self.original.len());
+        self.original.get(start..end)
     }
 
     #[inline]
@@ -130,15 +181,13 @@ impl<'a> Input for StrInput<'a> {
     #[inline]
     fn next_2_are(&self, c1: char, c2: char) -> bool {
         let mut chars = self.buffer.chars();
-        chars.next().is_some_and(|c| c == c1) && chars.next().is_some_and(|c| c == c2)
+        chars.next() == Some(c1) && chars.next() == Some(c2)
     }
 
     #[inline]
     fn next_3_are(&self, c1: char, c2: char, c3: char) -> bool {
         let mut chars = self.buffer.chars();
-        chars.next().is_some_and(|c| c == c1)
-            && chars.next().is_some_and(|c| c == c2)
-            && chars.next().is_some_and(|c| c == c3)
+        chars.next() == Some(c1) && chars.next() == Some(c2) && chars.next() == Some(c3)
     }
 
     #[inline]
@@ -148,7 +197,7 @@ impl<'a> Input for StrInput<'a> {
         } else {
             // Since all characters we look for are ascii, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
-            (bytes.len() == 3 || is_blank_or_breakz(bytes[3] as char))
+            (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && (bytes[0] == b'.' || bytes[0] == b'-')
                 && bytes[0] == bytes[1]
                 && bytes[1] == bytes[2]
@@ -162,7 +211,7 @@ impl<'a> Input for StrInput<'a> {
         } else {
             // Since all characters we look for are ascii, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
-            (bytes.len() == 3 || is_blank_or_breakz(bytes[3] as char))
+            (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && bytes[0] == b'-'
                 && bytes[1] == b'-'
                 && bytes[2] == b'-'
@@ -176,7 +225,7 @@ impl<'a> Input for StrInput<'a> {
         } else {
             // Since all characters we look for are ascii, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
-            (bytes.len() == 3 || is_blank_or_breakz(bytes[3] as char))
+            (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && bytes[0] == b'.'
                 && bytes[1] == b'.'
                 && bytes[2] == b'.'
@@ -244,131 +293,218 @@ impl<'a> Input for StrInput<'a> {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn next_can_be_plain_scalar(&self, in_flow: bool) -> bool {
-        let c = self.buffer.as_bytes()[0];
-        if self.buffer.len() > 1 {
-            let nc = self.buffer.as_bytes()[1];
-            match c {
-                // indicators can end a plain scalar, see 7.3.3. Plain Style
-                b':' if is_blank_or_breakz(nc as char) || (in_flow && is_flow(nc as char)) => false,
-                c if in_flow && is_flow(c as char) => false,
-                _ => true,
-            }
-        } else {
-            match c {
-                // indicators can end a plain scalar, see 7.3.3. Plain Style
-                b':' => false,
-                c if in_flow && is_flow(c as char) => false,
-                _ => true,
-            }
+        let nc = self.peek_nth(1);
+        match self.peek() {
+            // indicators can end a plain scalar, see 7.3.3. Plain Style
+            ':' if is_blank_or_breakz(nc) || (in_flow && is_flow(nc)) => false,
+            c if in_flow && is_flow(c) => false,
+            _ => true,
         }
     }
 
     #[inline]
     fn next_is_blank_or_break(&self) -> bool {
-        !self.buffer.is_empty()
-            && (is_blank(self.buffer.as_bytes()[0] as char)
-                || is_break(self.buffer.as_bytes()[0] as char))
+        !self.buffer.is_empty() && matches!(self.buffer.as_bytes()[0], b' ' | b'\t' | b'\n' | b'\r')
     }
 
     #[inline]
     fn next_is_blank_or_breakz(&self) -> bool {
         self.buffer.is_empty()
-            || (is_blank(self.buffer.as_bytes()[0] as char)
-                || is_breakz(self.buffer.as_bytes()[0] as char))
+            || matches!(self.buffer.as_bytes()[0], b' ' | b'\t' | 0 | b'\n' | b'\r')
     }
 
     #[inline]
     fn next_is_blank(&self) -> bool {
-        !self.buffer.is_empty() && is_blank(self.buffer.as_bytes()[0] as char)
+        !self.buffer.is_empty() && matches!(self.buffer.as_bytes()[0], b' ' | b'\t')
     }
 
     #[inline]
     fn next_is_break(&self) -> bool {
-        !self.buffer.is_empty() && is_break(self.buffer.as_bytes()[0] as char)
+        !self.buffer.is_empty() && matches!(self.buffer.as_bytes()[0], b'\n' | b'\r')
     }
 
     #[inline]
     fn next_is_breakz(&self) -> bool {
-        self.buffer.is_empty() || is_breakz(self.buffer.as_bytes()[0] as char)
+        self.buffer.is_empty() || matches!(self.buffer.as_bytes()[0], 0 | b'\n' | b'\r')
     }
 
     #[inline]
     fn next_is_z(&self) -> bool {
-        self.buffer.is_empty() || is_z(self.buffer.as_bytes()[0] as char)
+        self.buffer.is_empty() || self.buffer.as_bytes()[0] == 0
     }
 
     #[inline]
     fn next_is_flow(&self) -> bool {
-        !self.buffer.is_empty() && is_flow(self.buffer.as_bytes()[0] as char)
+        !self.buffer.is_empty()
+            && matches!(self.buffer.as_bytes()[0], b',' | b'[' | b']' | b'{' | b'}')
     }
 
     #[inline]
     fn next_is_digit(&self) -> bool {
-        !self.buffer.is_empty() && is_digit(self.buffer.as_bytes()[0] as char)
+        !self.buffer.is_empty() && self.buffer.as_bytes()[0].is_ascii_digit()
     }
 
+    /// Check if the next character is an ASCII alphanumeric, `_`, or `-`.
+    ///
+    /// This is used as a heuristic for error detection (e.g., when `:` is followed
+    /// by tab and then a potential value character). The ASCII-only check is intentional:
+    /// it catches common cases like `key:\tvalue` while avoiding false positives for
+    /// valid YAML constructs. Unicode value starters (e.g., `äöü`) are not detected,
+    /// but such cases will still fail to parse (with a less specific error message).
     #[inline]
     fn next_is_alpha(&self) -> bool {
-        !self.buffer.is_empty() && is_alpha(self.buffer.as_bytes()[0] as char)
+        !self.buffer.is_empty()
+            && matches!(self.buffer.as_bytes()[0], b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'-')
     }
 
     fn skip_while_non_breakz(&mut self) -> usize {
-        let mut new_str = self.buffer;
-        let mut count = 0;
+        let mut byte_pos = 0;
+        let mut chars_consumed = 0;
 
-        // Skip over all non-breaks.
-        while let Some((c, sub_str)) = split_first_char(new_str) {
+        for (i, c) in self.buffer.char_indices() {
             if is_breakz(c) {
                 break;
             }
-            new_str = sub_str;
-            count += 1;
+            byte_pos = i + c.len_utf8();
+            chars_consumed += 1;
         }
 
-        self.buffer = new_str;
-
-        count
+        self.buffer = &self.buffer[byte_pos..];
+        chars_consumed
     }
 
+    #[inline]
     fn skip_while_blank(&mut self) -> usize {
-        // Since all characters we look for are ascii, we can directly use the byte API of str.
+        let bytes = self.buffer.as_bytes();
+
         let mut i = 0;
-        while i < self.buffer.len() {
-            if !is_blank(self.buffer.as_bytes()[i] as char) {
-                break;
+        while i < bytes.len() {
+            match bytes[i] {
+                b' ' | b'\t' => i += 1,
+                _ => break,
             }
-            i += 1;
         }
+
         self.buffer = &self.buffer[i..];
         i
     }
 
+    /// Fetch characters matching `is_alpha` (ASCII alphanumeric, `_`, `-`).
+    ///
+    /// This is used for scanning tag handles (e.g., `!foo!`). Per YAML 1.2 spec,
+    /// tag handles use `ns-word-char` which is `[0-9a-zA-Z-]`. Our implementation
+    /// is slightly more permissive by also accepting `_`, but this is harmless
+    /// and matches common practice. Unicode characters like `ä` or `π` are NOT
+    /// valid in tag handles per spec, so the ASCII-only byte-based scanning here
+    /// is both correct and efficient.
     fn fetch_while_is_alpha(&mut self, out: &mut String) -> usize {
-        let mut not_alpha = None;
+        let bytes = self.buffer.as_bytes();
+        let mut i = 0;
 
-        // Skip while we have alpha characters.
-        let mut chars = self.buffer.chars();
-        for c in chars.by_ref() {
-            if !is_alpha(c) {
-                not_alpha = Some(c);
-                break;
+        // All target characters are ASCII, so we can scan bytes directly.
+        while i < bytes.len() {
+            match bytes[i] {
+                b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'-' => i += 1,
+                _ => break,
             }
         }
 
-        let remaining_string = if let Some(c) = not_alpha {
-            let n_bytes_read = chars.as_str().as_ptr() as usize - self.buffer.as_ptr() as usize;
-            let last_char_bytes = c.len_utf8();
-            &self.buffer[n_bytes_read - last_char_bytes..]
-        } else {
-            chars.as_str()
-        };
+        // All matched characters are ASCII, so we can safely slice and convert.
+        out.push_str(&self.buffer[..i]);
+        self.buffer = &self.buffer[i..];
 
-        let n_bytes_to_append = remaining_string.as_ptr() as usize - self.buffer.as_ptr() as usize;
-        out.reserve(n_bytes_to_append);
-        out.push_str(&self.buffer[..n_bytes_to_append]);
-        self.buffer = remaining_string;
+        i
+    }
 
-        n_bytes_to_append
+    fn fetch_while_is_yaml_non_space(&mut self, out: &mut String) -> usize {
+        let mut byte_pos = 0;
+        let mut chars_consumed = 0;
+
+        for (i, c) in self.buffer.char_indices() {
+            if !crate::char_traits::is_yaml_non_space(c) || crate::char_traits::is_z(c) {
+                break;
+            }
+
+            byte_pos = i + c.len_utf8();
+            chars_consumed += 1;
+        }
+
+        out.push_str(&self.buffer[..byte_pos]);
+        self.buffer = &self.buffer[byte_pos..];
+
+        chars_consumed
+    }
+
+    fn fetch_plain_scalar_chunk(
+        &mut self,
+        out: &mut String,
+        _count: usize,
+        flow_level_gt_0: bool,
+    ) -> (bool, usize) {
+        let bytes = self.buffer.as_bytes();
+        let len = bytes.len();
+        let mut byte_pos = 0;
+        let mut chars_consumed = 0;
+
+        while byte_pos < len {
+            let b = bytes[byte_pos];
+            if b < 0x80 {
+                let c = b as char;
+                if crate::char_traits::is_blank_or_breakz(c) {
+                    out.push_str(&self.buffer[..byte_pos]);
+                    self.buffer = &self.buffer[byte_pos..];
+                    return (true, chars_consumed);
+                }
+                if flow_level_gt_0 && crate::char_traits::is_flow(c) {
+                    out.push_str(&self.buffer[..byte_pos]);
+                    self.buffer = &self.buffer[byte_pos..];
+                    return (true, chars_consumed);
+                }
+                if c == ':' {
+                    let next_byte = if byte_pos + 1 < len {
+                        bytes[byte_pos + 1]
+                    } else {
+                        0
+                    };
+                    // ASCII optimization: if next_byte >= 0x80, it is not blank/breakz/flow
+                    let is_stop = if next_byte < 0x80 {
+                        let nc = next_byte as char;
+                        crate::char_traits::is_blank_or_breakz(nc)
+                            || (flow_level_gt_0 && crate::char_traits::is_flow(nc))
+                    } else {
+                        false
+                    };
+
+                    if is_stop {
+                        out.push_str(&self.buffer[..byte_pos]);
+                        self.buffer = &self.buffer[byte_pos..];
+                        return (true, chars_consumed);
+                    }
+                }
+                byte_pos += 1;
+                chars_consumed += 1;
+            } else {
+                let mut chars = self.buffer[byte_pos..].chars();
+                let c = chars.next().unwrap();
+                byte_pos += c.len_utf8();
+                chars_consumed += 1;
+            }
+        }
+
+        out.push_str(&self.buffer[..byte_pos]);
+        self.buffer = &self.buffer[byte_pos..];
+        // If we reached here, we consumed the whole string (EOF).
+        // EOF is effectively a stop condition (breakz).
+        (true, chars_consumed)
+    }
+}
+
+impl<'a> BorrowedInput<'a> for StrInput<'a> {
+    #[inline]
+    fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'a str> {
+        debug_assert!(start <= end);
+        debug_assert!(end <= self.original.len());
+        self.original.get(start..end)
     }
 }
 
