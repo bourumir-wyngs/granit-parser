@@ -13,7 +13,7 @@
 
 > “YAML is hard. Much more than I had anticipated. If you are exploring dark corners of YAML ... I'm curious to know what it is.”
 >
-> — Ethiraric
+> — [Ethiraric](https://crates.io/users/Ethiraric)
 
 **granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std support, and spans for parser events.
 
