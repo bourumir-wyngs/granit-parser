@@ -75,10 +75,7 @@ impl<'input> ParserTrait<'input> for ReplayParser<'input> {
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError> {
-        loop {
-            let Some(res) = self.next_event() else {
-                break;
-            };
+        while let Some(res) = self.next_event() {
             let (ev, span) = res?;
             let is_doc_end = matches!(ev, Event::DocumentEnd);
             let is_stream_end = matches!(ev, Event::StreamEnd);
@@ -431,12 +428,8 @@ where
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError> {
-        loop {
+        while let Some(res) = self.next_event() {
             // Fetch the next event, which is properly synced across the stack
-            let Some(res) = self.next_event() else {
-                break;
-            };
-
             let (ev, span) = res?;
 
             // Track if we need to stop based on `multi`
