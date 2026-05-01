@@ -1896,6 +1896,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
+        if string.is_empty() {
+            return Err(ScanError::new_str(
+                *start_mark,
+                "while parsing a tag, did not find expected tag URI",
+            ));
+        }
+
         if self.input.peek() != '>' {
             return Err(ScanError::new_str(
                 *start_mark,
