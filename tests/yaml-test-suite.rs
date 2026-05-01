@@ -97,18 +97,22 @@ fn add_error_context(text: &mut String, desc: &YamlTest, marker: Option<&Marker>
     let _ = writeln!(text, "\n### Input:\n{}\n### End", desc.yaml_visual);
     if let Some(mark) = marker {
         writeln!(text, "### Error position").unwrap();
-        let mut lines = desc.yaml.lines();
-        for _ in 0..(mark.line() - 1) {
-            let l = lines.next().unwrap();
-            writeln!(text, "{l}").unwrap();
+        let lines: Vec<_> = desc.yaml.split('\n').collect();
+        let highlight_line = mark.line().saturating_sub(1);
+
+        for line in lines.iter().take(highlight_line) {
+            writeln!(text, "{line}").unwrap();
         }
-        writeln!(text, "\x1B[91;1m{}", lines.next().unwrap()).unwrap();
+
+        let line = lines.get(highlight_line).copied().unwrap_or("");
+        writeln!(text, "\x1B[91;1m{line}").unwrap();
         for _ in 0..mark.col() {
             write!(text, " ").unwrap();
         }
         writeln!(text, "^\x1b[m").unwrap();
-        for l in lines {
-            writeln!(text, "{l}").unwrap();
+
+        for line in lines.iter().skip(highlight_line.saturating_add(1)) {
+            writeln!(text, "{line}").unwrap();
         }
         writeln!(text, "### End error position").unwrap();
     }
