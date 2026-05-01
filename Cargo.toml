@@ -19,7 +19,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bourumir-wyngs/granit-parser"
 
 rust-version = "1.81.0"
-version = "0.0.2"
+version = "0.0.1"
 exclude = [
   # Exclude the `yaml-test-suite` from the package. This removes the need to
   # add its license to the package.
