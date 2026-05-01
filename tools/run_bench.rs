@@ -10,30 +10,56 @@ impl<'a> SpannedEventReceiver<'a> for NullSink {
 }
 
 /// Parse the given input, returning elapsed time in nanoseconds.
-fn do_parse(input: &str) -> u64 {
+fn do_parse(input: &str) -> Result<u64, String> {
     let mut sink = NullSink {};
     let mut parser = Parser::new_from_str(input);
     let begin = std::time::Instant::now();
-    parser.load(&mut sink, true).unwrap();
+    parser
+        .load(&mut sink, true)
+        .map_err(|e| format!("failed to parse YAML input: {e:?}"))?;
     let end = std::time::Instant::now();
-    (end - begin).as_nanos() as u64
+    Ok((end - begin).as_nanos() as u64)
 }
 
-fn main() {
+fn usage(program: &str) {
+    eprintln!("Usage: {program} <input-file> <iterations> [--output-yaml]");
+}
+
+fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
-    let iterations: u64 = args[2].parse().unwrap();
+    if args.len() < 3 || args.len() > 4 {
+        usage(&args[0]);
+        return Err("invalid arguments".to_owned());
+    }
+
+    let iterations: u64 = args[2]
+        .parse()
+        .map_err(|e| format!("invalid iterations '{}': {e}", args[2]))?;
+    if iterations == 0 {
+        return Err("iterations must be greater than zero".to_owned());
+    }
+
     let output_yaml = args.len() == 4 && args[3] == "--output-yaml";
-    let mut f = File::open(&args[1]).unwrap();
+    if args.len() == 4 && !output_yaml {
+        usage(&args[0]);
+        return Err(format!("unknown option '{}'; expected --output-yaml", args[3]));
+    }
+
+    let mut f = File::open(&args[1]).map_err(|e| format!("failed to open '{}': {e}", args[1]))?;
     let mut s = String::new();
-    f.read_to_string(&mut s).unwrap();
+    f.read_to_string(&mut s)
+        .map_err(|e| format!("failed to read '{}': {e}", args[1]))?;
 
     // Warmup
-    do_parse(&s);
-    do_parse(&s);
-    do_parse(&s);
+    do_parse(&s)?;
+    do_parse(&s)?;
+    do_parse(&s)?;
 
     // Bench
-    let times: Vec<_> = (0..iterations).map(|_| do_parse(&s)).collect();
+    let mut times = Vec::with_capacity(iterations as usize);
+    for _ in 0..iterations {
+        times.push(do_parse(&s)?);
+    }
 
     let mut sorted_times = times.clone();
     sorted_times.sort_unstable();
@@ -62,5 +88,14 @@ fn main() {
         println!("Min: {}s", (min as f64) / 1_000_000_000.0);
         println!("Max: {}s", (max as f64) / 1_000_000_000.0);
         println!("95%: {}s", (percentile95 as f64) / 1_000_000_000.0);
+    }
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(1);
     }
 }
