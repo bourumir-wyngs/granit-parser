@@ -1592,14 +1592,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 // Check if it is, indeed, handle.
                 if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
                     // A tag handle starting with "!!" is a secondary tag handle.
-                    let suffix = self.scan_tag_shorthand_suffix_cow(&start_mark)?;
+                    let suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, true)?;
                     (handle, suffix)
                 } else {
                     // Not a real handle, it's part of the suffix.
                     // E.g., "!foo" -> handle="!", suffix="foo"
                     // The "handle" we scanned is actually "!" + suffix_part1.
                     // We need to also scan any remaining suffix characters.
-                    let remaining_suffix = self.scan_tag_shorthand_suffix_cow(&start_mark)?;
+                    let remaining_suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, false)?;
 
                     // Extract suffix from handle (skip leading '!') and combine with remaining.
                     let suffix = if handle.len() > 1 {
@@ -1744,6 +1744,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_tag_shorthand_suffix_cow(
         &mut self,
         mark: &Marker,
+        require_non_empty: bool,
     ) -> Result<Cow<'input, str>, ScanError> {
         let Some(start) = self.input.byte_offset() else {
             return Ok(Cow::Owned(
@@ -1784,6 +1785,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.scan_tag_shorthand_suffix(false, false, "", mark)?,
             ));
         };
+
+        if require_non_empty && start == end {
+            return Err(ScanError::new_str(
+                *mark,
+                "while parsing a tag, did not find expected tag URI",
+            ));
+        }
 
         if let Some(slice) = self.try_borrow_slice(start, end) {
             Ok(Cow::Borrowed(slice))
