@@ -94,8 +94,24 @@ pub fn is_bom(c: char) -> bool {
 #[inline]
 #[must_use]
 pub fn is_yaml_non_break(c: char) -> bool {
-    // TODO(ethiraric, 28/12/2023): is_printable
-    !is_break(c) && !is_bom(c)
+    is_printable(c) && !is_break(c) && !is_bom(c)
+}
+
+/// Check whether the character is a YAML printable character (`c-printable`).
+#[inline]
+#[must_use]
+fn is_printable(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x0009
+            | 0x000A
+            | 0x000D
+            | 0x0020..=0x007E
+            | 0x0085
+            | 0x00A0..=0xD7FF
+            | 0xE000..=0xFFFD
+            | 0x10000..=0x10FFFF
+    )
 }
 
 /// Check whether the character is NOT a YAML whitespace (` ` / `\t`).

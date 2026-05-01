@@ -3586,7 +3586,7 @@ mod test {
 
     use crate::{
         input::str::StrInput,
-        scanner::{Scanner, TokenType},
+        scanner::{Scanner, Token, TokenType},
     };
 
     #[test]
@@ -3613,6 +3613,46 @@ mod test {
     }
 
     /// Ensure aliases scanned from `StrInput` are returned as `Cow::Borrowed`.
+    #[test]
+    fn anchor_name_rejects_non_printable_control_chars() {
+        let mut scanner = Scanner::new(StrInput::new("&foo\u{0001}\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("scanning should not fail")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::Anchor(name) = tok.1 {
+                assert!(matches!(name, Cow::Borrowed("foo")));
+                let next = scanner.next_token().expect("scanning should not fail");
+                if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
+                    assert!(rest.starts_with('\u{0001}'));
+                }
+                    break;
+            }
+        }
+    }
+
+    #[test]
+    fn alias_name_rejects_non_printable_control_chars() {
+        let mut scanner = Scanner::new(StrInput::new("*foo\u{0001}\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("scanning should not fail")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::Alias(name) = tok.1 {
+                assert!(matches!(name, Cow::Borrowed("foo")));
+                let next = scanner.next_token().expect("scanning should not fail");
+                if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
+                    assert!(rest.starts_with('\u{0001}'));
+                }
+                    break;
+            }
+        }
+    }
+
     #[test]
     fn alias_name_is_borrowed_for_str_input() {
         let mut scanner = Scanner::new(StrInput::new("*anch\n"));
