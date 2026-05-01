@@ -1,6 +1,6 @@
 use std::{fs::File, io::BufWriter, io::Write, path::Path};
 
-use anyhow::{Context, Error};
+use anyhow::{bail, Context, Error};
 use serde::{Deserialize, Serialize};
 
 fn main() {
@@ -26,7 +26,7 @@ fn entrypoint() -> Result<(), Error> {
     }
     match args[1].as_str() {
         "run_bench" => run_bench(&config)?,
-        "time_parse" => unimplemented!(),
+        "time_parse" => bail!("`time_parse` mode is not implemented yet"),
         _ => unreachable!(),
     }
     Ok(())
