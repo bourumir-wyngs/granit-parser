@@ -27,6 +27,8 @@ Its primary goals are:
 
 granit-parser’s public API is very similar to that of saphyr-parser, so it is typically an easy replacement. However, some changes are still breaking (crate rename, MSRV bump, lifetimes on events, Cow payloads, etc.).
 
+See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
+
 ## Minimal example
 
 `Parser::new_from_str` returns an iterator of `(Event, Span)` pairs. If you only care about parser events, you can ignore the span and match on the emitted `Event` values:
