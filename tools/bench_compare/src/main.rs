@@ -169,7 +169,7 @@ fn list_input_files(config: &Config) -> Result<Vec<String>, Error> {
         .filter(|path| {
             Path::new(path)
                 .extension()
-                .map_or(false, |ext| ext.eq_ignore_ascii_case("yaml"))
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("yaml"))
         })
         .collect())
 }

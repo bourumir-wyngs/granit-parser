@@ -5,12 +5,18 @@
 //! YAML objects.
 
 use crate::{
-    input::{str::StrInput, Input},
-    scanner::{ScanError, Scanner, Span, TScalarStyle, Token, TokenType},
-    Marker,
+    input::{str::StrInput, BorrowedInput},
+    scanner::{ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
+    BufferedInput, Marker,
 };
 
-use std::collections::HashMap;
+use alloc::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::fmt::Display;
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 enum State {
@@ -43,7 +49,7 @@ enum State {
 /// Events are used in the low-level event-based API (push parser). The API entrypoint is the
 /// [`EventReceiver`] trait.
 #[derive(Clone, PartialEq, Debug, Eq)]
-pub enum Event {
+pub enum Event<'input> {
     /// Reserved for internal use.
     Nothing,
     /// Event generated at the very beginning of parsing.
@@ -66,13 +72,18 @@ pub enum Event {
         usize,
     ),
     /// Value, style, `anchor_id`, tag
-    Scalar(String, TScalarStyle, usize, Option<Tag>),
+    Scalar(
+        Cow<'input, str>,
+        ScalarStyle,
+        usize,
+        Option<Cow<'input, Tag>>,
+    ),
     /// The start of a YAML sequence (array).
     SequenceStart(
         /// The anchor ID of the start of the sequence.
         usize,
         /// An optional tag
-        Option<Tag>,
+        Option<Cow<'input, Tag>>,
     ),
     /// The end of a YAML sequence (array).
     SequenceEnd,
@@ -81,14 +92,14 @@ pub enum Event {
         /// The anchor ID of the start of the mapping.
         usize,
         /// An optional tag
-        Option<Tag>,
+        Option<Cow<'input, Tag>>,
     ),
     /// The end of a YAML mapping (object, hash).
     MappingEnd,
 }
 
 /// A YAML tag.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, PartialEq, Debug, Eq, Ord, PartialOrd, Hash)]
 pub struct Tag {
     /// Handle of the tag (`!` included).
     pub handle: String,
@@ -96,24 +107,49 @@ pub struct Tag {
     pub suffix: String,
 }
 
-impl Event {
+impl Tag {
+    /// Returns whether the tag is a YAML tag from the core schema (`!!str`, `!!int`, ...).
+    ///
+    /// The YAML specification specifies [a list of
+    /// tags](https://yaml.org/spec/1.2.2/#103-core-schema) for the Core Schema. This function
+    /// checks whether _the handle_ (but not the suffix) is the handle for the YAML Core Schema.
+    ///
+    /// # Return
+    /// Returns `true` if the handle is `tag:yaml.org,2002`, `false` otherwise.
+    #[must_use]
+    pub fn is_yaml_core_schema(&self) -> bool {
+        self.handle == "tag:yaml.org,2002:"
+    }
+}
+
+impl Display for Tag {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.handle == "!" {
+            write!(f, "!{}", self.suffix)
+        } else {
+            write!(f, "{}!{}", self.handle, self.suffix)
+        }
+    }
+}
+
+impl<'input> Event<'input> {
     /// Create an empty scalar.
-    fn empty_scalar() -> Event {
+    fn empty_scalar() -> Self {
         // a null scalar
-        Event::Scalar("~".to_owned(), TScalarStyle::Plain, 0, None)
+        Event::Scalar("~".into(), ScalarStyle::Plain, 0, None)
     }
 
     /// Create an empty scalar with the given anchor.
-    fn empty_scalar_with_anchor(anchor: usize, tag: Option<Tag>) -> Event {
-        Event::Scalar(String::new(), TScalarStyle::Plain, anchor, tag)
+    fn empty_scalar_with_anchor(anchor: usize, tag: Option<Cow<'input, Tag>>) -> Self {
+        Event::Scalar(Cow::default(), ScalarStyle::Plain, anchor, tag)
     }
 }
 
 /// A YAML parser.
 #[derive(Debug)]
-pub struct Parser<T: Input> {
+pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The underlying scanner from which we pull tokens.
-    scanner: Scanner<T>,
+    scanner: Scanner<'input, T>,
     /// The stack of _previous_ states we were in.
     ///
     /// States are pushed in the context of subobjects to this stack. The top-most element is the
@@ -122,11 +158,18 @@ pub struct Parser<T: Input> {
     /// The state in which we currently are.
     state: State,
     /// The next token from the scanner.
-    token: Option<Token>,
+    token: Option<Token<'input>>,
     /// The next YAML event to emit.
-    current: Option<(Event, Span)>,
+    current: Option<(Event<'input>, Span)>,
+
+    /// Pending indentation hint to be attached to the next emitted event span.
+    ///
+    /// This is used to communicate indentation for block mapping keys. It is set when consuming a
+    /// `TokenType::Key` in block style, and is applied to the next emitted node event (the key
+    /// itself).
+    pending_key_indent: Option<usize>,
     /// Anchors that have been encountered in the YAML document.
-    anchors: HashMap<String, usize>,
+    anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
     ///
     /// Every anchor is given a unique ID. We use an incrementing ID and this is both the ID to
@@ -135,10 +178,10 @@ pub struct Parser<T: Input> {
     /// The tag directives (`%TAG`) the parser has encountered.
     ///
     /// Key is the handle, and value is the prefix.
-    tags: HashMap<String, String>,
+    tags: BTreeMap<String, String>,
     /// Whether we have emitted [`Event::StreamEnd`].
     ///
-    /// Emitted means that it has been returned from [`Self::next_token`]. If it is stored in
+    /// Emitted means that it has been returned from [`Self::next`]. If it is stored in
     /// [`Self::token`], this is set to `false`.
     stream_end_emitted: bool,
     /// Make tags global across all documents.
@@ -180,7 +223,7 @@ pub struct Parser<T: Input> {
 ///   - g
 ///   - h
 /// ```
-/// will emit (indented and commented for lisibility):
+/// will emit (indented and commented for visibility):
 /// ```text
 /// StreamStart, DocumentStart, MappingStart,
 ///   Scalar("a", ..), Scalar("b", ..)
@@ -191,22 +234,22 @@ pub struct Parser<T: Input> {
 ///
 /// # Example
 /// ```
-/// # use saphyr_parser::{Event, EventReceiver, Parser};
+/// # use granit_parser::{Event, EventReceiver, Parser};
 /// #
 /// /// Sink of events. Collects them into an array.
-/// struct EventSink {
-///     events: Vec<Event>,
+/// struct EventSink<'input> {
+///     events: Vec<Event<'input>>,
 /// }
 ///
 /// /// Implement `on_event`, pushing into `self.events`.
-/// impl EventReceiver for EventSink {
-///     fn on_event(&mut self, ev: Event) {
+/// impl<'input> EventReceiver<'input> for EventSink<'input> {
+///     fn on_event(&mut self, ev: Event<'input>) {
 ///         self.events.push(ev);
 ///     }
 /// }
 ///
 /// /// Load events from a yaml string.
-/// fn str_to_events(yaml: &str) -> Vec<Event> {
+/// fn str_to_events(yaml: &str) -> Vec<Event<'_>> {
 ///     let mut sink = EventSink { events: Vec::new() };
 ///     let mut parser = Parser::new_from_str(yaml);
 ///     // Load events using our sink as the receiver.
@@ -214,39 +257,81 @@ pub struct Parser<T: Input> {
 ///     sink.events
 /// }
 /// ```
-pub trait EventReceiver {
+pub trait EventReceiver<'input> {
     /// Handler called for each YAML event that is emitted by the parser.
-    fn on_event(&mut self, ev: Event);
+    fn on_event(&mut self, ev: Event<'input>);
 }
 
 /// Trait to be implemented for using the low-level parsing API.
 ///
 /// Functionally similar to [`EventReceiver`], but receives a [`Span`] as well as the event.
-pub trait SpannedEventReceiver {
+pub trait SpannedEventReceiver<'input> {
     /// Handler called for each event that occurs.
-    fn on_event(&mut self, ev: Event, span: Span);
+    fn on_event(&mut self, ev: Event<'input>, span: Span);
 }
 
-impl<R: EventReceiver> SpannedEventReceiver for R {
-    fn on_event(&mut self, ev: Event, _span: Span) {
+impl<'input, R: EventReceiver<'input>> SpannedEventReceiver<'input> for R {
+    fn on_event(&mut self, ev: Event<'input>, _span: Span) {
         self.on_event(ev);
     }
 }
 
 /// A convenience alias for a `Result` of a parser event.
-pub type ParseResult = Result<(Event, Span), ScanError>;
+pub type ParseResult<'input> = Result<(Event<'input>, Span), ScanError>;
 
-impl<'a> Parser<StrInput<'a>> {
+/// Trait extracted from `Parser` to support mocking and alternative implementations.
+pub trait ParserTrait<'input> {
+    /// Try to load the next event and return it, but do not consuming it from `self`.
+    fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>>;
+
+    /// Try to load the next event and return it, consuming it from `self`.
+    fn next_event(&mut self) -> Option<ParseResult<'input>>;
+
+    /// Load the YAML from the stream in `self`, pushing events into `recv`.
+    ///
+    /// # Errors
+    /// Returns `ScanError` when scanning or parsing the stream fails.
+    fn load<R: SpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+        multi: bool,
+    ) -> Result<(), ScanError>;
+}
+
+impl<'input> Parser<'input, StrInput<'input>> {
     /// Create a new instance of a parser from a &str.
     #[must_use]
-    pub fn new_from_str(value: &'a str) -> Self {
+    pub fn new_from_str(value: &'input str) -> Self {
+        debug_print!("\x1B[;31m>>>>>>>>>> New parser from str\x1B[;0m");
         Parser::new(StrInput::new(value))
     }
 }
 
-impl<T: Input> Parser<T> {
+impl<T> Parser<'static, BufferedInput<T>>
+where
+    T: Iterator<Item = char>,
+{
+    /// Create a new instance of a parser from an iterator of `char`s.
+    #[must_use]
+    pub fn new_from_iter(iter: T) -> Self {
+        debug_print!("\x1B[;31m>>>>>>>>>> New parser from iter\x1B[;0m");
+        Parser::new(BufferedInput::new(iter))
+    }
+}
+
+impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
+    /// Get the current anchor offset count.
+    pub fn get_anchor_offset(&self) -> usize {
+        self.anchor_id_count
+    }
+
+    /// Set the current anchor offset count.
+    pub fn set_anchor_offset(&mut self, offset: usize) {
+        self.anchor_id_count = offset;
+    }
+
     /// Create a new instance of a parser from the given input of characters.
-    pub fn new(src: T) -> Parser<T> {
+    pub fn new(src: T) -> Self {
         Parser {
             scanner: Scanner::new(src),
             states: Vec::new(),
@@ -254,10 +339,12 @@ impl<T: Input> Parser<T> {
             token: None,
             current: None,
 
-            anchors: HashMap::new(),
+            pending_key_indent: None,
+
+            anchors: BTreeMap::new(),
             // valid anchor_id starts from 1
             anchor_id_count: 1,
-            tags: HashMap::new(),
+            tags: BTreeMap::new(),
             stream_end_emitted: false,
             keep_tags: false,
         }
@@ -298,35 +385,16 @@ impl<T: Input> Parser<T> {
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
-    pub fn peek(&mut self) -> Option<Result<&(Event, Span), ScanError>> {
-        if let Some(ref x) = self.current {
-            Some(Ok(x))
-        } else {
-            if self.stream_end_emitted {
-                return None;
-            }
-            match self.next_event_impl() {
-                Ok(token) => self.current = Some(token),
-                Err(e) => return Some(Err(e)),
-            }
-            self.current.as_ref().map(Ok)
-        }
+    pub fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
+        ParserTrait::peek(self)
     }
 
     /// Try to load the next event and return it, consuming it from `self`.
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
-    pub fn next_event(&mut self) -> Option<ParseResult> {
-        if self.stream_end_emitted {
-            return None;
-        }
-
-        let tok = self.next_event_impl();
-        if matches!(tok, Ok((Event::StreamEnd, _))) {
-            self.stream_end_emitted = true;
-        }
-        Some(tok)
+    pub fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        ParserTrait::next_event(self)
     }
 
     /// Implementation function for [`Self::next_event`] without the `Option`.
@@ -334,7 +402,10 @@ impl<T: Input> Parser<T> {
     /// [`Self::next_event`] should conform to the expectations of an [`Iterator`] and return an
     /// option. This burdens the parser code. This function is used internally when an option is
     /// undesirable.
-    fn next_event_impl(&mut self) -> ParseResult {
+    fn next_event_impl<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match self.current.take() {
             None => self.parse(),
             Some(v) => Ok(v),
@@ -342,7 +413,7 @@ impl<T: Input> Parser<T> {
     }
 
     /// Peek at the next token from the scanner.
-    fn peek_token(&mut self) -> Result<&Token, ScanError> {
+    fn peek_token(&mut self) -> Result<&Token<'_>, ScanError> {
         match self.token {
             None => {
                 self.token = Some(self.scan_next_token()?);
@@ -355,18 +426,47 @@ impl<T: Input> Parser<T> {
     /// Extract and return the next token from the scanner.
     ///
     /// This function does _not_ make use of `self.token`.
-    fn scan_next_token(&mut self) -> Result<Token, ScanError> {
+    fn scan_next_token(&mut self) -> Result<Token<'input>, ScanError> {
         let token = self.scanner.next();
         match token {
             None => match self.scanner.get_error() {
-                None => Err(ScanError::new_str(self.scanner.mark(), "unexpected eof")),
+                None => Err(self.unexpected_eof()),
                 Some(e) => Err(e),
             },
             Some(tok) => Ok(tok),
         }
     }
 
-    fn fetch_token(&mut self) -> Token {
+    #[cold]
+    fn unexpected_eof(&self) -> ScanError {
+        let info = match self.state {
+            State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
+                "unexpected EOF while parsing a flow sequence"
+            }
+            State::FlowMappingFirstKey
+            | State::FlowMappingKey
+            | State::FlowMappingValue
+            | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
+            State::FlowSequenceEntryMappingKey
+            | State::FlowSequenceEntryMappingValue
+            | State::FlowSequenceEntryMappingEnd(_) => {
+                "unexpected EOF while parsing an implicit flow mapping"
+            }
+            State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
+                "unexpected EOF while parsing a block sequence"
+            }
+            State::BlockMappingFirstKey | State::BlockMappingKey | State::BlockMappingValue => {
+                "unexpected EOF while parsing a block mapping"
+            }
+            _ => "unexpected eof",
+        };
+        ScanError::new_str(self.scanner.mark(), info)
+    }
+
+    fn fetch_token<'a>(&mut self) -> Token<'a>
+    where
+        'input: 'a,
+    {
         self.token
             .take()
             .expect("fetch_token needs to be preceded by peek_token")
@@ -385,12 +485,19 @@ impl<T: Input> Parser<T> {
         self.states.push(state);
     }
 
-    fn parse(&mut self) -> ParseResult {
+    fn parse<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         if self.state == State::End {
             return Ok((Event::StreamEnd, Span::empty(self.scanner.mark())));
         }
-        let (ev, mark) = self.state_machine()?;
-        Ok((ev, mark))
+        let (ev, span) = self.state_machine()?;
+        if let Some(indent) = self.pending_key_indent.take() {
+            Ok((ev, span.with_indent(Some(indent))))
+        } else {
+            Ok((ev, span))
+        }
     }
 
     /// Load the YAML from the stream in `self`, pushing events into `recv`.
@@ -405,46 +512,17 @@ impl<T: Input> Parser<T> {
     /// former is enough to call this function.
     /// # Errors
     /// Returns `ScanError` when loading fails.
-    pub fn load<R: SpannedEventReceiver>(
+    pub fn load<R: SpannedEventReceiver<'input>>(
         &mut self,
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError> {
-        if !self.scanner.stream_started() {
-            let (ev, span) = self.next_event_impl()?;
-            if ev != Event::StreamStart {
-                return Err(ScanError::new_str(
-                    span.start,
-                    "did not find expected <stream-start>",
-                ));
-            }
-            recv.on_event(ev, span);
-        }
-
-        if self.scanner.stream_ended() {
-            // XXX has parsed?
-            recv.on_event(Event::StreamEnd, Span::empty(self.scanner.mark()));
-            return Ok(());
-        }
-        loop {
-            let (ev, span) = self.next_event_impl()?;
-            if ev == Event::StreamEnd {
-                recv.on_event(ev, span);
-                return Ok(());
-            }
-            // clear anchors before a new document
-            self.anchors.clear();
-            self.load_document(ev, span, recv)?;
-            if !multi {
-                break;
-            }
-        }
-        Ok(())
+        ParserTrait::load(self, recv, multi)
     }
 
-    fn load_document<R: SpannedEventReceiver>(
+    fn load_document<R: SpannedEventReceiver<'input>>(
         &mut self,
-        first_ev: Event,
+        first_ev: Event<'input>,
         span: Span,
         recv: &mut R,
     ) -> Result<(), ScanError> {
@@ -467,9 +545,9 @@ impl<T: Input> Parser<T> {
         Ok(())
     }
 
-    fn load_node<R: SpannedEventReceiver>(
+    fn load_node<R: SpannedEventReceiver<'input>>(
         &mut self,
-        first_ev: Event,
+        first_ev: Event<'input>,
         span: Span,
         recv: &mut R,
     ) -> Result<(), ScanError> {
@@ -487,13 +565,17 @@ impl<T: Input> Parser<T> {
                 self.load_mapping(recv)
             }
             _ => {
-                println!("UNREACHABLE EVENT: {first_ev:?}");
+                #[cfg(feature = "debug_prints")]
+                std::println!("UNREACHABLE EVENT: {first_ev:?}");
                 unreachable!();
             }
         }
     }
 
-    fn load_mapping<R: SpannedEventReceiver>(&mut self, recv: &mut R) -> Result<(), ScanError> {
+    fn load_mapping<R: SpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+    ) -> Result<(), ScanError> {
         let (mut key_ev, mut key_mark) = self.next_event_impl()?;
         while key_ev != Event::MappingEnd {
             // key
@@ -512,7 +594,10 @@ impl<T: Input> Parser<T> {
         Ok(())
     }
 
-    fn load_sequence<R: SpannedEventReceiver>(&mut self, recv: &mut R) -> Result<(), ScanError> {
+    fn load_sequence<R: SpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+    ) -> Result<(), ScanError> {
         let (mut ev, mut mark) = self.next_event_impl()?;
         while ev != Event::SequenceEnd {
             self.load_node(ev, mark, recv)?;
@@ -526,7 +611,10 @@ impl<T: Input> Parser<T> {
         Ok(())
     }
 
-    fn state_machine(&mut self) -> ParseResult {
+    fn state_machine<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         // let next_tok = self.peek_token().cloned()?;
         // println!("cur_state {:?}, next tok: {:?}", self.state, next_tok);
         debug_print!("\n\x1B[;33mParser state: {:?} \x1B[;0m", self.state);
@@ -568,7 +656,10 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn stream_start(&mut self) -> ParseResult {
+    fn stream_start<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
             Token(span, TokenType::StreamStart(_)) => {
                 self.state = State::ImplicitDocumentStart;
@@ -582,7 +673,10 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn document_start(&mut self, implicit: bool) -> ParseResult {
+    fn document_start<'a>(&mut self, implicit: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         while let TokenType::DocumentEnd = self.peek_token()?.1 {
             self.skip();
         }
@@ -597,6 +691,7 @@ impl<T: Input> Parser<T> {
                 _,
                 TokenType::VersionDirective(..)
                 | TokenType::TagDirective(..)
+                | TokenType::ReservedDirective(..)
                 | TokenType::DocumentStart,
             ) => {
                 // explicit document
@@ -617,8 +712,14 @@ impl<T: Input> Parser<T> {
 
     fn parser_process_directives(&mut self) -> Result<(), ScanError> {
         let mut version_directive_received = false;
+        let mut tags = if self.keep_tags {
+            self.tags.clone()
+        } else {
+            BTreeMap::new()
+        };
+        let mut document_tag_handles = BTreeSet::new();
+
         loop {
-            let mut tags = HashMap::new();
             match self.peek_token()? {
                 Token(span, TokenType::VersionDirective(_, _)) => {
                     // XXX parsing with warning according to spec
@@ -635,20 +736,27 @@ impl<T: Input> Parser<T> {
                     version_directive_received = true;
                 }
                 Token(mark, TokenType::TagDirective(handle, prefix)) => {
-                    if tags.contains_key(handle) {
+                    if !document_tag_handles.insert(handle.to_string()) {
                         return Err(ScanError::new_str(mark.start, "the TAG directive must only be given at most once per handle in the same document"));
                     }
                     tags.insert(handle.to_string(), prefix.to_string());
                 }
+                Token(_, TokenType::ReservedDirective(_, _)) => {
+                    // Reserved directives are ignored
+                }
                 _ => break,
             }
-            self.tags = tags;
             self.skip();
         }
+
+        self.tags = tags;
         Ok(())
     }
 
-    fn explicit_document_start(&mut self) -> ParseResult {
+    fn explicit_document_start<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         self.parser_process_directives()?;
         match *self.peek_token()? {
             Token(mark, TokenType::DocumentStart) => {
@@ -664,12 +772,16 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn document_content(&mut self) -> ParseResult {
+    fn document_content<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
             Token(
                 mark,
                 TokenType::VersionDirective(..)
                 | TokenType::TagDirective(..)
+                | TokenType::ReservedDirective(..)
                 | TokenType::DocumentStart
                 | TokenType::DocumentEnd
                 | TokenType::StreamEnd,
@@ -682,7 +794,10 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn document_end(&mut self) -> ParseResult {
+    fn document_end<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         let mut explicit_end = false;
         let span: Span = match *self.peek_token()? {
             Token(span, TokenType::DocumentEnd) => {
@@ -693,14 +808,24 @@ impl<T: Input> Parser<T> {
             Token(span, _) => span,
         };
 
-        if !self.keep_tags {
+        if self.keep_tags {
+            // Never persist default handles across document boundaries. Allowing `%TAG !! ...`
+            // or `%TAG ! ...` to leak into following documents lets earlier documents alter how
+            // explicit tags are interpreted later on.
+            self.tags.remove("!!");
+            self.tags.remove("");
+        } else {
             self.tags.clear();
         }
         if explicit_end {
             self.state = State::ImplicitDocumentStart;
         } else {
-            if let Token(span, TokenType::VersionDirective(..) | TokenType::TagDirective(..)) =
-                *self.peek_token()?
+            if let Token(
+                span,
+                TokenType::VersionDirective(..)
+                | TokenType::TagDirective(..)
+                | TokenType::ReservedDirective(..),
+            ) = *self.peek_token()?
             {
                 return Err(ScanError::new_str(
                     span.start,
@@ -713,26 +838,35 @@ impl<T: Input> Parser<T> {
         Ok((Event::DocumentEnd, span))
     }
 
-    fn register_anchor(&mut self, name: String, _: &Span) -> usize {
+    fn register_anchor(&mut self, name: Cow<'input, str>, mark: &Span) -> Result<usize, ScanError> {
         // anchors can be overridden/reused
         // if self.anchors.contains_key(name) {
         //     return Err(ScanError::new_str(*mark,
         //         "while parsing anchor, found duplicated anchor"));
         // }
         let new_id = self.anchor_id_count;
-        self.anchor_id_count += 1;
+        self.anchor_id_count = self.anchor_id_count.checked_add(1).ok_or_else(|| {
+            ScanError::new_str(
+                mark.start,
+                "while parsing anchor, anchor count exceeded supported limit",
+            )
+        })?;
         self.anchors.insert(name, new_id);
-        new_id
+        Ok(new_id)
     }
 
-    fn parse_node(&mut self, block: bool, indentless_sequence: bool) -> ParseResult {
+    #[allow(clippy::too_many_lines)]
+    fn parse_node<'a>(&mut self, block: bool, indentless_sequence: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         let mut anchor_id = 0;
         let mut tag = None;
         match *self.peek_token()? {
             Token(_, TokenType::Alias(_)) => {
                 self.pop_state();
                 if let Token(span, TokenType::Alias(name)) = self.fetch_token() {
-                    match self.anchors.get(&name) {
+                    match self.anchors.get(&*name) {
                         None => {
                             return Err(ScanError::new_str(
                                 span.start,
@@ -746,7 +880,7 @@ impl<T: Input> Parser<T> {
             }
             Token(_, TokenType::Anchor(_)) => {
                 if let Token(span, TokenType::Anchor(name)) = self.fetch_token() {
-                    anchor_id = self.register_anchor(name, &span);
+                    anchor_id = self.register_anchor(name, &span)?;
                     if let TokenType::Tag(..) = self.peek_token()?.1 {
                         if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
                             tag = Some(self.resolve_tag(span, &handle, suffix)?);
@@ -763,7 +897,7 @@ impl<T: Input> Parser<T> {
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let TokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
-                            anchor_id = self.register_anchor(name, &mark);
+                            anchor_id = self.register_anchor(name, &mark)?;
                         } else {
                             unreachable!()
                         }
@@ -808,14 +942,37 @@ impl<T: Input> Parser<T> {
                 self.pop_state();
                 Ok((Event::empty_scalar_with_anchor(anchor_id, tag), mark))
             }
-            Token(span, _) => Err(ScanError::new_str(
-                span.start,
-                "while parsing a node, did not find expected node content",
-            )),
+            Token(span, _) => {
+                let info = match self.state {
+                    State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
+                        "unexpected EOF while parsing a flow sequence"
+                    }
+                    State::FlowMappingFirstKey
+                    | State::FlowMappingKey
+                    | State::FlowMappingValue
+                    | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
+                    State::FlowSequenceEntryMappingKey
+                    | State::FlowSequenceEntryMappingValue
+                    | State::FlowSequenceEntryMappingEnd(_) => {
+                        "unexpected EOF while parsing an implicit flow mapping"
+                    }
+                    State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
+                        "unexpected EOF while parsing a block sequence"
+                    }
+                    State::BlockMappingFirstKey
+                    | State::BlockMappingKey
+                    | State::BlockMappingValue => "unexpected EOF while parsing a block mapping",
+                    _ => "while parsing a node, did not find expected node content",
+                };
+                Err(ScanError::new_str(span.start, info))
+            }
         }
     }
 
-    fn block_mapping_key(&mut self, first: bool) -> ParseResult {
+    fn block_mapping_key<'a>(&mut self, first: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         // skip BlockMappingStart
         if first {
             let _ = self.peek_token()?;
@@ -824,6 +981,10 @@ impl<T: Input> Parser<T> {
         }
         match *self.peek_token()? {
             Token(_, TokenType::Key) => {
+                // Indentation is only meaningful for block mapping keys.
+                if let Token(key_span, TokenType::Key) = *self.peek_token()? {
+                    self.pending_key_indent = Some(key_span.start.col());
+                }
                 self.skip();
                 if let Token(mark, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
                     *self.peek_token()?
@@ -853,11 +1014,14 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn block_mapping_value(&mut self) -> ParseResult {
+    fn block_mapping_value<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
-            Token(_, TokenType::Value) => {
+            Token(mark, TokenType::Value) => {
                 self.skip();
-                if let Token(mark, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
+                if let Token(_, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
                     *self.peek_token()?
                 {
                     self.state = State::BlockMappingKey;
@@ -876,7 +1040,10 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn flow_mapping_key(&mut self, first: bool) -> ParseResult {
+    fn flow_mapping_key<'a>(&mut self, first: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         if first {
             let _ = self.peek_token()?;
             self.skip();
@@ -930,7 +1097,10 @@ impl<T: Input> Parser<T> {
         Ok((Event::MappingEnd, span))
     }
 
-    fn flow_mapping_value(&mut self, empty: bool) -> ParseResult {
+    fn flow_mapping_value<'a>(&mut self, empty: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         let span: Span = {
             if empty {
                 let Token(mark, _) = *self.peek_token()?;
@@ -957,7 +1127,10 @@ impl<T: Input> Parser<T> {
         Ok((Event::empty_scalar(), span))
     }
 
-    fn flow_sequence_entry(&mut self, first: bool) -> ParseResult {
+    fn flow_sequence_entry<'a>(&mut self, first: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         // skip FlowMappingStart
         if first {
             let _ = self.peek_token()?;
@@ -999,29 +1172,36 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn indentless_sequence_entry(&mut self) -> ParseResult {
+    fn indentless_sequence_entry<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
-            Token(_, TokenType::BlockEntry) => (),
+            Token(mark, TokenType::BlockEntry) => {
+                self.skip();
+                if let Token(
+                    _,
+                    TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                ) = *self.peek_token()?
+                {
+                    self.state = State::IndentlessSequenceEntry;
+                    Ok((Event::empty_scalar(), mark))
+                } else {
+                    self.push_state(State::IndentlessSequenceEntry);
+                    self.parse_node(true, false)
+                }
+            }
             Token(mark, _) => {
                 self.pop_state();
-                return Ok((Event::SequenceEnd, mark));
+                Ok((Event::SequenceEnd, mark))
             }
-        }
-        self.skip();
-        if let Token(
-            mark,
-            TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
-        ) = *self.peek_token()?
-        {
-            self.state = State::IndentlessSequenceEntry;
-            Ok((Event::empty_scalar(), mark))
-        } else {
-            self.push_state(State::IndentlessSequenceEntry);
-            self.parse_node(true, false)
         }
     }
 
-    fn block_sequence_entry(&mut self, first: bool) -> ParseResult {
+    fn block_sequence_entry<'a>(&mut self, first: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         // BLOCK-SEQUENCE-START
         if first {
             let _ = self.peek_token()?;
@@ -1034,11 +1214,9 @@ impl<T: Input> Parser<T> {
                 self.skip();
                 Ok((Event::SequenceEnd, mark))
             }
-            Token(_, TokenType::BlockEntry) => {
+            Token(mark, TokenType::BlockEntry) => {
                 self.skip();
-                if let Token(mark, TokenType::BlockEntry | TokenType::BlockEnd) =
-                    *self.peek_token()?
-                {
+                if let Token(_, TokenType::BlockEntry | TokenType::BlockEnd) = *self.peek_token()? {
                     self.state = State::BlockSequenceEntry;
                     Ok((Event::empty_scalar(), mark))
                 } else {
@@ -1053,11 +1231,13 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn flow_sequence_entry_mapping_key(&mut self) -> ParseResult {
-        if let Token(mark, TokenType::Value | TokenType::FlowEntry | TokenType::FlowSequenceEnd) =
+    fn flow_sequence_entry_mapping_key<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(mark, TokenType::FlowEntry | TokenType::FlowSequenceEnd) =
             *self.peek_token()?
         {
-            self.skip();
             self.state = State::FlowSequenceEntryMappingValue;
             Ok((Event::empty_scalar(), mark))
         } else {
@@ -1066,7 +1246,10 @@ impl<T: Input> Parser<T> {
         }
     }
 
-    fn flow_sequence_entry_mapping_value(&mut self) -> ParseResult {
+    fn flow_sequence_entry_mapping_value<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
             Token(_, TokenType::Value) => {
                 self.skip();
@@ -1088,63 +1271,139 @@ impl<T: Input> Parser<T> {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn flow_sequence_entry_mapping_end(&mut self, mark: Marker) -> ParseResult {
+    fn flow_sequence_entry_mapping_end<'a>(&mut self, mark: Marker) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         self.state = State::FlowSequenceEntry;
         Ok((Event::MappingEnd, Span::empty(mark)))
     }
 
     /// Resolve a tag from the handle and the suffix.
-    fn resolve_tag(&self, span: Span, handle: &str, suffix: String) -> Result<Tag, ScanError> {
-        if handle == "!!" {
+    fn resolve_tag(
+        &self,
+        span: Span,
+        handle: &Cow<'input, str>,
+        suffix: Cow<'input, str>,
+    ) -> Result<Cow<'input, Tag>, ScanError> {
+        let suffix = suffix.into_owned();
+        let tag = if handle == "!!" {
             // "!!" is a shorthand for "tag:yaml.org,2002:". However, that default can be
             // overridden.
-            Ok(Tag {
+            Tag {
                 handle: self
                     .tags
                     .get("!!")
                     .map_or_else(|| "tag:yaml.org,2002:".to_string(), ToString::to_string),
                 suffix,
-            })
+            }
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
             match self.tags.get("") {
-                Some(prefix) => Ok(Tag {
-                    handle: prefix.to_string(),
+                Some(prefix) => Tag {
+                    handle: prefix.clone(),
                     suffix,
-                }),
-                None => Ok(Tag {
+                },
+                None => Tag {
                     handle: String::new(),
                     suffix,
-                }),
+                },
             }
         } else {
             // Lookup handle in our tag directives.
-            let prefix = self.tags.get(handle);
+            let prefix = self.tags.get(&**handle);
             if let Some(prefix) = prefix {
-                Ok(Tag {
-                    handle: prefix.to_string(),
+                Tag {
+                    handle: prefix.clone(),
                     suffix,
-                })
+                }
             } else {
                 // Otherwise, it may be a local handle. With a local handle, the handle is set to
                 // "!" and the suffix to whatever follows it ("!foo" -> ("!", "foo")).
                 // If the handle is of the form "!foo!", this cannot be a local handle and we need
                 // to error.
                 if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
-                    Err(ScanError::new_str(span.start, "the handle wasn't declared"))
-                } else {
-                    Ok(Tag {
-                        handle: handle.to_string(),
-                        suffix,
-                    })
+                    return Err(ScanError::new_str(span.start, "the handle wasn't declared"));
+                }
+                Tag {
+                    handle: handle.to_string(),
+                    suffix,
                 }
             }
-        }
+        };
+        Ok(Cow::Owned(tag))
     }
 }
 
-impl<T: Input> Iterator for Parser<T> {
-    type Item = Result<(Event, Span), ScanError>;
+impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T> {
+    fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
+        if let Some(ref x) = self.current {
+            Some(Ok(x))
+        } else {
+            if self.stream_end_emitted {
+                return None;
+            }
+            match self.next_event_impl() {
+                Ok(token) => self.current = Some(token),
+                Err(e) => return Some(Err(e)),
+            }
+            self.current.as_ref().map(Ok)
+        }
+    }
+
+    fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        if self.stream_end_emitted {
+            return None;
+        }
+
+        let tok = self.next_event_impl();
+        if matches!(tok, Ok((Event::StreamEnd, _))) {
+            self.stream_end_emitted = true;
+        }
+        Some(tok)
+    }
+
+    fn load<R: SpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+        multi: bool,
+    ) -> Result<(), ScanError> {
+        let stream_start_buffered = matches!(self.current.as_ref(), Some((Event::StreamStart, _)));
+        if !self.scanner.stream_started() || stream_start_buffered {
+            let (ev, span) = self.next_event_impl()?;
+            if ev != Event::StreamStart {
+                return Err(ScanError::new_str(
+                    span.start,
+                    "did not find expected <stream-start>",
+                ));
+            }
+            recv.on_event(ev, span);
+        }
+
+        if self.scanner.stream_ended() {
+            // XXX has parsed?
+            recv.on_event(Event::StreamEnd, Span::empty(self.scanner.mark()));
+            return Ok(());
+        }
+        loop {
+            let (ev, span) = self.next_event_impl()?;
+            if ev == Event::StreamEnd {
+                recv.on_event(ev, span);
+                return Ok(());
+            }
+            // clear anchors before a new document
+            self.anchors.clear();
+            self.load_document(ev, span, recv)?;
+            if !multi {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'input, T: BorrowedInput<'input>> Iterator for Parser<'input, T> {
+    type Item = Result<(Event<'input>, Span), ScanError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_event()
@@ -1153,7 +1412,9 @@ impl<T: Input> Iterator for Parser<T> {
 
 #[cfg(test)]
 mod test {
-    use super::{Event, Parser};
+    use alloc::vec::Vec;
+
+    use super::{Event, EventReceiver, Parser};
 
     #[test]
     fn test_peek_eq_parse() {
@@ -1181,6 +1442,60 @@ a5: *x
     }
 
     #[test]
+    fn test_multiple_tag_directives_are_kept_within_document() {
+        let text = r"
+%TAG !a! tag:a,2024:
+%TAG !b! tag:b,2024:
+---
+first: !a!x foo
+second: !b!y bar
+";
+
+        let mut seen_a = false;
+        let mut seen_b = false;
+        for event in Parser::new_from_str(text) {
+            let (event, _) = event.unwrap();
+            if let Event::Scalar(_, _, _, Some(tag)) = event {
+                if tag.handle == "tag:a,2024:" {
+                    seen_a = true;
+                } else if tag.handle == "tag:b,2024:" {
+                    seen_b = true;
+                }
+            }
+        }
+
+        assert!(seen_a);
+        assert!(seen_b);
+    }
+
+    #[test]
+    fn test_tags_are_cleared_when_next_document_has_no_directives() {
+        let text = r"
+%TAG !t! tag:test,2024:
+--- !t!1
+foo
+--- !t!2
+bar
+";
+
+        let mut parser = Parser::new_from_str(text);
+        for event in parser.by_ref() {
+            let (event, _) = event.unwrap();
+            if let Event::DocumentEnd = event {
+                break;
+            }
+        }
+
+        match parser.next().unwrap().unwrap().0 {
+            Event::DocumentStart(true) => {}
+            _ => panic!("expected explicit second document start"),
+        }
+
+        let err = parser.next().unwrap().unwrap_err();
+        assert!(format!("{err}").contains("the handle wasn't declared"));
+    }
+
+    #[test]
     fn test_keep_tags_across_multiple_documents() {
         let text = r#"
 %YAML 1.1
@@ -1205,5 +1520,53 @@ baz: "qux"
             }
         }
         panic!("Test failed, did not encounter error")
+    }
+
+    #[test]
+    fn test_flow_sequence_mapping_allows_empty_key() {
+        let parser = Parser::new_from_str("[?: value]");
+        for event in parser {
+            event.expect("parser should accept flow sequence mappings with empty keys");
+        }
+    }
+
+    #[test]
+    fn test_keep_tags_does_not_persist_default_tag_handles() {
+        let text = "%TAG !! tag:evil,2024:\n--- !!int 1\n--- !!int 2\n";
+
+        let mut int_tags = Vec::new();
+        for event in Parser::new_from_str(text).keep_tags(true) {
+            let event = event.unwrap().0;
+            if let Event::Scalar(_, _, _, Some(tag)) = event {
+                if tag.suffix == "int" {
+                    int_tags.push(tag.handle.clone());
+                }
+            }
+        }
+
+        assert_eq!(int_tags, vec!["tag:evil,2024:", "tag:yaml.org,2002:"]);
+    }
+
+    #[test]
+    fn test_load_after_peek_stream_start() {
+        #[derive(Default)]
+        struct Sink<'input> {
+            events: Vec<Event<'input>>,
+        }
+
+        impl<'input> EventReceiver<'input> for Sink<'input> {
+            fn on_event(&mut self, ev: Event<'input>) {
+                self.events.push(ev);
+            }
+        }
+
+        let mut parser = Parser::new_from_str("key: value\n");
+        let mut sink = Sink::default();
+
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamStart);
+        parser.load(&mut sink, false).unwrap();
+
+        assert!(matches!(sink.events.first(), Some(Event::StreamStart)));
+        assert!(matches!(sink.events.get(1), Some(Event::DocumentStart(_))));
     }
 }
