@@ -110,7 +110,7 @@ fn is_printable(c: char) -> bool {
             | 0x0085
             | 0x00A0..=0xD7FF
             | 0xE000..=0xFFFD
-            | 0x10000..=0x10FFFF
+            | 0x10000..=0x0010_FFFF
     )
 }
 

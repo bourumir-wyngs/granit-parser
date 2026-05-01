@@ -61,13 +61,15 @@ fn tab_at_start_of_block_scalar_is_rejected() {
 #[test]
 fn explicit_indent_root_literal_can_end_before_document_start() {
     let yaml = "|2\n---\n";
-    let scalars = collect_scalars(yaml).expect("parser should accept empty explicit-indented block scalar");
+    let scalars =
+        collect_scalars(yaml).expect("parser should accept empty explicit-indented block scalar");
     assert_eq!(scalars.first().map(String::as_str), Some(""));
 }
 
 #[test]
 fn explicit_indent_root_literal_can_end_before_comment() {
     let yaml = "|2\n# comment\n";
-    let scalars = collect_scalars(yaml).expect("parser should accept empty explicit-indented block scalar before comment");
+    let scalars = collect_scalars(yaml)
+        .expect("parser should accept empty explicit-indented block scalar before comment");
     assert_eq!(scalars, vec!["".to_string()]);
 }

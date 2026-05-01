@@ -42,7 +42,10 @@ fn run() -> Result<(), String> {
     let output_yaml = args.len() == 4 && args[3] == "--output-yaml";
     if args.len() == 4 && !output_yaml {
         usage(&args[0]);
-        return Err(format!("unknown option '{}'; expected --output-yaml", args[3]));
+        return Err(format!(
+            "unknown option '{}'; expected --output-yaml",
+            args[3]
+        ));
     }
 
     let mut f = File::open(&args[1]).map_err(|e| format!("failed to open '{}': {e}", args[1]))?;

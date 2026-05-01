@@ -1604,7 +1604,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     // E.g., "!foo" -> handle="!", suffix="foo"
                     // The "handle" we scanned is actually "!" + suffix_part1.
                     // We need to also scan any remaining suffix characters.
-                    let remaining_suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, false)?;
+                    let remaining_suffix =
+                        self.scan_tag_shorthand_suffix_cow(&start_mark, false)?;
 
                     // Extract suffix from handle (skip leading '!') and combine with remaining.
                     let suffix = if handle.len() > 1 {
@@ -1974,7 +1975,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 ));
             }
 
-            let byte = (as_hex(c) << 4) + as_hex(nc);
+            let byte = u8::try_from((as_hex(c) << 4) + as_hex(nc))
+                .expect("two hex nibbles always fit in a byte");
             if width == 0 {
                 width = match byte {
                     _ if byte & 0x80 == 0x00 => 1,
@@ -1995,7 +1997,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 ));
             }
 
-            bytes[bytes_len] = byte as u8;
+            bytes[bytes_len] = byte;
             bytes_len += 1;
 
             self.skip_n_non_blank(3);
@@ -3589,8 +3591,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             .last()
             .is_some_and(|state| *state == ImplicitMappingState::Inside(flow_level))
         {
-            *self.implicit_flow_mapping_states.last_mut().unwrap() =
-                ImplicitMappingState::Possible;
+            *self.implicit_flow_mapping_states.last_mut().unwrap() = ImplicitMappingState::Possible;
             self.set_current_flow_mapping_started(false);
             self.tokens
                 .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd));
@@ -3731,7 +3732,7 @@ mod test {
                 if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
                     assert!(rest.starts_with('\u{0001}'));
                 }
-                    break;
+                break;
             }
         }
     }
@@ -3751,7 +3752,7 @@ mod test {
                 if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
                     assert!(rest.starts_with('\u{0001}'));
                 }
-                    break;
+                break;
             }
         }
     }

@@ -1051,50 +1051,47 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             let _ = self.peek_token()?;
             self.skip();
         }
-        let span: Span = {
-            match *self.peek_token()? {
-                Token(mark, TokenType::FlowMappingEnd) => mark,
-                Token(_, _) => {
-                    if !first {
-                        match *self.peek_token()? {
-                            Token(_, TokenType::FlowEntry) => self.skip(),
-                            Token(span, _) => return Err(ScanError::new_str(
-                                span.start,
-                                "while parsing a flow mapping, did not find expected ',' or '}'",
-                            )),
-                        }
-                    }
-
-                    match *self.peek_token()? {
-                        Token(_, TokenType::Key) => {
-                            self.skip();
-                            if let Token(
-                                mark,
-                                TokenType::Value | TokenType::FlowEntry | TokenType::FlowMappingEnd,
-                            ) = *self.peek_token()?
-                            {
-                                self.state = State::FlowMappingValue;
-                                return Ok((Event::empty_scalar(), mark));
-                            }
-                            self.push_state(State::FlowMappingValue);
-                            return self.parse_node(false, false);
-                        }
-                        Token(marker, TokenType::Value) => {
-                            self.state = State::FlowMappingValue;
-                            return Ok((Event::empty_scalar(), marker));
-                        }
-                        Token(_, TokenType::FlowMappingEnd) => (),
-                        _ => {
-                            self.push_state(State::FlowMappingEmptyValue);
-                            return self.parse_node(false, false);
-                        }
-                    }
-
-                    match *self.peek_token()? {
-                        Token(mark, _) => mark,
+        let span: Span = if let Token(mark, TokenType::FlowMappingEnd) = *self.peek_token()? {
+            mark
+        } else {
+            if !first {
+                match *self.peek_token()? {
+                    Token(_, TokenType::FlowEntry) => self.skip(),
+                    Token(span, _) => {
+                        return Err(ScanError::new_str(
+                            span.start,
+                            "while parsing a flow mapping, did not find expected ',' or '}'",
+                        ))
                     }
                 }
             }
+
+            match *self.peek_token()? {
+                Token(_, TokenType::Key) => {
+                    self.skip();
+                    if let Token(
+                        mark,
+                        TokenType::Value | TokenType::FlowEntry | TokenType::FlowMappingEnd,
+                    ) = *self.peek_token()?
+                    {
+                        self.state = State::FlowMappingValue;
+                        return Ok((Event::empty_scalar(), mark));
+                    }
+                    self.push_state(State::FlowMappingValue);
+                    return self.parse_node(false, false);
+                }
+                Token(marker, TokenType::Value) => {
+                    self.state = State::FlowMappingValue;
+                    return Ok((Event::empty_scalar(), marker));
+                }
+                Token(_, TokenType::FlowMappingEnd) => (),
+                _ => {
+                    self.push_state(State::FlowMappingEmptyValue);
+                    return self.parse_node(false, false);
+                }
+            }
+
+            self.peek_token()?.0
         };
 
         self.pop_state();
@@ -1513,9 +1510,11 @@ bar
 
     #[test]
     fn test_pull_parser_clears_anchors_between_documents() {
-        let mut parser = Parser::new_from_str("--- &a value
+        let mut parser = Parser::new_from_str(
+            "--- &a value
 --- *a
-");
+",
+        );
 
         for event in parser.by_ref() {
             let (event, _) = event.unwrap();
