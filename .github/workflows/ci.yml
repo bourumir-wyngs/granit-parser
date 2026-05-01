@@ -65,3 +65,30 @@ jobs:
         run: cargo build
       - name: Run tests
         run: cargo test -v
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        run: |
+          cargo install cargo-llvm-cov --locked
+
+      - name: Generate code coverage
+        run: |
+          cargo llvm-cov --all-features --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: bourumir-wyngs/serde-saphyr
+          files: lcov.info
+          fail_ci_if_error: true
