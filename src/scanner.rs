@@ -1954,7 +1954,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     fn scan_uri_escapes(&mut self, mark: &Marker) -> Result<char, ScanError> {
         let mut width = 0usize;
-        let mut code = 0u32;
+        let mut bytes = [0u8; 4];
+        let mut bytes_len = 0usize;
         loop {
             self.input.lookahead(3);
 
@@ -1982,16 +1983,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         ));
                     }
                 };
-                code = byte;
-            } else {
-                if byte & 0xc0 != 0x80 {
-                    return Err(ScanError::new_str(
-                        *mark,
-                        "while parsing a tag, found an incorrect trailing UTF-8 byte",
-                    ));
-                }
-                code = (code << 8) + byte;
+            } else if byte & 0xc0 != 0x80 {
+                return Err(ScanError::new_str(
+                    *mark,
+                    "while parsing a tag, found an incorrect trailing UTF-8 byte",
+                ));
             }
+
+            bytes[bytes_len] = byte as u8;
+            bytes_len += 1;
 
             self.skip_n_non_blank(3);
 
@@ -2001,9 +2001,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        match char::from_u32(code) {
-            Some(ch) => Ok(ch),
-            None => Err(ScanError::new_str(
+        let s = core::str::from_utf8(&bytes[..bytes_len]).map_err(|_| {
+            ScanError::new_str(
+                *mark,
+                "while parsing a tag, found an invalid UTF-8 codepoint",
+            )
+        })?;
+
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (Some(ch), None) => Ok(ch),
+            _ => Err(ScanError::new_str(
                 *mark,
                 "while parsing a tag, found an invalid UTF-8 codepoint",
             )),
