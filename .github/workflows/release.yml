@@ -54,7 +54,9 @@ jobs:
           fi
 
       - name: Prefetch dependencies
-        run: cargo fetch --locked
+        run: |
+          cargo fetch --locked
+          cargo +"${MSRV}" fetch --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check
