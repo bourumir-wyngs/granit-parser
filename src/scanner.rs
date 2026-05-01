@@ -1631,7 +1631,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             };
 
         if is_blank_or_breakz(self.input.look_ch())
-            || (self.flow_level > 0 && self.input.next_is_flow())
+            || (self.flow_level > 0 && matches!(self.input.peek(), ',' | ']' | '}'))
         {
             // XXX: ex 7.2, an empty scalar can follow a secondary tag
             Ok(Token(
@@ -1675,7 +1675,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if is_blank_or_breakz(self.input.look_ch())
-            || (self.flow_level > 0 && self.input.next_is_flow())
+            || (self.flow_level > 0 && matches!(self.input.peek(), ',' | ']' | '}'))
         {
             // XXX: ex 7.2, an empty scalar can follow a secondary tag
             Ok(Token(
