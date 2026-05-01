@@ -25,6 +25,9 @@ use crate::{
     input::{BorrowedInput, SkipTabs},
 };
 
+/// Maximum number of characters the scanner may look ahead while disambiguating a simple key.
+const SIMPLE_KEY_MAX_LOOKAHEAD: usize = 1024;
+
 /// The encoding of the input. Currently, only UTF-8 is supported.
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 pub enum TEncoding {
@@ -1198,11 +1201,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// This function returns an error if one of the key we would stale was required to be a key.
     fn stale_simple_keys(&mut self) -> ScanResult {
         for sk in &mut self.simple_keys {
-            if sk.possible
-                // If not in a flow construct, simple keys cannot span multiple lines.
-                && self.flow_level == 0
-                && (sk.mark.line < self.mark.line || sk.mark.index() + 1024 < self.mark.index())
-            {
+            let is_line_stale = self.flow_level == 0 && sk.mark.line < self.mark.line;
+            // The length cap applies in flow contexts too; otherwise token buffering can grow
+            // without bound while the scanner waits to see whether a later ':' resolves the key.
+            let is_length_stale =
+                self.mark.index().saturating_sub(sk.mark.index()) > SIMPLE_KEY_MAX_LOOKAHEAD;
+
+            if sk.possible && (is_line_stale || is_length_stale) {
                 if sk.required {
                     return Err(ScanError::new_str(self.mark, "simple key expect ':'"));
                 }
@@ -3624,17 +3629,73 @@ pub enum Chomping {
 
 #[cfg(test)]
 mod test {
-    use alloc::borrow::Cow;
+    use alloc::{borrow::Cow, rc::Rc, string::String, vec::Vec};
+    use core::cell::Cell;
 
     use crate::{
-        input::str::StrInput,
+        input::{str::StrInput, BufferedInput},
         scanner::{Scanner, Token, TokenType},
     };
+
+    struct CountingChars {
+        chars: alloc::vec::IntoIter<char>,
+        read: Rc<Cell<usize>>,
+    }
+
+    impl Iterator for CountingChars {
+        type Item = char;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let next = self.chars.next();
+            if next.is_some() {
+                self.read.set(self.read.get() + 1);
+            }
+            next
+        }
+    }
 
     #[test]
     fn test_is_anchor_char() {
         use super::is_anchor_char;
         assert!(is_anchor_char('x'));
+    }
+
+    #[test]
+    fn flow_simple_key_length_limit_bounds_buffering() {
+        let mut yaml = String::from("[\n\"start\"\n");
+        for _ in 0..600 {
+            yaml.push_str("\"x\"\n");
+        }
+        let total_chars = yaml.chars().count();
+        let read = Rc::new(Cell::new(0));
+        let chars = yaml.chars().collect::<Vec<_>>().into_iter();
+        let mut scanner = Scanner::new(BufferedInput::new(CountingChars {
+            chars,
+            read: Rc::clone(&read),
+        }));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+
+        let token = scanner.next_token().unwrap().unwrap();
+        assert!(matches!(token.1, TokenType::FlowSequenceStart));
+
+        let token = scanner.next_token().unwrap().unwrap();
+        assert!(matches!(
+            token.1,
+            TokenType::Scalar(_, ref value) if value == "start"
+        ));
+        assert!(
+            read.get() < total_chars,
+            "scanner consumed all {total_chars} chars before yielding the first flow scalar"
+        );
+        assert!(
+            read.get() <= super::SIMPLE_KEY_MAX_LOOKAHEAD + 128,
+            "scanner read {} chars before yielding the first flow scalar",
+            read.get()
+        );
     }
 
     /// Ensure anchors scanned from `StrInput` are returned as `Cow::Borrowed`.
