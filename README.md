@@ -17,13 +17,13 @@
 
 **granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std support, and spans for parser events.
 
-This crate started as a fork of [`saphyr-parser`](https://crates.io/crates/saphyr-parser) that descends from [`yaml-rust`](https://github.com/chyh1990/yaml-rust), with influences from `libyaml` and `yaml-cpp`. The project has since diverged significantly and is now maintained as an independent project.
+This crate started as a fork of [saphyr-parser](https://crates.io/crates/saphyr-parser) that descends from [yaml-rust](https://github.com/chyh1990/yaml-rust), with influences from [libyaml](https://crates.io/crates/libyaml) and [yaml-cpp](https://github.com/jbeder/yaml-cpp). The project has since diverged significantly and is now maintained as an independent project.
 
 Its primary goals are:
 
 * full compliance with the [yaml-test-suite](https://github.com/yaml/yaml-test-suite), including correctness in edge cases
 * compatibility with real-world YAML usage
-* quickly incorporate the changes we need for the upstream dependency serde-saphyr
+* quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
 `granit-parser`’s public API is very similar to that of `saphyr-parser`, so it is typically an easy replacement. However, some changes are still breaking (crate rename, MSRV bump, lifetimes on events, Cow payloads, etc.).
 
