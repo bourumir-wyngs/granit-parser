@@ -333,15 +333,8 @@ fn test_parser_stack_load_single() {
     assert_eq!(
         names,
         vec![
-            // p2 (inner document doesn't trigger multi check because the document end logic applies based on the event)
-            // Wait, multi=false means we stop after the first DocumentEnd.
-            // p2 ends with a DocumentEnd internally but ParserStack doesn't emit DocumentEnd for inner parsers?
-            // Actually, wait, let's see how format_events looks for p2 in previous test:
-            // "MapStart", "Scalar(b)", "Scalar(2)", "MapEnd"
-            // There is no DocEnd for p2 in the output of ParserStack!
-            // Therefore, load with multi=false will stop after p1's FIRST DocEnd!
-            // Wait, so it will yield:
-            // p2
+            // Nested parsers are inlined as subtree events, so their DocumentEnd is suppressed.
+            // With multi = false, loading stops at the first DocumentEnd emitted by the parent parser.
             "MapStart",
             "Scalar(b)",
             "Scalar(2)",

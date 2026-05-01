@@ -66,3 +66,30 @@ fn test_unclosed_quoted_scalar_at_eof() {
     assert_eq!(err.info(), "unclosed quote");
     assert_eq!(err.marker().index(), 5);
 }
+
+fn first_error(input: &str) -> (String, usize) {
+    let err = Parser::new_from_str(input)
+        .find_map(Result::err)
+        .expect("input should fail");
+    (err.info().to_owned(), err.marker().index())
+}
+
+#[test]
+fn mismatched_sequence_closed_by_mapping_brace_reports_mismatch() {
+    let (err, index) = first_error("[}");
+    assert!(
+        err.contains("mismatched bracket"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(index, 0);
+}
+
+#[test]
+fn mismatched_mapping_closed_by_sequence_bracket_reports_mismatch() {
+    let (err, index) = first_error("{]");
+    assert!(
+        err.contains("mismatched bracket"),
+        "unexpected error: {err}"
+    );
+    assert_eq!(index, 0);
+}

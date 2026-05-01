@@ -417,18 +417,22 @@ impl Input for StrInput<'_> {
     }
 
     fn fetch_while_is_yaml_non_space(&mut self, out: &mut String) -> usize {
-        let byte_pos = self
-            .buffer
-            .chars()
-            .take_while(|c| crate::char_traits::is_yaml_non_space(*c))
-            .map(char::len_utf8)
-            .sum();
+        let mut byte_pos = 0;
+        let mut chars_consumed = 0;
+
+        for (i, c) in self.buffer.char_indices() {
+            if !crate::char_traits::is_yaml_non_space(c) || crate::char_traits::is_z(c) {
+                break;
+            }
+
+            byte_pos = i + c.len_utf8();
+            chars_consumed += 1;
+        }
 
         out.push_str(&self.buffer[..byte_pos]);
-
         self.buffer = &self.buffer[byte_pos..];
 
-        byte_pos
+        chars_consumed
     }
 
     fn fetch_plain_scalar_chunk(

@@ -504,14 +504,18 @@ pub trait Input {
     /// Return the number of characters that were consumed. The number of characters returned can
     /// be used to advance the index and column, since no end-of-line character will be consumed.
     fn fetch_while_is_yaml_non_space(&mut self, out: &mut String) -> usize {
-        let mut n_bytes = 0;
-        while crate::char_traits::is_yaml_non_space(self.look_ch()) && !is_z(self.look_ch()) {
+        let mut chars_consumed = 0;
+        loop {
+            let c = self.look_ch();
+            if !crate::char_traits::is_yaml_non_space(c) || is_z(c) {
+                break;
+            }
             let c = self.peek();
-            n_bytes += c.len_utf8();
             out.push(c);
             self.skip();
+            chars_consumed += 1;
         }
-        n_bytes
+        chars_consumed
     }
 
     /// Fetch a chunk of plain scalar characters.

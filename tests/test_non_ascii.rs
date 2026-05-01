@@ -94,3 +94,28 @@ fn test_non_ascii_comment_error_marker_matches_between_backends() {
     assert_eq!(str_error.marker().line(), 2);
     assert_eq!(str_error.marker().col(), 11);
 }
+
+#[test]
+fn non_ascii_reserved_directive_marker_matches_between_backends() {
+    let yaml = "%FOO café\n%YAML 1.1 1.2\n---\n";
+
+    let str_error = first_error_from_str(yaml);
+    let iter_error = first_error_from_iter(yaml);
+
+    assert_eq!(iter_error.info(), str_error.info());
+    assert_eq!(
+        (
+            iter_error.marker().index(),
+            iter_error.marker().line(),
+            iter_error.marker().col(),
+        ),
+        (
+            str_error.marker().index(),
+            str_error.marker().line(),
+            str_error.marker().col(),
+        )
+    );
+    assert_eq!(str_error.marker().index(), 10);
+    assert_eq!(str_error.marker().line(), 2);
+    assert_eq!(str_error.marker().col(), 0);
+}

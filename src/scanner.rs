@@ -2100,9 +2100,25 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return Err(ScanError::new_str(self.mark, "misplaced bracket"));
         }
 
+        let Some((open_mark, open_ch)) = self.flow_markers.pop() else {
+            return Err(ScanError::new_str(self.mark, "misplaced bracket"));
+        };
+
+        let (expected_open, actual_close) = match tok {
+            TokenType::FlowSequenceEnd => ('[', ']'),
+            TokenType::FlowMappingEnd => ('{', '}'),
+            _ => unreachable!("flow collection end called with non-closing token"),
+        };
+
+        if open_ch != expected_open {
+            return Err(ScanError::new(
+                open_mark,
+                format!("mismatched bracket '{open_ch}' closed by '{actual_close}'"),
+            ));
+        }
+
         let flow_level = self.flow_level;
 
-        self.flow_markers.pop();
         self.remove_simple_key()?;
 
         if matches!(tok, TokenType::FlowSequenceEnd) {
