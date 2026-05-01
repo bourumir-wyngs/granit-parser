@@ -11,7 +11,7 @@ authors = [
   "Bourumir Wyngs <bourumir-wyngs@gmail.com>"
 ]
 categories = [ "encoding", "parser-implementations" ]
-description = "A YAML 1.2 parser in pure Rust with strict compliance"
+description = "A YAML parser in pure Rust with strict compliance"
 documentation = "https://docs.rs/granit-parser/latest/granit_parser"
 edition = "2021"
 keywords = [ "yaml", "parser", "no-std" ]
