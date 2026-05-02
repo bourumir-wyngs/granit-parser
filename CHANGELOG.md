@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.0.2
+
+**Features**:
+
+- Added `TryEventReceiver`, `TrySpannedEventReceiver`, `TryLoadError`,
+  `Parser::try_load`, and `ParserTrait::try_load` for receiver-style parsing
+  that can fail fast with an application error. The existing `load` API remains
+  unchanged for infallible receivers.
+
 ## v0.0.1
 
 Initial `granit-parser` release after splitting the parser into its own

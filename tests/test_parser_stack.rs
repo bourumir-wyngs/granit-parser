@@ -9,7 +9,7 @@ use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
     BorrowedInput, Event, Marker, Parser, ParserTrait, ScalarStyle, Span, SpannedEventReceiver,
-    StrInput,
+    StrInput, TryEventReceiver, TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -299,6 +299,24 @@ impl<'input> SpannedEventReceiver<'input> for TestReceiver<'input> {
     }
 }
 
+struct TryTestReceiver<'input> {
+    events: Vec<Event<'input>>,
+}
+
+impl<'input> TryEventReceiver<'input> for TryTestReceiver<'input> {
+    type Error = &'static str;
+
+    fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
+        let should_fail = matches!(&ev, Event::Scalar(value, ..) if value.as_ref() == "stop");
+        self.events.push(ev);
+        if should_fail {
+            Err("stop requested")
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[test]
 fn test_parser_stack_load() {
     let mut stack: MyStack = ParserStack::new();
@@ -338,6 +356,29 @@ fn test_parser_stack_load() {
             "StreamEnd"
         ]
     );
+}
+
+#[test]
+fn test_parser_stack_try_load_stops_on_receiver_error() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("a: stop\nafter: value\n"),
+        "p1".to_string(),
+    );
+
+    let mut recv = TryTestReceiver { events: Vec::new() };
+
+    let err = stack.try_load(&mut recv, true).unwrap_err();
+
+    assert_eq!(err, TryLoadError::Receiver("stop requested"));
+    assert!(recv
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::Scalar(value, ..) if value == "stop")));
+    assert!(!recv
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::Scalar(value, ..) if value == "after")));
 }
 
 #[test]
