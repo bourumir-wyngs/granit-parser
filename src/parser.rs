@@ -1415,9 +1415,35 @@ impl<'input, T: BorrowedInput<'input>> Iterator for Parser<'input, T> {
 
 #[cfg(test)]
 mod test {
-    use alloc::{borrow::ToOwned, string::ToString, vec::Vec};
+    use alloc::{
+        borrow::ToOwned,
+        string::{String, ToString},
+        vec::Vec,
+    };
+
+    use crate::scanner::ScalarStyle;
 
     use super::{Event, EventReceiver, Parser, Tag};
+
+    #[derive(Default)]
+    struct CollectingSink<'input> {
+        events: Vec<Event<'input>>,
+    }
+
+    impl<'input> EventReceiver<'input> for CollectingSink<'input> {
+        fn on_event(&mut self, ev: Event<'input>) {
+            self.events.push(ev);
+        }
+    }
+
+    fn first_error_info(input: &str) -> String {
+        for event in Parser::new_from_str(input) {
+            if let Err(err) = event {
+                return err.info().to_owned();
+            }
+        }
+        panic!("expected parser error")
+    }
 
     #[test]
     fn display_resolved_core_tag_without_extra_bang() {
@@ -1427,6 +1453,22 @@ mod test {
         };
 
         assert_eq!(tag.to_string(), "tag:yaml.org,2002:str");
+    }
+
+    #[test]
+    fn tag_helpers_distinguish_core_and_local_tags() {
+        let core = Tag {
+            handle: "tag:yaml.org,2002:".to_owned(),
+            suffix: "int".to_owned(),
+        };
+        let local = Tag {
+            handle: "!".to_owned(),
+            suffix: "thing".to_owned(),
+        };
+
+        assert!(core.is_yaml_core_schema());
+        assert!(!local.is_yaml_core_schema());
+        assert_eq!(local.to_string(), "!thing");
     }
 
     #[test]
@@ -1452,6 +1494,168 @@ a5: *x
                 break;
             }
         }
+    }
+
+    #[test]
+    fn test_peek_and_next_return_none_after_stream_end() {
+        let mut parser = Parser::new_from_str("");
+
+        assert!(matches!(
+            parser.next_event().unwrap().unwrap().0,
+            Event::StreamStart
+        ));
+        assert!(matches!(
+            parser.next_event().unwrap().unwrap().0,
+            Event::StreamEnd
+        ));
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
+    fn test_load_after_stream_already_ended_emits_stream_end() {
+        let mut parser = Parser::new_from_str("");
+        while parser.next_event().is_some() {}
+
+        let mut sink = CollectingSink::default();
+        parser.load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::StreamEnd]);
+    }
+
+    #[test]
+    fn test_load_visits_nested_collection_events() {
+        let mut parser = Parser::new_from_str("root:\n  - item: value\n  - [a, b]\n");
+        let mut sink = CollectingSink::default();
+
+        parser.load(&mut sink, true).unwrap();
+
+        assert_eq!(
+            sink.events,
+            vec![
+                Event::StreamStart,
+                Event::DocumentStart(false),
+                Event::MappingStart(0, None),
+                Event::Scalar("root".into(), ScalarStyle::Plain, 0, None),
+                Event::SequenceStart(0, None),
+                Event::MappingStart(0, None),
+                Event::Scalar("item".into(), ScalarStyle::Plain, 0, None),
+                Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+                Event::MappingEnd,
+                Event::SequenceStart(0, None),
+                Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
+                Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+                Event::SequenceEnd,
+                Event::SequenceEnd,
+                Event::MappingEnd,
+                Event::DocumentEnd,
+                Event::StreamEnd,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_load_single_document_stops_before_next_document() {
+        let mut parser = Parser::new_from_str("a: 1\n---\nb: 2\n");
+        let mut sink = CollectingSink::default();
+
+        parser.load(&mut sink, false).unwrap();
+
+        assert!(sink
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "a")));
+        assert!(!sink
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "b")));
+        assert!(matches!(sink.events.last(), Some(Event::DocumentEnd)));
+    }
+
+    #[test]
+    fn test_duplicate_version_directive_errors() {
+        assert_eq!(
+            first_error_info("%YAML 1.2\n%YAML 1.2\n---\n"),
+            "duplicate version directive"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_tag_directive_errors() {
+        assert_eq!(
+            first_error_info("%TAG !t! tag:test,2024:\n%TAG !t! tag:other,2024:\n---\n"),
+            "the TAG directive must only be given at most once per handle in the same document"
+        );
+    }
+
+    #[test]
+    fn test_directive_after_implicit_document_requires_explicit_end() {
+        assert_eq!(
+            first_error_info("---\nkey: value\n%YAML 1.2\n---\n"),
+            "missing explicit document end marker before directive"
+        );
+    }
+
+    #[test]
+    fn test_anchor_offset_overflow_reports_error() {
+        let mut parser = Parser::new_from_str("&a value");
+        parser.set_anchor_offset(usize::MAX);
+
+        let err = parser
+            .find_map(Result::err)
+            .expect("anchor registration should overflow");
+
+        assert_eq!(
+            err.info(),
+            "while parsing anchor, anchor count exceeded supported limit"
+        );
+    }
+
+    #[test]
+    fn test_alias_resolves_to_registered_anchor_id() {
+        let events = Parser::new_from_str("- &a value\n- *a\n")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        assert!(events.iter().any(|event| matches!(event, Event::Alias(1))));
+    }
+
+    #[test]
+    fn test_anchor_then_tag_applies_both_to_scalar() {
+        let events = Parser::new_from_str("&a !!str value")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        let Some(Event::Scalar(value, _, anchor_id, Some(tag))) = events
+            .iter()
+            .find(|event| matches!(event, Event::Scalar(value, ..) if value == "value"))
+        else {
+            panic!("expected tagged anchored scalar");
+        };
+
+        assert_eq!(value, "value");
+        assert_eq!(*anchor_id, 1);
+        assert_eq!(tag.handle, "tag:yaml.org,2002:");
+        assert_eq!(tag.suffix, "str");
+    }
+
+    #[test]
+    fn test_tag_then_anchor_applies_both_to_scalar() {
+        let events = Parser::new_from_str("!!str &a value")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        let Some(Event::Scalar(value, _, anchor_id, Some(tag))) = events
+            .iter()
+            .find(|event| matches!(event, Event::Scalar(value, ..) if value == "value"))
+        else {
+            panic!("expected tagged anchored scalar");
+        };
+
+        assert_eq!(value, "value");
+        assert_eq!(*anchor_id, 1);
+        assert_eq!(tag.handle, "tag:yaml.org,2002:");
+        assert_eq!(tag.suffix, "str");
     }
 
     #[test]

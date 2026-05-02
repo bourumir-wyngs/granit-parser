@@ -64,6 +64,25 @@ fn deref_pairs(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
 }
 
 #[test]
+fn span_helpers_report_length_empty_and_byte_range() {
+    let span = granit_parser::Span::new(
+        Marker::new(2, 1, 2).with_byte_offset(Some(5)),
+        Marker::new(6, 1, 6).with_byte_offset(Some(13)),
+    );
+
+    assert_eq!(span.len(), 4);
+    assert!(!span.is_empty());
+    assert_eq!(span.byte_range(), Some(5..13));
+
+    let empty = granit_parser::Span::empty(Marker::new(6, 1, 6).with_byte_offset(Some(13)));
+    assert!(empty.is_empty());
+    assert_eq!(empty.byte_range(), Some(13..13));
+
+    let without_byte_offsets = granit_parser::Span::new(Marker::new(0, 1, 0), Marker::new(1, 1, 1));
+    assert_eq!(without_byte_offsets.byte_range(), None);
+}
+
+#[test]
 fn test_plain() {
     assert_eq!(
         deref_pairs(&run_parser_and_deref_scalar_spans("foo: bar").unwrap()),

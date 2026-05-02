@@ -543,7 +543,9 @@ fn split_first_char(s: &str) -> Option<(char, &str)> {
 
 #[cfg(test)]
 mod test {
-    use crate::input::Input;
+    use alloc::string::String;
+
+    use crate::input::{BorrowedInput, Input, SkipTabs};
 
     use super::StrInput;
 
@@ -577,5 +579,124 @@ mod test {
         let input = StrInput::new("... ");
         assert!(input.next_is_document_end());
         assert!(input.next_is_document_indicator());
+    }
+
+    #[test]
+    fn raw_reads_track_byte_offsets_and_eof() {
+        let mut input = StrInput::new("aé");
+
+        assert_eq!(input.raw_read_ch(), 'a');
+        assert_eq!(input.byte_offset(), Some(1));
+        assert_eq!(input.raw_read_ch(), 'é');
+        assert_eq!(input.byte_offset(), Some(3));
+        assert_eq!(input.raw_read_ch(), '\0');
+        assert_eq!(input.byte_offset(), Some(3));
+    }
+
+    #[test]
+    fn raw_read_non_breakz_stops_before_breakz() {
+        let mut input = StrInput::new("a\n");
+
+        assert_eq!(input.raw_read_non_breakz_ch(), Some('a'));
+        assert_eq!(input.raw_read_non_breakz_ch(), None);
+        assert_eq!(input.peek(), '\n');
+
+        let mut empty = StrInput::new("");
+        assert_eq!(empty.raw_read_non_breakz_ch(), None);
+    }
+
+    #[test]
+    fn skip_handles_ascii_unicode_and_eof() {
+        let mut input = StrInput::new("éab");
+
+        input.skip();
+        assert_eq!(input.peek(), 'a');
+
+        input.skip_n(8);
+        assert_eq!(input.peek(), '\0');
+
+        input.skip();
+        assert_eq!(input.peek(), '\0');
+    }
+
+    #[test]
+    fn peeking_past_end_returns_nul() {
+        let ascii = StrInput::new("ab");
+        assert_eq!(ascii.peek_nth(1), 'b');
+        assert_eq!(ascii.peek_nth(3), '\0');
+
+        let unicode = StrInput::new("éab");
+        assert!(unicode.next_3_are('é', 'a', 'b'));
+        assert!(!unicode.next_3_are('é', 'a', 'c'));
+    }
+
+    #[test]
+    fn skip_ws_to_eol_without_tabs_stops_before_tab() {
+        let mut input = StrInput::new("  \t# comment\n");
+
+        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::No);
+
+        assert_eq!(consumed, 2);
+        let result = result.unwrap();
+        assert!(!result.found_tabs());
+        assert!(result.has_valid_yaml_ws());
+        assert_eq!(input.peek(), '\t');
+    }
+
+    #[test]
+    fn skip_ws_to_eol_skips_comments_after_whitespace() {
+        let mut input = StrInput::new("  # comment\nnext");
+
+        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+
+        assert_eq!(consumed, 11);
+        let result = result.unwrap();
+        assert!(!result.found_tabs());
+        assert!(result.has_valid_yaml_ws());
+        assert_eq!(input.peek(), '\n');
+    }
+
+    #[test]
+    fn fetch_while_is_alpha_is_ascii_only() {
+        let mut input = StrInput::new("abc_123-é");
+        let mut out = String::new();
+
+        assert_eq!(input.fetch_while_is_alpha(&mut out), 8);
+        assert_eq!(out, "abc_123-");
+        assert_eq!(input.peek(), 'é');
+    }
+
+    #[test]
+    fn fetch_plain_scalar_chunk_handles_non_ascii_after_colon() {
+        let mut input = StrInput::new("a:é ");
+        let mut out = String::new();
+
+        assert_eq!(
+            input.fetch_plain_scalar_chunk(&mut out, 16, false),
+            (true, 3)
+        );
+        assert_eq!(out, "a:é");
+        assert_eq!(input.peek(), ' ');
+    }
+
+    #[test]
+    fn fetch_plain_scalar_chunk_stops_at_flow_indicator() {
+        let mut input = StrInput::new("abc,def");
+        let mut out = String::new();
+
+        assert_eq!(
+            input.fetch_plain_scalar_chunk(&mut out, 16, true),
+            (true, 3)
+        );
+        assert_eq!(out, "abc");
+        assert_eq!(input.peek(), ',');
+    }
+
+    #[test]
+    fn borrowed_slices_use_original_input_lifetime() {
+        let input = StrInput::new("aéz");
+
+        assert_eq!(BorrowedInput::slice_borrowed(&input, 1, 3), Some("é"));
+        assert_eq!(input.slice_bytes(3, 4), Some("z"));
     }
 }

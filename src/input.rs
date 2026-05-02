@@ -578,3 +578,59 @@ impl SkipTabs {
         matches!(self, SkipTabs::Result(_, true))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Input;
+
+    struct MinimalInput;
+
+    impl Input for MinimalInput {
+        fn lookahead(&mut self, _count: usize) {}
+
+        fn buflen(&self) -> usize {
+            0
+        }
+
+        fn bufmaxlen(&self) -> usize {
+            0
+        }
+
+        fn raw_read_ch(&mut self) -> char {
+            '\0'
+        }
+
+        fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+            None
+        }
+
+        fn skip(&mut self) {}
+
+        fn skip_n(&mut self, _count: usize) {}
+
+        fn peek(&self) -> char {
+            '\0'
+        }
+
+        fn peek_nth(&self, _n: usize) -> char {
+            '\0'
+        }
+    }
+
+    #[test]
+    fn default_slice_bytes_returns_none() {
+        let mut input = MinimalInput;
+
+        input.lookahead(4);
+        assert_eq!(input.buflen(), 0);
+        assert_eq!(input.bufmaxlen(), 0);
+        assert_eq!(input.raw_read_ch(), '\0');
+        assert_eq!(input.raw_read_non_breakz_ch(), None);
+        input.skip();
+        input.skip_n(2);
+        assert_eq!(input.peek(), '\0');
+        assert_eq!(input.peek_nth(1), '\0');
+        assert_eq!(input.byte_offset(), None);
+        assert_eq!(input.slice_bytes(0, 0), None);
+    }
+}

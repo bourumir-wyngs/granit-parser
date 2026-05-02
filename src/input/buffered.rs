@@ -130,4 +130,44 @@ mod tests {
         assert_eq!(input.peek_nth(2), 'c');
         assert_eq!(input.peek_nth(3), '\0');
     }
+
+    #[test]
+    fn raw_reads_bypass_buffer_and_report_eof() {
+        let mut input = BufferedInput::new("a".chars());
+
+        assert_eq!(input.raw_read_ch(), 'a');
+        assert_eq!(input.raw_read_ch(), '\0');
+    }
+
+    #[test]
+    fn raw_read_non_breakz_pushes_break_back_into_buffer() {
+        let mut input = BufferedInput::new("a\n".chars());
+
+        assert_eq!(input.raw_read_non_breakz_ch(), Some('a'));
+        assert_eq!(input.raw_read_non_breakz_ch(), None);
+        assert_eq!(input.buflen(), 1);
+        assert_eq!(input.peek(), '\n');
+
+        let mut empty = BufferedInput::new("".chars());
+        assert_eq!(empty.raw_read_non_breakz_ch(), None);
+    }
+
+    #[test]
+    fn skip_n_drains_buffered_characters() {
+        let mut input = BufferedInput::new("abcdef".chars());
+
+        input.lookahead(5);
+        input.skip_n(2);
+
+        assert_eq!(input.buflen(), 3);
+        assert_eq!(input.peek(), 'c');
+        assert_eq!(input.peek_nth(2), 'e');
+    }
+
+    #[test]
+    fn streaming_input_never_borrows_slices() {
+        let input = BufferedInput::new("abc".chars());
+
+        assert_eq!(BorrowedInput::slice_borrowed(&input, 0, 1), None);
+    }
 }
