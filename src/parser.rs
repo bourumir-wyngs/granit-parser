@@ -427,6 +427,9 @@ pub trait ParserTrait<'input> {
     /// If `multi` is set to `true`, the parser will allow parsing of multiple YAML documents
     /// inside the stream.
     ///
+    /// If the receiver returns an error, the parser is left positioned immediately after the event
+    /// that caused the receiver error. Callers should treat the parser as partially consumed.
+    ///
     /// # Errors
     /// Returns [`TryLoadError::Scan`] when scanning or parsing the stream fails. Returns
     /// [`TryLoadError::Receiver`] when `recv` returns an error.
@@ -716,6 +719,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// If `multi` is set to `true`, the parser will allow parsing of multiple YAML documents
     /// inside the stream.
+    ///
+    /// If the receiver returns an error, the parser is left positioned immediately after the event
+    /// that caused the receiver error. Callers should treat the parser as partially consumed.
     ///
     /// # Example
     /// ```
@@ -1665,9 +1671,11 @@ mod test {
         vec::Vec,
     };
 
-    use crate::scanner::ScalarStyle;
+    use crate::scanner::{ScalarStyle, Span};
 
-    use super::{Event, EventReceiver, Parser, Tag, TryEventReceiver, TryLoadError};
+    use super::{
+        Event, EventReceiver, Parser, Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
+    };
 
     #[derive(Default)]
     struct CollectingSink<'input> {
@@ -1841,6 +1849,38 @@ a5: *x
             .events
             .iter()
             .any(|event| matches!(event, Event::Scalar(value, ..) if value == "after")));
+    }
+
+    struct SpannedFailingSink {
+        failed_span: Option<Span>,
+    }
+
+    impl<'input> TrySpannedEventReceiver<'input> for SpannedFailingSink {
+        type Error = Span;
+
+        fn on_event(&mut self, ev: Event<'input>, span: Span) -> Result<(), Self::Error> {
+            if matches!(ev, Event::Scalar(value, ..) if value.as_ref() == "bad") {
+                self.failed_span = Some(span);
+                Err(span)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_load_spanned_receiver_gets_span() {
+        let mut parser = Parser::new_from_str("value: bad\n");
+        let mut sink = SpannedFailingSink { failed_span: None };
+
+        let err = parser.try_load(&mut sink, false).unwrap_err();
+
+        let TryLoadError::Receiver(span) = err else {
+            panic!("expected receiver error");
+        };
+
+        assert_eq!(Some(span), sink.failed_span);
+        assert!(!span.is_empty());
     }
 
     struct NeverFails {
