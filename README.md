@@ -101,6 +101,14 @@ DocumentEnd
 StreamEnd
 ```
 
+## Event API choices
+
+Use the iterator API when the caller should pull events and decide when to stop
+parsing. Use `Parser::load` for infallible receiver-style event sinks. If a
+receiver may return a validation or application error and parsing should stop
+immediately, use `Parser::try_load` with `TryEventReceiver` or
+`TrySpannedEventReceiver`; it returns `TryLoadError::Scan` for parser errors and
+`TryLoadError::Receiver` for receiver errors.
 
 ## Key differences from saphyr-parser
 

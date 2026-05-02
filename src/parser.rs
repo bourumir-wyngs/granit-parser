@@ -16,7 +16,10 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::fmt::Display;
+use core::{
+    convert::Infallible,
+    fmt::{self, Display},
+};
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq)]
 enum State {
@@ -276,6 +279,123 @@ impl<'input, R: EventReceiver<'input>> SpannedEventReceiver<'input> for R {
     }
 }
 
+/// Trait to be implemented for fallible event handling without source spans.
+///
+/// This is the fallible counterpart to [`EventReceiver`]. Use it with [`Parser::try_load`] when
+/// event handling may need to stop parsing by returning an application error.
+pub trait TryEventReceiver<'input> {
+    /// Error returned by this receiver.
+    type Error;
+
+    /// Handler called for each YAML event that is emitted by the parser.
+    ///
+    /// Returning an error stops [`Parser::try_load`] immediately.
+    ///
+    /// # Errors
+    /// Returns `Self::Error` when the receiver wants to stop parsing.
+    fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error>;
+}
+
+/// Trait to be implemented for fallible event handling with source spans.
+///
+/// This is the fallible counterpart to [`SpannedEventReceiver`]. Use it with
+/// [`Parser::try_load`] when event handling may need to stop parsing by returning an application
+/// error.
+pub trait TrySpannedEventReceiver<'input> {
+    /// Error returned by this receiver.
+    type Error;
+
+    /// Handler called for each event that occurs.
+    ///
+    /// Returning an error stops [`Parser::try_load`] immediately.
+    ///
+    /// # Errors
+    /// Returns `Self::Error` when the receiver wants to stop parsing.
+    fn on_event(&mut self, ev: Event<'input>, span: Span) -> Result<(), Self::Error>;
+}
+
+impl<'input, R: TryEventReceiver<'input>> TrySpannedEventReceiver<'input> for R {
+    type Error = R::Error;
+
+    fn on_event(&mut self, ev: Event<'input>, _span: Span) -> Result<(), Self::Error> {
+        TryEventReceiver::on_event(self, ev)
+    }
+}
+
+/// Error returned by [`Parser::try_load`] and [`ParserTrait::try_load`].
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub enum TryLoadError<E> {
+    /// Scanning or parsing failed.
+    Scan(
+        /// The scanner or parser error.
+        ScanError,
+    ),
+    /// The receiver returned an application error.
+    Receiver(
+        /// The error returned by the receiver.
+        E,
+    ),
+}
+
+impl<E> From<ScanError> for TryLoadError<E> {
+    fn from(error: ScanError) -> Self {
+        Self::Scan(error)
+    }
+}
+
+impl<E: Display> Display for TryLoadError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scan(error) => write!(f, "parser error: {error}"),
+            Self::Receiver(error) => write!(f, "receiver error: {error}"),
+        }
+    }
+}
+
+impl<E> core::error::Error for TryLoadError<E>
+where
+    E: core::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Scan(error) => Some(error),
+            Self::Receiver(error) => Some(error),
+        }
+    }
+}
+
+fn try_emit<'input, R>(
+    recv: &mut R,
+    ev: Event<'input>,
+    span: Span,
+) -> Result<(), TryLoadError<R::Error>>
+where
+    R: TrySpannedEventReceiver<'input>,
+{
+    recv.on_event(ev, span).map_err(TryLoadError::Receiver)
+}
+
+struct InfallibleSpannedReceiver<'receiver, R>(&'receiver mut R);
+
+impl<'input, R: SpannedEventReceiver<'input>> TrySpannedEventReceiver<'input>
+    for InfallibleSpannedReceiver<'_, R>
+{
+    type Error = Infallible;
+
+    fn on_event(&mut self, ev: Event<'input>, span: Span) -> Result<(), Self::Error> {
+        self.0.on_event(ev, span);
+        Ok(())
+    }
+}
+
+fn into_scan_result(result: Result<(), TryLoadError<Infallible>>) -> Result<(), ScanError> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(TryLoadError::Scan(error)) => Err(error),
+        Err(TryLoadError::Receiver(error)) => match error {},
+    }
+}
+
 /// A convenience alias for a `Result` of a parser event.
 pub type ParseResult<'input> = Result<(Event<'input>, Span), ScanError>;
 
@@ -289,6 +409,11 @@ pub trait ParserTrait<'input> {
 
     /// Load the YAML from the stream in `self`, pushing events into `recv`.
     ///
+    /// Use this method when event handling is infallible. If receiver code can return an
+    /// application error and should stop parsing, use [`ParserTrait::try_load`] instead. If the
+    /// caller should directly control when the next event is read, use [`ParserTrait::next_event`]
+    /// or [`Parser`]'s [`core::iter::Iterator`] implementation.
+    ///
     /// # Errors
     /// Returns `ScanError` when scanning or parsing the stream fails.
     fn load<R: SpannedEventReceiver<'input>>(
@@ -296,6 +421,40 @@ pub trait ParserTrait<'input> {
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError>;
+
+    /// Load the YAML from the stream in `self`, stopping if `recv` returns an error.
+    ///
+    /// If `multi` is set to `true`, the parser will allow parsing of multiple YAML documents
+    /// inside the stream.
+    ///
+    /// If the receiver returns an error, the parser is left positioned immediately after the event
+    /// that caused the receiver error. Callers should treat the parser as partially consumed.
+    ///
+    /// # Errors
+    /// Returns [`TryLoadError::Scan`] when scanning or parsing the stream fails. Returns
+    /// [`TryLoadError::Receiver`] when `recv` returns an error.
+    fn try_load<R: TrySpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+        multi: bool,
+    ) -> Result<(), TryLoadError<R::Error>> {
+        while let Some(res) = self.next_event() {
+            let (ev, span) = res?;
+            let is_doc_end = matches!(ev, Event::DocumentEnd);
+            let is_stream_end = matches!(ev, Event::StreamEnd);
+
+            try_emit(recv, ev, span)?;
+
+            if is_stream_end {
+                break;
+            }
+            if !multi && is_doc_end {
+                break;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl<'input> Parser<'input, StrInput<'input>> {
@@ -503,13 +662,46 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Load the YAML from the stream in `self`, pushing events into `recv`.
     ///
     /// The contents of the stream are parsed and the corresponding events are sent into the
-    /// recveiver. For detailed explanations about how events work, see [`EventReceiver`].
+    /// receiver. For detailed explanations about how events work, see [`EventReceiver`].
     ///
     /// If `multi` is set to `true`, the parser will allow parsing of multiple YAML documents
     /// inside the stream.
     ///
+    /// Use this method when event handling is infallible. If receiver code can return an
+    /// application error and should stop parsing, use [`Parser::try_load`] instead. If the caller
+    /// should directly control when the next event is read, use [`Parser`]'s
+    /// [`core::iter::Iterator`] implementation.
+    ///
     /// Note that any [`EventReceiver`] is also a [`SpannedEventReceiver`], so implementing the
     /// former is enough to call this function.
+    ///
+    /// # Example
+    /// ```
+    /// # use granit_parser::{Event, EventReceiver, Parser};
+    /// # fn main() -> Result<(), granit_parser::ScanError> {
+    /// struct EventSink<'input> {
+    ///     events: Vec<Event<'input>>,
+    /// }
+    ///
+    /// impl<'input> EventReceiver<'input> for EventSink<'input> {
+    ///     fn on_event(&mut self, ev: Event<'input>) {
+    ///         self.events.push(ev);
+    ///     }
+    /// }
+    ///
+    /// let mut parser = Parser::new_from_str("a: 1\n");
+    /// let mut sink = EventSink { events: Vec::new() };
+    ///
+    /// parser.load(&mut sink, false)?;
+    ///
+    /// assert!(sink
+    ///     .events
+    ///     .iter()
+    ///     .any(|ev| matches!(ev, Event::Scalar(value, ..) if value == "a")));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     /// Returns `ScanError` when loading fails.
     pub fn load<R: SpannedEventReceiver<'input>>(
@@ -520,49 +712,98 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ParserTrait::load(self, recv, multi)
     }
 
-    fn load_document<R: SpannedEventReceiver<'input>>(
+    /// Load the YAML from the stream in `self`, pushing events into `recv`.
+    ///
+    /// This is the fallible counterpart to [`Parser::load`]. If `recv` returns an error, parsing
+    /// stops immediately and that error is returned as [`TryLoadError::Receiver`].
+    ///
+    /// If `multi` is set to `true`, the parser will allow parsing of multiple YAML documents
+    /// inside the stream.
+    ///
+    /// If the receiver returns an error, the parser is left positioned immediately after the event
+    /// that caused the receiver error. Callers should treat the parser as partially consumed.
+    ///
+    /// # Example
+    /// ```
+    /// # use granit_parser::{Event, Parser, TryEventReceiver, TryLoadError};
+    /// #[derive(Debug, PartialEq, Eq)]
+    /// enum ValidationError {
+    ///     ForbiddenScalar,
+    /// }
+    ///
+    /// struct Validator;
+    ///
+    /// impl<'input> TryEventReceiver<'input> for Validator {
+    ///     type Error = ValidationError;
+    ///
+    ///     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
+    ///         if matches!(ev, Event::Scalar(value, ..) if value.as_ref() == "bad") {
+    ///             Err(ValidationError::ForbiddenScalar)
+    ///         } else {
+    ///             Ok(())
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// let mut parser = Parser::new_from_str("value: bad\n");
+    /// let mut validator = Validator;
+    ///
+    /// let err = parser.try_load(&mut validator, false).unwrap_err();
+    ///
+    /// assert_eq!(err, TryLoadError::Receiver(ValidationError::ForbiddenScalar));
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`TryLoadError::Scan`] when scanning or parsing the stream fails. Returns
+    /// [`TryLoadError::Receiver`] when `recv` returns an error.
+    pub fn try_load<R: TrySpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+        multi: bool,
+    ) -> Result<(), TryLoadError<R::Error>> {
+        ParserTrait::try_load(self, recv, multi)
+    }
+
+    fn try_load_document<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         first_ev: Event<'input>,
         span: Span,
         recv: &mut R,
-    ) -> Result<(), ScanError> {
+    ) -> Result<(), TryLoadError<R::Error>> {
         if !matches!(first_ev, Event::DocumentStart(_)) {
-            return Err(ScanError::new_str(
+            return Err(TryLoadError::Scan(ScanError::new_str(
                 span.start,
                 "did not find expected <document-start>",
-            ));
+            )));
         }
-        recv.on_event(first_ev, span);
+        try_emit(recv, first_ev, span)?;
 
         let (ev, span) = self.next_event_impl()?;
-        self.load_node(ev, span, recv)?;
+        self.try_load_node(ev, span, recv)?;
 
         // DOCUMENT-END is expected.
         let (ev, mark) = self.next_event_impl()?;
         assert_eq!(ev, Event::DocumentEnd);
-        recv.on_event(ev, mark);
+        try_emit(recv, ev, mark)?;
 
         Ok(())
     }
 
-    fn load_node<R: SpannedEventReceiver<'input>>(
+    fn try_load_node<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         first_ev: Event<'input>,
         span: Span,
         recv: &mut R,
-    ) -> Result<(), ScanError> {
+    ) -> Result<(), TryLoadError<R::Error>> {
         match first_ev {
-            Event::Alias(..) | Event::Scalar(..) => {
-                recv.on_event(first_ev, span);
-                Ok(())
-            }
+            Event::Alias(..) | Event::Scalar(..) => try_emit(recv, first_ev, span),
             Event::SequenceStart(..) => {
-                recv.on_event(first_ev, span);
-                self.load_sequence(recv)
+                try_emit(recv, first_ev, span)?;
+                self.try_load_sequence(recv)
             }
             Event::MappingStart(..) => {
-                recv.on_event(first_ev, span);
-                self.load_mapping(recv)
+                try_emit(recv, first_ev, span)?;
+                self.try_load_mapping(recv)
             }
             _ => {
                 #[cfg(feature = "debug_prints")]
@@ -572,42 +813,42 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
-    fn load_mapping<R: SpannedEventReceiver<'input>>(
+    fn try_load_mapping<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         recv: &mut R,
-    ) -> Result<(), ScanError> {
+    ) -> Result<(), TryLoadError<R::Error>> {
         let (mut key_ev, mut key_mark) = self.next_event_impl()?;
         while key_ev != Event::MappingEnd {
             // key
-            self.load_node(key_ev, key_mark, recv)?;
+            self.try_load_node(key_ev, key_mark, recv)?;
 
             // value
             let (ev, mark) = self.next_event_impl()?;
-            self.load_node(ev, mark, recv)?;
+            self.try_load_node(ev, mark, recv)?;
 
             // next event
             let (ev, mark) = self.next_event_impl()?;
             key_ev = ev;
             key_mark = mark;
         }
-        recv.on_event(key_ev, key_mark);
+        try_emit(recv, key_ev, key_mark)?;
         Ok(())
     }
 
-    fn load_sequence<R: SpannedEventReceiver<'input>>(
+    fn try_load_sequence<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         recv: &mut R,
-    ) -> Result<(), ScanError> {
+    ) -> Result<(), TryLoadError<R::Error>> {
         let (mut ev, mut mark) = self.next_event_impl()?;
         while ev != Event::SequenceEnd {
-            self.load_node(ev, mark, recv)?;
+            self.try_load_node(ev, mark, recv)?;
 
             // next event
             let (next_ev, next_mark) = self.next_event_impl()?;
             ev = next_ev;
             mark = next_mark;
         }
-        recv.on_event(ev, mark);
+        try_emit(recv, ev, mark)?;
         Ok(())
     }
 
@@ -1371,32 +1612,41 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         recv: &mut R,
         multi: bool,
     ) -> Result<(), ScanError> {
+        let mut recv = InfallibleSpannedReceiver(recv);
+        into_scan_result(ParserTrait::try_load(self, &mut recv, multi))
+    }
+
+    fn try_load<R: TrySpannedEventReceiver<'input>>(
+        &mut self,
+        recv: &mut R,
+        multi: bool,
+    ) -> Result<(), TryLoadError<R::Error>> {
         let stream_start_buffered = matches!(self.current.as_ref(), Some((Event::StreamStart, _)));
         if !self.scanner.stream_started() || stream_start_buffered {
             let (ev, span) = self.next_event_impl()?;
             if ev != Event::StreamStart {
-                return Err(ScanError::new_str(
+                return Err(TryLoadError::Scan(ScanError::new_str(
                     span.start,
                     "did not find expected <stream-start>",
-                ));
+                )));
             }
-            recv.on_event(ev, span);
+            try_emit(recv, ev, span)?;
         }
 
         if self.scanner.stream_ended() {
             // XXX has parsed?
-            recv.on_event(Event::StreamEnd, Span::empty(self.scanner.mark()));
+            try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
             return Ok(());
         }
         loop {
             let (ev, span) = self.next_event_impl()?;
             if ev == Event::StreamEnd {
-                recv.on_event(ev, span);
+                try_emit(recv, ev, span)?;
                 return Ok(());
             }
             // clear anchors before a new document
             self.anchors.clear();
-            self.load_document(ev, span, recv)?;
+            self.try_load_document(ev, span, recv)?;
             if !multi {
                 break;
             }
@@ -1421,9 +1671,11 @@ mod test {
         vec::Vec,
     };
 
-    use crate::scanner::ScalarStyle;
+    use crate::scanner::{ScalarStyle, Span};
 
-    use super::{Event, EventReceiver, Parser, Tag};
+    use super::{
+        Event, EventReceiver, Parser, Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
+    };
 
     #[derive(Default)]
     struct CollectingSink<'input> {
@@ -1552,6 +1804,120 @@ a5: *x
                 Event::StreamEnd,
             ]
         );
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ValidationError {
+        ForbiddenValue,
+    }
+
+    struct FailingSink<'input> {
+        events: Vec<Event<'input>>,
+    }
+
+    impl<'input> TryEventReceiver<'input> for FailingSink<'input> {
+        type Error = ValidationError;
+
+        fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
+            let should_fail = matches!(&ev, Event::Scalar(value, ..) if value.as_ref() == "bad");
+            self.events.push(ev);
+            if should_fail {
+                Err(ValidationError::ForbiddenValue)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_load_stops_on_receiver_error() {
+        let mut parser = Parser::new_from_str("ok: bad\nafter: value\n");
+        let mut sink = FailingSink { events: Vec::new() };
+
+        let err = parser.try_load(&mut sink, true).unwrap_err();
+
+        assert_eq!(err, TryLoadError::Receiver(ValidationError::ForbiddenValue));
+        assert!(sink
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "ok")));
+        assert!(sink
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "bad")));
+        assert!(!sink
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "after")));
+    }
+
+    struct SpannedFailingSink {
+        failed_span: Option<Span>,
+    }
+
+    impl<'input> TrySpannedEventReceiver<'input> for SpannedFailingSink {
+        type Error = Span;
+
+        fn on_event(&mut self, ev: Event<'input>, span: Span) -> Result<(), Self::Error> {
+            if matches!(ev, Event::Scalar(value, ..) if value.as_ref() == "bad") {
+                self.failed_span = Some(span);
+                Err(span)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_try_load_spanned_receiver_gets_span() {
+        let mut parser = Parser::new_from_str("value: bad\n");
+        let mut sink = SpannedFailingSink { failed_span: None };
+
+        let err = parser.try_load(&mut sink, false).unwrap_err();
+
+        let TryLoadError::Receiver(span) = err else {
+            panic!("expected receiver error");
+        };
+
+        assert_eq!(Some(span), sink.failed_span);
+        assert!(!span.is_empty());
+    }
+
+    struct NeverFails {
+        count: usize,
+    }
+
+    impl<'input> TryEventReceiver<'input> for NeverFails {
+        type Error = ValidationError;
+
+        fn on_event(&mut self, _ev: Event<'input>) -> Result<(), Self::Error> {
+            self.count += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_try_load_returns_scan_error() {
+        let mut parser = Parser::new_from_str("%YAML 1.2\n%YAML 1.2\n---\n");
+        let mut sink = NeverFails { count: 0 };
+
+        let err = parser.try_load(&mut sink, true).unwrap_err();
+
+        let TryLoadError::Scan(err) = err else {
+            panic!("expected scan error");
+        };
+        assert_eq!(err.info(), "duplicate version directive");
+    }
+
+    #[test]
+    fn test_try_load_after_stream_already_ended_emits_stream_end() {
+        let mut parser = Parser::new_from_str("");
+        while parser.next_event().is_some() {}
+
+        let mut sink = FailingSink { events: Vec::new() };
+        parser.try_load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::StreamEnd]);
     }
 
     #[test]
