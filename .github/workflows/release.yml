@@ -55,32 +55,32 @@ jobs:
 
       - name: Prefetch dependencies
         run: |
-          cargo fetch --locked
-          cargo +"${MSRV}" fetch --locked
+          cargo fetch 
+          cargo +"${MSRV}" fetch 
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --locked --offline --all-targets --all-features -- -D warnings
+        run: cargo clippy  --offline --all-targets --all-features -- -D warnings
 
       - name: Run tests
-        run: cargo test --locked --offline
+        run: cargo test  --offline
 
       - name: Run tests with debug_prints
-        run: cargo test --locked --offline --features debug_prints
+        run: cargo test  --offline --features debug_prints
 
       - name: Run no-default-features library tests
-        run: cargo test --locked --offline --lib --no-default-features
+        run: cargo test  --offline --lib --no-default-features
 
       - name: Check no_std target
-        run: cargo check --locked --offline --lib --no-default-features --target wasm32v1-none
+        run: cargo check  --offline --lib --no-default-features --target wasm32v1-none
 
       - name: Check MSRV
-        run: cargo +"${MSRV}" check --locked --offline --all-targets
+        run: cargo +"${MSRV}" check  --offline --all-targets
 
       - name: Verify crate packaging
-        run: cargo publish --locked --dry-run
+        run: cargo publish  --dry-run
 
   publish:
     name: Publish to crates.io
@@ -112,4 +112,4 @@ jobs:
       - name: Publish crate
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish --locked
+        run: cargo publish 
