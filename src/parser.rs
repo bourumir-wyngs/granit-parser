@@ -1666,12 +1666,13 @@ impl<'input, T: BorrowedInput<'input>> Iterator for Parser<'input, T> {
 #[cfg(test)]
 mod test {
     use alloc::{
-        borrow::ToOwned,
+        borrow::{Cow, ToOwned},
         string::{String, ToString},
         vec::Vec,
     };
+    use core::{error::Error as _, fmt};
 
-    use crate::scanner::{ScalarStyle, Span};
+    use crate::scanner::{Marker, ScalarStyle, ScanError, Span};
 
     use super::{
         Event, EventReceiver, Parser, Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
@@ -1811,6 +1812,17 @@ a5: *x
         ForbiddenValue,
     }
 
+    #[derive(Debug)]
+    struct ReceiverFailure;
+
+    impl fmt::Display for ReceiverFailure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "receiver failed")
+        }
+    }
+
+    impl core::error::Error for ReceiverFailure {}
+
     struct FailingSink<'input> {
         events: Vec<Event<'input>>,
     }
@@ -1907,6 +1919,58 @@ a5: *x
             panic!("expected scan error");
         };
         assert_eq!(err.info(), "duplicate version directive");
+    }
+
+    #[test]
+    fn test_try_load_error_display_and_source_cover_both_variants() {
+        let scan = ScanError::new_str(Marker::new(3, 1, 3), "bad yaml");
+        let scan_err: TryLoadError<ReceiverFailure> = scan.into();
+
+        assert!(scan_err.to_string().starts_with("parser error: bad yaml"));
+        assert!(scan_err.source().is_some());
+
+        let receiver_err = TryLoadError::Receiver(ReceiverFailure);
+
+        assert_eq!(receiver_err.to_string(), "receiver error: receiver failed");
+        assert!(receiver_err.source().is_some());
+    }
+
+    #[test]
+    fn test_try_load_document_rejects_non_document_start_event() {
+        let mut parser = Parser::new_from_str("");
+        let span = Span::empty(Marker::new(0, 1, 0));
+        let mut sink = NeverFails { count: 0 };
+
+        let err = parser
+            .try_load_document(
+                Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+                span,
+                &mut sink,
+            )
+            .unwrap_err();
+
+        let TryLoadError::Scan(err) = err else {
+            panic!("expected scan error");
+        };
+        assert_eq!(err.info(), "did not find expected <document-start>");
+    }
+
+    #[test]
+    fn test_try_load_requires_buffered_stream_start() {
+        let mut parser = Parser::new_from_str("");
+        let span = Span::empty(Marker::new(0, 1, 0));
+        parser.current = Some((
+            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+            span,
+        ));
+        let mut sink = NeverFails { count: 0 };
+
+        let err = parser.try_load(&mut sink, true).unwrap_err();
+
+        let TryLoadError::Scan(err) = err else {
+            panic!("expected scan error");
+        };
+        assert_eq!(err.info(), "did not find expected <stream-start>");
     }
 
     #[test]
@@ -2152,6 +2216,25 @@ baz: "qux"
         }
 
         assert_eq!(int_tags, vec!["tag:evil,2024:", "tag:yaml.org,2002:"]);
+    }
+
+    #[test]
+    fn test_resolve_tag_uses_overridden_local_prefix() {
+        let mut parser = Parser::new_from_str("");
+        parser
+            .tags
+            .insert(String::new(), "tag:local.example,2024:".to_string());
+
+        let tag = parser
+            .resolve_tag(
+                Span::empty(Marker::new(0, 1, 0)),
+                &Cow::Borrowed(""),
+                Cow::Borrowed("!"),
+            )
+            .unwrap();
+
+        assert_eq!(tag.handle, "tag:local.example,2024:");
+        assert_eq!(tag.suffix, "!");
     }
 
     #[test]

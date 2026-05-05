@@ -660,6 +660,57 @@ fn replay_parser_load_single_stops_at_document_end() {
 }
 
 #[test]
+fn replay_parser_try_load_single_stops_at_document_end() {
+    let span = test_span();
+    let replay_events = vec![
+        (Event::StreamStart, span),
+        (Event::DocumentStart(false), span),
+        (plain_scalar("first", 0), span),
+        (Event::DocumentEnd, span),
+        (Event::DocumentStart(false), span),
+        (plain_scalar("second", 0), span),
+        (Event::DocumentEnd, span),
+        (Event::StreamEnd, span),
+    ];
+    let mut replay = ReplayParser::new(replay_events, 1);
+    let mut recv = TryTestReceiver { events: Vec::new() };
+
+    replay.try_load(&mut recv, false).unwrap();
+
+    assert_eq!(
+        format_events(&recv.events),
+        vec!["StreamStart", "DocStart", "Scalar(first)", "DocEnd"]
+    );
+}
+
+#[test]
+fn replay_parser_try_load_multi_reads_stream_end() {
+    let span = test_span();
+    let replay_events = vec![
+        (Event::StreamStart, span),
+        (Event::DocumentStart(false), span),
+        (plain_scalar("first", 0), span),
+        (Event::DocumentEnd, span),
+        (Event::StreamEnd, span),
+    ];
+    let mut replay = ReplayParser::new(replay_events, 1);
+    let mut recv = TryTestReceiver { events: Vec::new() };
+
+    replay.try_load(&mut recv, true).unwrap();
+
+    assert_eq!(
+        format_events(&recv.events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "Scalar(first)",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
 fn default_empty_stack_peek_and_next_emit_stream_end_once() {
     let mut stack: MyStack = ParserStack::default();
 
@@ -782,6 +833,34 @@ fn replay_parser_without_stream_end_is_popped_at_eof() {
         Event::StreamEnd
     ));
     assert!(stack.next_event().is_none());
+}
+
+#[test]
+fn nested_replay_without_stream_end_is_popped_and_parent_continues() {
+    let span = test_span();
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
+    stack.push_replay_parser(
+        ReplayParser::new(vec![(plain_scalar("included", 0), span)], 1),
+        "replay".to_string(),
+    );
+
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "Scalar(included)",
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(parent)",
+            "Scalar(value)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
 }
 
 #[test]

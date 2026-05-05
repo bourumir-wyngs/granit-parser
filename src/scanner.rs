@@ -3630,7 +3630,12 @@ pub enum Chomping {
 
 #[cfg(test)]
 mod test {
-    use alloc::{borrow::Cow, rc::Rc, string::String, vec::Vec};
+    use alloc::{
+        borrow::{Cow, ToOwned},
+        rc::Rc,
+        string::String,
+        vec::Vec,
+    };
     use core::cell::Cell;
 
     use crate::{
@@ -4023,5 +4028,133 @@ mod test {
                 break;
             }
         }
+    }
+
+    #[test]
+    fn flow_scalar_buffer_tracks_pending_whitespace() {
+        let mut borrowed = super::FlowScalarBuf::new_borrowed(2);
+
+        borrowed.note_pending_ws(5, 8);
+        borrowed.commit_pending_ws();
+        assert!(matches!(
+            borrowed,
+            super::FlowScalarBuf::Borrowed {
+                end: 8,
+                pending_ws_start: None,
+                pending_ws_end: 8,
+                ..
+            }
+        ));
+
+        borrowed.note_pending_ws(9, 11);
+        borrowed.discard_pending_ws();
+        assert!(matches!(
+            borrowed,
+            super::FlowScalarBuf::Borrowed {
+                end: 8,
+                pending_ws_start: None,
+                pending_ws_end: 8,
+                ..
+            }
+        ));
+        assert!(borrowed.as_owned_mut().is_none());
+
+        let mut owned = super::FlowScalarBuf::new_owned();
+        owned.as_owned_mut().unwrap().push_str("owned");
+        assert!(matches!(owned, super::FlowScalarBuf::Owned(ref s) if s == "owned"));
+    }
+
+    fn first_scanner_error_info(input: &str) -> String {
+        let mut scanner = Scanner::new(StrInput::new(input));
+        loop {
+            match scanner.next_token() {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("expected scanner error"),
+                Err(error) => return error.info().to_owned(),
+            }
+        }
+    }
+
+    #[test]
+    fn directive_name_must_be_present() {
+        assert_eq!(
+            first_scanner_error_info("%\n"),
+            "while scanning a directive, could not find expected directive name"
+        );
+    }
+
+    #[test]
+    fn yaml_directive_requires_dot_between_version_numbers() {
+        assert_eq!(
+            first_scanner_error_info("%YAML 1\n"),
+            "while scanning a YAML directive, did not find expected digit or '.' character"
+        );
+    }
+
+    #[test]
+    fn yaml_directive_rejects_extremely_long_version_number() {
+        assert_eq!(
+            first_scanner_error_info("%YAML 1234567890.2\n"),
+            "while scanning a YAML directive, found extremely long version number"
+        );
+    }
+
+    #[test]
+    fn tag_directive_handle_must_end_with_bang() {
+        assert_eq!(
+            first_scanner_error_info("%TAG !bad tag:example.com,2024:\n"),
+            "while parsing a tag directive, did not find expected '!'"
+        );
+    }
+
+    #[test]
+    fn tag_directive_prefix_with_uri_escape_is_owned_and_decoded() {
+        let mut scanner =
+            Scanner::new(StrInput::new("%TAG !e! tag:example.com,2024:some%20app/\n"));
+
+        loop {
+            let token = scanner
+                .next_token()
+                .expect("valid directive should scan")
+                .expect("scanner must produce a directive token");
+            if let TokenType::TagDirective(handle, prefix) = token.1 {
+                assert!(matches!(handle, Cow::Borrowed("!e!")));
+                assert!(matches!(prefix, Cow::Owned(_)));
+                assert_eq!(&*prefix, "tag:example.com,2024:some app/");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn tag_requires_separation_after_suffix() {
+        assert_eq!(
+            first_scanner_error_info("!foo,bar\n"),
+            "while scanning a tag, did not find expected whitespace or line break"
+        );
+    }
+
+    #[test]
+    fn block_scalar_header_rejects_trailing_content() {
+        assert_eq!(
+            first_scanner_error_info("|+ trailing\n"),
+            "while scanning a block scalar, did not find expected comment or line break"
+        );
+    }
+
+    #[test]
+    fn root_explicit_indent_block_scalar_rejects_underindented_content() {
+        assert_eq!(
+            first_scanner_error_info("|2\nx\n"),
+            "wrongly indented line in block scalar"
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_rejects_document_indicator_at_line_start() {
+        assert_eq!(
+            first_scanner_error_info("\"one\n---\ntwo\"\n"),
+            "while scanning a quoted scalar, found unexpected document indicator"
+        );
     }
 }

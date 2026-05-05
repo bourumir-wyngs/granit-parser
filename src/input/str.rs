@@ -657,6 +657,20 @@ mod test {
     }
 
     #[test]
+    fn skip_ws_to_eol_rejects_unseparated_comment() {
+        let mut input = StrInput::new("# comment\n");
+
+        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+
+        assert_eq!(consumed, 0);
+        assert_eq!(
+            result.err(),
+            Some("comments must be separated from other tokens by whitespace")
+        );
+        assert_eq!(input.peek(), '#');
+    }
+
+    #[test]
     fn fetch_while_is_alpha_is_ascii_only() {
         let mut input = StrInput::new("abc_123-é");
         let mut out = String::new();

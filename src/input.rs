@@ -581,7 +581,7 @@ impl SkipTabs {
 
 #[cfg(test)]
 mod tests {
-    use super::Input;
+    use super::{Input, SkipTabs};
 
     struct MinimalInput;
 
@@ -632,5 +632,19 @@ mod tests {
         assert_eq!(input.peek_nth(1), '\0');
         assert_eq!(input.byte_offset(), None);
         assert_eq!(input.slice_bytes(0, 0), None);
+    }
+
+    #[test]
+    fn default_skip_ws_to_eol_rejects_unseparated_comment() {
+        let mut input = super::buffered::BufferedInput::new("#comment\n".chars());
+
+        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+
+        assert_eq!(consumed, 0);
+        assert_eq!(
+            result.err(),
+            Some("comments must be separated from other tokens by whitespace")
+        );
+        assert_eq!(input.peek(), '#');
     }
 }

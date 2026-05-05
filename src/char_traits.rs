@@ -152,3 +152,27 @@ pub fn is_uri_char(c: char) -> bool {
 pub fn is_tag_char(c: char) -> bool {
     is_uri_char(c) && !is_flow(c) && c != '!'
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn printable_ranges_include_private_and_supplementary_planes() {
+        assert!(is_printable('\u{E000}'));
+        assert!(is_printable('\u{10FFFF}'));
+        assert!(is_yaml_non_break('\u{10000}'));
+        assert!(!is_yaml_non_break('\u{FEFF}'));
+        assert!(!is_yaml_non_break('\n'));
+    }
+
+    #[test]
+    fn word_uri_and_tag_character_sets_are_distinct() {
+        assert!(is_word_char('-'));
+        assert!(!is_word_char('_'));
+        assert!(is_uri_char('_'));
+        assert!(is_uri_char('%'));
+        assert!(!is_tag_char('!'));
+        assert!(!is_tag_char('['));
+    }
+}
