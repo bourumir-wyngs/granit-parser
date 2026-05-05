@@ -27,7 +27,7 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
     let mut lines = Vec::new();
 
     for next in Parser::new_from_str(yaml) {
-        let (event, _span) = next?;
+        let (event, span) = next?;
 
         match &event {
             Event::SequenceStart(_, Some(tag)) => {
@@ -42,7 +42,7 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
             _ => {}
         }
 
-        lines.push(format!("{event:?}"));
+        lines.push(format!("{event:?} bytes={:?}", span.byte_range()));
     }
 
     Ok(lines.join("\n"))
