@@ -32,7 +32,7 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 ## Minimal example
 
-`Parser::new_from_str` returns an iterator of `(Event, Span)` pairs. If you only care about parser events, you can ignore the span and match on the emitted `Event` values:
+[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. You also get line, column and span information:
 
 ```rust
 use granit_parser::{Event, Parser};
@@ -49,7 +49,7 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
 "#;
 
     for next in Parser::new_from_str(yaml) {
-        let (event, _span) = next?;
+        let (event, span) = next?;
 
         match &event {
             Event::SequenceStart(_, Some(tag)) => {
@@ -61,7 +61,7 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
             _ => {}
         }
 
-        println!("{event:?}");
+        println!("{event:?} bytes={:?}", span.byte_range());
     }
 
     Ok(())
@@ -71,34 +71,34 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
 This prints an event stream like:
 
 ```text
-StreamStart
-DocumentStart(false)
-MappingStart(0, None)
-Scalar("items", Plain, 0, None)
+StreamStart bytes=Some(0..0)
+DocumentStart(false) bytes=Some(1..1)
+MappingStart(0, None) bytes=Some(1..1)
+Scalar("items", Plain, 0, None) bytes=Some(1..6)
 sequence tag: !shopping
-SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" }))
-Scalar("milk", Plain, 0, None)
+SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20)
+Scalar("milk", Plain, 0, None) bytes=Some(22..26)
 scalar tag: tag:yaml.org,2002:str for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" }))
-SequenceEnd
-Scalar("locations", Plain, 0, None)
-MappingStart(0, None)
-SequenceStart(0, None)
-Scalar("47.3769", Plain, 0, None)
-Scalar("8.5417", Plain, 0, None)
-SequenceEnd
-Scalar("local", Plain, 0, None)
-SequenceStart(0, None)
-Scalar("40.7128", Plain, 0, None)
-Scalar("-74.0060", Plain, 0, None)
-SequenceEnd
-Scalar("remote", Plain, 0, None)
-MappingEnd
-Scalar("music", Plain, 0, None)
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None)
-MappingEnd
-DocumentEnd
-StreamEnd
+Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42)
+SequenceEnd bytes=Some(43..43)
+Scalar("locations", Plain, 0, None) bytes=Some(43..52)
+MappingStart(0, None) bytes=Some(86..86)
+SequenceStart(0, None) bytes=Some(86..87)
+Scalar("47.3769", Plain, 0, None) bytes=Some(87..94)
+Scalar("8.5417", Plain, 0, None) bytes=Some(96..102)
+SequenceEnd bytes=Some(102..103)
+Scalar("local", Plain, 0, None) bytes=Some(105..110)
+SequenceStart(0, None) bytes=Some(113..114)
+Scalar("40.7128", Plain, 0, None) bytes=Some(114..121)
+Scalar("-74.0060", Plain, 0, None) bytes=Some(123..131)
+SequenceEnd bytes=Some(131..132)
+Scalar("remote", Plain, 0, None) bytes=Some(134..140)
+MappingEnd bytes=Some(141..141)
+Scalar("music", Plain, 0, None) bytes=Some(141..146)
+Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(148..222)
+MappingEnd bytes=Some(223..223)
+DocumentEnd bytes=Some(223..223)
+StreamEnd bytes=Some(223..223)
 ```
 
 ## Event API choices
