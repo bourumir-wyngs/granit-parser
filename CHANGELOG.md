@@ -17,6 +17,9 @@
   through `ParserStack`.
 - Updated the README minimal example to show `Span::slice` alongside byte
   ranges.
+- Fixed the span of quoted (single- and double-quoted) scalars to end at the
+  closing quote rather than after trailing whitespace and an optional
+  end-of-line comment. This makes `Span::slice` return only the scalar source.
 
 ## v0.0.2
 

@@ -269,6 +269,34 @@ fn test_block_utf8() {
 }
 
 #[test]
+fn span_slice_for_quoted_scalar_excludes_trailing_comment() {
+    let yaml = "key: \"value\" # comment\n";
+    let slices: Vec<_> = Parser::new_from_str(yaml)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            matches!(event, Event::Scalar(..))
+                .then(|| span.slice(yaml).unwrap().to_string())
+        })
+        .collect();
+
+    assert_eq!(slices, vec!["key".to_string(), "\"value\"".to_string()]);
+}
+
+#[test]
+fn span_slice_for_single_quoted_scalar_excludes_trailing_comment() {
+    let yaml = "key: 'value' # comment\n";
+    let slices: Vec<_> = Parser::new_from_str(yaml)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            matches!(event, Event::Scalar(..))
+                .then(|| span.slice(yaml).unwrap().to_string())
+        })
+        .collect();
+
+    assert_eq!(slices, vec!["key".to_string(), "'value'".to_string()]);
+}
+
+#[test]
 fn test_flow_sequence_explicit_mapping_end_span_order() {
     let input = "[? a: [b], ? c: &x d, ? e: !t f]";
     let mut last_end = 0usize;

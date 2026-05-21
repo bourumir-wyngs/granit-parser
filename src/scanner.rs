@@ -2869,6 +2869,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Eat the right quote.
         self.skip_non_blank();
+        let end_mark = self.mark;
 
         // Ensure there is no invalid trailing content.
         self.skip_ws_to_eol(SkipTabs::Yes)?;
@@ -2923,7 +2924,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         Ok(Token(
-            Span::new(start_mark, self.mark),
+            Span::new(start_mark, end_mark),
             TokenType::Scalar(style, contents),
         ))
     }
