@@ -72,7 +72,7 @@ fn load_first_document(contents: &str) -> Result<WalkNode> {
             Event::StreamStart => {}
             Event::DocumentStart(_) => return load_document_node(&mut parser, span),
             Event::StreamEnd => bail!("No YAML document found"),
-            event => return build_node(event, span, &mut parser),
+            event => return build_node(&event, span, &mut parser),
         }
     }
 
@@ -93,7 +93,7 @@ fn load_document_node<'input>(
                 });
             }
             Event::StreamStart | Event::DocumentStart(_) => {}
-            event => return build_node(event, span, parser),
+            event => return build_node(&event, span, parser),
         }
     }
 
@@ -101,7 +101,7 @@ fn load_document_node<'input>(
 }
 
 fn build_node<'input>(
-    event: Event<'input>,
+    event: &Event<'input>,
     span: Span,
     parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
 ) -> Result<WalkNode> {
@@ -139,7 +139,7 @@ fn build_sequence<'input>(
         if matches!(event, Event::DocumentEnd | Event::StreamEnd) {
             bail!("Sequence ended before SequenceEnd was emitted");
         }
-        items.push(build_node(event, span, parser)?);
+        items.push(build_node(&event, span, parser)?);
     }
 }
 
@@ -161,7 +161,7 @@ fn build_mapping<'input>(
             bail!("Mapping ended before MappingEnd was emitted");
         }
 
-        let key = build_node(event, span, parser)?;
+        let key = build_node(&event, span, parser)?;
         let (event, span) = next_event(parser)?;
         if matches!(
             event,
@@ -169,7 +169,7 @@ fn build_mapping<'input>(
         ) {
             bail!("Mapping key was not followed by a value");
         }
-        let value = build_node(event, span, parser)?;
+        let value = build_node(&event, span, parser)?;
         items.push((key, value));
     }
 }

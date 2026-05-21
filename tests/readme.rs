@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScanError};
+use granit_parser::{Parser, ScanError};
 
 const README: &str = include_str!("../README.md");
 
@@ -29,20 +29,22 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
     for next in Parser::new_from_str(yaml) {
         let (event, span) = next?;
 
-        match &event {
-            Event::SequenceStart(_, Some(tag)) => {
-                lines.push(format!("sequence tag: {}{}", tag.handle, tag.suffix));
-            }
-            Event::Scalar(value, _, _, Some(tag)) => {
+        if let Some(tag) = event.tag() {
+            if let Some((value, _style)) = event.scalar() {
                 lines.push(format!(
-                    "scalar tag: {}{} for {value:?}",
-                    tag.handle, tag.suffix
+                    "scalar tag: {tag} core-str={} for {value:?}",
+                    tag.is_yaml_core_schema_tag("str")
                 ));
+            } else if event.is_node() {
+                lines.push(format!("node tag: {tag} custom={}", tag.is_custom()));
             }
-            _ => {}
         }
 
-        lines.push(format!("{event:?} bytes={:?}", span.byte_range()));
+        lines.push(format!(
+            "{event:?} bytes={:?} source={:?}",
+            span.byte_range(),
+            span.slice(yaml)
+        ));
     }
 
     Ok(lines.join("\n"))
@@ -56,8 +58,8 @@ fn minimal_example_output_matches_readme() {
     let actual =
         render_readme_example(yaml).expect("README example YAML should parse successfully");
 
-    println!("Actual output:\n{}", actual);
-    println!("Expected output:\n{}", expected);
+    println!("Actual output:\n{actual}");
+    println!("Expected output:\n{expected}");
 
     assert_eq!(actual, expected, "README example output is out of sync");
 }

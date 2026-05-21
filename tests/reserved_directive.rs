@@ -10,7 +10,7 @@ fn yaml_zyu8_directive_variant_yaml11_null_document() {
 
     for item in Parser::new_from_str(yaml) {
         match item {
-            Ok((_event, _span)) => continue,
+            Ok((_event, _span)) => {}
             Err(e) => {
                 got_err = Some(e);
                 break;

@@ -56,7 +56,7 @@ fn run_bench(config: &Config) -> Result<(), Error> {
                 .arg(&iterations)
                 .arg("--output-yaml")
                 .output()
-                .with_context(|| format!("While running {path:?} against {input}"))?;
+                .with_context(|| format!("While running {} against {input}", path.display()))?;
             // Check exit status.
             if output.status.code().unwrap_or(1) == 0 {
                 let s = String::from_utf8_lossy(&output.stdout);
@@ -151,7 +151,7 @@ fn save_run_bench_csv(
     writeln!(csv)?;
     for (path, averages) in inputs.iter().zip(averages.iter()) {
         let filename = Path::new(path).file_name().unwrap().to_string_lossy();
-        write!(csv, "{}", filename)?;
+        write!(csv, "{filename}")?;
         for avg in averages {
             write!(csv, ",{avg}")?;
         }

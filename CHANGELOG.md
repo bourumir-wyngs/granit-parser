@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.0.3
+
+- Added `Span::slice(&str)` for convenient source extraction from parser-emitted
+  spans when byte offsets are available.
+- Added small `Tag` inspection helpers (`is_yaml_core_schema_tag`, `is_custom`,
+  `parts`) for YAML-core-namespace and non-core-namespace tag consumers.
+- Added `Event` inspection helpers (`anchor_id`, `alias_id`, `tag`, `scalar`,
+  `is_node`) for ergonomic access to per-event node metadata. `anchor_id`
+  returns `Option<usize>` for events that define an anchor; `alias_id` returns
+  `Option<usize>` for aliases that reference an anchor; `is_node` returns `true`
+  for any event that produces a value in the document tree.
+- Added `ParserStack::push_include` as an include-oriented alias for
+  `ParserStack::resolve`.
+- Added a custom-tag example showing how to inspect application tags such as
+  `!degrees` from the event stream.
+- Added an include-stack example demonstrating `!include`-style resolution
+  through `ParserStack`.
+- Updated the README minimal example to show `Span::slice` alongside byte
+  ranges.
+- Fixed the span of quoted (single- and double-quoted) scalars to end at the
+  closing quote rather than after trailing whitespace and an optional
+  end-of-line comment. This makes `Span::slice` return only the scalar source.
+- Fixed pedantic Clippy warnings and switched into pedantic mode.
+
 ## v0.0.2
 
 **Features**:

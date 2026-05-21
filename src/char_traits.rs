@@ -48,7 +48,7 @@ pub fn is_digit(c: char) -> bool {
 ///
 /// This is used for scanning tag handles and similar constructs.
 /// Note: This is slightly more permissive than YAML's `ns-word-char` (which excludes `_`).
-/// For strict `ns-word-char` compliance, use [`is_word_char`] instead.
+/// For strict `ns-word-char` compliance, use `is_word_char` instead.
 ///
 /// Matches: `[0-9a-zA-Z_-]`
 #[inline]

@@ -22,7 +22,7 @@ fn yaml_xv9v_empty_lines_and_chomping() {
                 unreachable!("{} reported for valid YAML", err);
             }
             Ok((Event::Scalar(cow, style, size, _tag), span)) => {
-                println!("{:?}|{:?}|{:?}|{:?}", cow, style, size, span);
+                println!("{cow:?}|{style:?}|{size:?}|{span:?}");
             }
             _ => {}
         }

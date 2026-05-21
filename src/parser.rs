@@ -123,6 +123,30 @@ impl Tag {
     pub fn is_yaml_core_schema(&self) -> bool {
         self.handle == "tag:yaml.org,2002:"
     }
+
+    /// Return true for a YAML core-schema tag with the given suffix.
+    ///
+    /// For example, this matches core-schema tags such as `!!str`, `!!int`, `!!float`, `!!bool`,
+    /// `!!null`, `!!map`, or `!!seq` after tag resolution.
+    #[must_use]
+    pub fn is_yaml_core_schema_tag(&self, suffix: &str) -> bool {
+        self.is_yaml_core_schema() && self.suffix == suffix
+    }
+
+    /// Return true for a tag outside the YAML core-schema namespace.
+    ///
+    /// This checks only the tag handle. It returns `false` for any tag whose handle is
+    /// `tag:yaml.org,2002:`, regardless of suffix.
+    #[must_use]
+    pub fn is_custom(&self) -> bool {
+        !self.is_yaml_core_schema()
+    }
+
+    /// Return the tag as `(handle, suffix)`.
+    #[must_use]
+    pub fn parts(&self) -> (&str, &str) {
+        (&self.handle, &self.suffix)
+    }
 }
 
 impl Display for Tag {
@@ -136,6 +160,67 @@ impl Display for Tag {
 }
 
 impl<'input> Event<'input> {
+    /// Return the anchor ID defined by this event, if any.
+    ///
+    /// Returns `Some(id)` when this event defines an anchor on a scalar, sequence, or mapping
+    /// node. Returns `None` for all other events, including `Alias` (which references an anchor
+    /// rather than defining one; use [`Self::alias_id`] to obtain the target anchor ID).
+    #[must_use]
+    pub fn anchor_id(&self) -> Option<usize> {
+        match self {
+            Self::Scalar(_, _, anchor_id, _)
+            | Self::SequenceStart(anchor_id, _)
+            | Self::MappingStart(anchor_id, _)
+                if *anchor_id != 0 =>
+            {
+                Some(*anchor_id)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the target anchor ID if this event is an alias.
+    #[must_use]
+    pub fn alias_id(&self) -> Option<usize> {
+        match self {
+            Self::Alias(anchor_id) => Some(*anchor_id),
+            _ => None,
+        }
+    }
+
+    /// Return the tag carried by this event, if any.
+    #[must_use]
+    pub fn tag(&self) -> Option<&Tag> {
+        match self {
+            Self::Scalar(_, _, _, tag)
+            | Self::SequenceStart(_, tag)
+            | Self::MappingStart(_, tag) => tag.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Return the scalar value and style, if this event is a scalar.
+    #[must_use]
+    pub fn scalar(&self) -> Option<(&str, ScalarStyle)> {
+        match self {
+            Self::Scalar(value, style, _, _) => Some((value.as_ref(), *style)),
+            _ => None,
+        }
+    }
+
+    /// Return whether this event represents a YAML node (value).
+    ///
+    /// Returns `true` for scalars, collection starts, and aliases — all events that produce a
+    /// value in the document tree. Returns `false` for structural events such as `StreamStart`,
+    /// `DocumentStart`, collection ends, etc.
+    #[must_use]
+    pub fn is_node(&self) -> bool {
+        matches!(
+            self,
+            Self::Alias(_) | Self::Scalar(..) | Self::SequenceStart(..) | Self::MappingStart(..)
+        )
+    }
+
     /// Create an empty scalar.
     fn empty_scalar() -> Self {
         // a null scalar
@@ -1733,8 +1818,68 @@ mod test {
         };
 
         assert!(core.is_yaml_core_schema());
+        assert!(core.is_yaml_core_schema_tag("int"));
+        assert!(!core.is_yaml_core_schema_tag("str"));
+        assert!(!core.is_custom());
+        assert_eq!(core.parts(), ("tag:yaml.org,2002:", "int"));
+
         assert!(!local.is_yaml_core_schema());
+        assert!(!local.is_yaml_core_schema_tag("thing"));
+        assert!(local.is_custom());
+        assert_eq!(local.parts(), ("!", "thing"));
         assert_eq!(local.to_string(), "!thing");
+    }
+
+    #[test]
+    fn event_inspection_helpers_report_node_metadata() {
+        let tag = Tag {
+            handle: "!".to_owned(),
+            suffix: "thing".to_owned(),
+        };
+        let scalar = Event::Scalar(
+            "value".into(),
+            ScalarStyle::DoubleQuoted,
+            7,
+            Some(Cow::Borrowed(&tag)),
+        );
+        let sequence = Event::SequenceStart(8, Some(Cow::Owned(tag.clone())));
+        let mapping = Event::MappingStart(9, Some(Cow::Borrowed(&tag)));
+
+        assert_eq!(scalar.anchor_id(), Some(7));
+        assert_eq!(scalar.alias_id(), None);
+        assert_eq!(scalar.tag(), Some(&tag));
+        assert_eq!(scalar.scalar(), Some(("value", ScalarStyle::DoubleQuoted)));
+        assert!(scalar.is_node());
+
+        assert_eq!(sequence.anchor_id(), Some(8));
+        assert_eq!(sequence.alias_id(), None);
+        assert_eq!(sequence.tag(), Some(&tag));
+        assert_eq!(sequence.scalar(), None);
+        assert!(sequence.is_node());
+
+        assert_eq!(mapping.anchor_id(), Some(9));
+        assert_eq!(mapping.alias_id(), None);
+        assert_eq!(mapping.tag(), Some(&tag));
+        assert_eq!(mapping.scalar(), None);
+        assert!(mapping.is_node());
+
+        let alias = Event::Alias(10);
+        assert_eq!(alias.anchor_id(), None);
+        assert_eq!(alias.alias_id(), Some(10));
+        assert_eq!(alias.tag(), None);
+        assert_eq!(alias.scalar(), None);
+        assert!(alias.is_node());
+
+        let unanchored_scalar = Event::Scalar("x".into(), ScalarStyle::Plain, 0, None);
+        assert_eq!(unanchored_scalar.anchor_id(), None);
+        assert_eq!(unanchored_scalar.alias_id(), None);
+
+        let stream_start = Event::StreamStart;
+        assert_eq!(stream_start.anchor_id(), None);
+        assert_eq!(stream_start.alias_id(), None);
+        assert_eq!(stream_start.tag(), None);
+        assert_eq!(stream_start.scalar(), None);
+        assert!(!stream_start.is_node());
     }
 
     #[test]

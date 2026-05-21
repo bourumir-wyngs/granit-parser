@@ -8,8 +8,7 @@ fn char_index_to_byte_index(s: &str, char_index: usize) -> usize {
     }
     s.char_indices()
         .nth(char_index)
-        .map(|(byte, _)| byte)
-        .unwrap_or_else(|| s.len())
+        .map_or_else(|| s.len(), |(byte, _)| byte)
 }
 
 fn span_offsets(input: &str, start: Marker, end: Marker) -> (usize, usize) {
@@ -80,6 +79,85 @@ fn span_helpers_report_length_empty_and_byte_range() {
 
     let without_byte_offsets = granit_parser::Span::new(Marker::new(0, 1, 0), Marker::new(1, 1, 1));
     assert_eq!(without_byte_offsets.byte_range(), None);
+}
+
+#[test]
+fn span_slice_returns_source_text_for_valid_byte_ranges() {
+    let source = "key: value";
+    let span = granit_parser::Span::new(
+        Marker::new(5, 1, 5).with_byte_offset(Some(5)),
+        Marker::new(10, 1, 10).with_byte_offset(Some(10)),
+    );
+
+    assert_eq!(span.slice(source), Some("value"));
+}
+
+#[test]
+fn span_slice_handles_non_ascii_byte_ranges() {
+    let source = "a: 你好";
+    let span = granit_parser::Span::new(
+        Marker::new(3, 1, 3).with_byte_offset(Some(3)),
+        Marker::new(5, 1, 5).with_byte_offset(Some(source.len())),
+    );
+    let invalid_boundary = granit_parser::Span::new(
+        Marker::new(3, 1, 3).with_byte_offset(Some(4)),
+        Marker::new(5, 1, 5).with_byte_offset(Some(source.len())),
+    );
+
+    assert_eq!(span.slice(source), Some("你好"));
+    assert_eq!(invalid_boundary.slice(source), None);
+}
+
+#[test]
+fn parser_spans_use_byte_offsets_for_non_ascii_input() {
+    let source = "a: 你好\nb: c\n";
+    let scalars: Vec<_> = Parser::new_from_str(source)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            if let Event::Scalar(value, ..) = event {
+                Some((
+                    value.into_owned(),
+                    span.byte_range(),
+                    span.slice(source).map(std::borrow::ToOwned::to_owned),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(
+        scalars,
+        vec![
+            ("a".to_string(), Some(0..1), Some("a".to_string())),
+            ("你好".to_string(), Some(3..9), Some("你好".to_string())),
+            ("b".to_string(), Some(10..11), Some("b".to_string())),
+            ("c".to_string(), Some(13..14), Some("c".to_string())),
+        ]
+    );
+}
+
+#[test]
+fn span_slice_handles_empty_spans() {
+    let source = "key: value";
+    let empty = granit_parser::Span::empty(Marker::new(4, 1, 4).with_byte_offset(Some(4)));
+
+    assert_eq!(empty.slice(source), Some(""));
+}
+
+#[test]
+fn span_slice_returns_none_for_buffered_input_spans_without_byte_offsets() {
+    let source = "foo: bar";
+    let mut scalar_slices = Vec::new();
+
+    for parsed in Parser::new_from_iter(source.chars()) {
+        let (event, span) = parsed.unwrap();
+        if matches!(event, Event::Scalar(..)) {
+            scalar_slices.push(span.slice(source));
+        }
+    }
+
+    assert_eq!(scalar_slices, [None, None]);
 }
 
 #[test]
@@ -216,6 +294,32 @@ fn test_block_utf8() {
             )
         ],
     );
+}
+
+#[test]
+fn span_slice_for_quoted_scalar_excludes_trailing_comment() {
+    let yaml = "key: \"value\" # comment\n";
+    let slices: Vec<_> = Parser::new_from_str(yaml)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
+        })
+        .collect();
+
+    assert_eq!(slices, vec!["key".to_string(), "\"value\"".to_string()]);
+}
+
+#[test]
+fn span_slice_for_single_quoted_scalar_excludes_trailing_comment() {
+    let yaml = "key: 'value' # comment\n";
+    let slices: Vec<_> = Parser::new_from_str(yaml)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
+        })
+        .collect();
+
+    assert_eq!(slices, vec!["key".to_string(), "'value'".to_string()]);
 }
 
 #[test]
