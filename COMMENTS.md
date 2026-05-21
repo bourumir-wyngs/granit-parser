@@ -40,7 +40,7 @@ Once you implement the step, make edit in this document marking it as done.
   - [ ] Store `span: Span` covering the whole source comment, including `#` and excluding the line break.
   - [ ] Store `text: Cow<'input, str>` containing the raw comment payload exactly after `#`, excluding only the line break.
   - [ ] Preserve leading spaces in `text`, including a single space immediately after `#` when present.
-  - [ ] Consider adding an ergonomic `trimmed_text()` helper later; do not strip payload text during capture.
+  - [ ] Add an ergonomic `trimmed_text()` helper . Do not strip payload text during capture.
 - [ ] Add opt-in comment collection to `Scanner`.
   - [ ] Add `Scanner::with_comments()` or equivalent builder-style method.
   - [ ] Add `Scanner::comments(&self) -> &[Comment<'input>]`.
