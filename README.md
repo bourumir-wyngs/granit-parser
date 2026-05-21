@@ -32,10 +32,10 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 ## Minimal example
 
-[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. You also get line, column, byte range and source-slice information:
+[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges plus source slices:
 
 ```rust
-use granit_parser::{Event, Parser};
+use granit_parser::Parser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = r#"
@@ -51,14 +51,15 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
     for next in Parser::new_from_str(yaml) {
         let (event, span) = next?;
 
-        match &event {
-            Event::SequenceStart(_, Some(tag)) => {
-                println!("sequence tag: {}{}", tag.handle, tag.suffix);
+        if let Some(tag) = event.tag() {
+            if let Some((value, _style)) = event.scalar() {
+                println!(
+                    "scalar tag: {tag} core-str={} for {value:?}",
+                    tag.is_yaml_core_schema_tag("str")
+                );
+            } else if event.is_node() {
+                println!("node tag: {tag} custom={}", tag.is_custom());
             }
-            Event::Scalar(value, _, _, Some(tag)) => {
-                println!("scalar tag: {}{} for {value:?}", tag.handle, tag.suffix);
-            }
-            _ => {}
         }
 
         println!(
@@ -79,10 +80,10 @@ StreamStart bytes=Some(0..0) source=Some("")
 DocumentStart(false) bytes=Some(1..1) source=Some("")
 MappingStart(0, None) bytes=Some(1..1) source=Some("")
 Scalar("items", Plain, 0, None) bytes=Some(1..6) source=Some("items")
-sequence tag: !shopping
+node tag: !shopping custom=true
 SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20) source=Some("")
 Scalar("milk", Plain, 0, None) bytes=Some(22..26) source=Some("milk")
-scalar tag: tag:yaml.org,2002:str for "bread"
+scalar tag: tag:yaml.org,2002:str core-str=true for "bread"
 Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42) source=Some("bread")
 SequenceEnd bytes=Some(43..43) source=Some("")
 Scalar("locations", Plain, 0, None) bytes=Some(43..52) source=Some("locations")
@@ -200,7 +201,10 @@ This crate includes fixes to improve resilience against:
 Like the upstream parser, it does **not** interpret application-level types, so parsing YAML does not trigger external side effects.
 
 ### Improved ergonomics
-Release 0.0.3 includes some extensions to improve the parser ergonomics. See CHANGELOG.md for details.
+Release 0.0.3 includes ergonomic helpers such as `Event::tag`, `Event::scalar`,
+`Event::anchor_id`, `Event::alias_id`, `Event::is_node`, `Tag::parts`,
+`Tag::is_custom`, `Tag::is_yaml_core_schema_tag`, `Span::slice`, and
+`ParserStack::push_include`. See CHANGELOG.md for details.
 
 ## Tools
 
