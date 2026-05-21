@@ -147,12 +147,12 @@ Once you implement the step, make edit in this document marking it as done.
   - [x] Unseparated comments still error.
   - [x] Unseparated comment errors leave the invalid `#` unrecorded.
   - [ ] BS4K comment-interrupted multiline plain scalar still errors.
-- [ ] Add non-ASCII tests.
-  - [ ] Comment payload with multi-byte Unicode.
-  - [ ] Plain scalar trailing Unicode comment: `key: value # unicode: äöü`.
-  - [ ] Correct character offsets.
-  - [ ] Correct byte offsets for `StrInput`.
-  - [ ] Matching behavior between `StrInput` and `BufferedInput`.
+- [x] Add non-ASCII tests.
+  - [x] Comment payload with multi-byte Unicode.
+  - [x] Plain scalar trailing Unicode comment: `key: value # unicode: äöü`.
+  - [x] Correct character offsets.
+  - [x] Correct byte offsets for `StrInput`.
+  - [x] Matching behavior between `StrInput` and `BufferedInput`.
 
 ### Documentation
 

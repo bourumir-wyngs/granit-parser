@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use granit_parser::{
-    BorrowedInput, BufferedInput, Comment, Event, Marker, Parser, ScalarStyle, Scanner, Span,
-    StrInput,
+    BorrowedInput, BufferedInput, Comment, Event, Input, Marker, Parser, ScalarStyle, Scanner,
+    Span, StrInput,
 };
 
 fn drain_scanner<'input, T>(scanner: &mut Scanner<'input, T>)
@@ -14,6 +14,78 @@ where
         .expect("scanner should not fail")
         .is_some()
     {}
+}
+
+struct SliceOnlyInput<'input> {
+    source: &'input str,
+    inner: StrInput<'input>,
+}
+
+impl<'input> SliceOnlyInput<'input> {
+    #[must_use]
+    fn new(source: &'input str) -> Self {
+        Self {
+            source,
+            inner: StrInput::new(source),
+        }
+    }
+}
+
+impl Input for SliceOnlyInput<'_> {
+    fn lookahead(&mut self, count: usize) {
+        self.inner.lookahead(count);
+    }
+
+    fn buflen(&self) -> usize {
+        self.inner.buflen()
+    }
+
+    fn bufmaxlen(&self) -> usize {
+        self.inner.bufmaxlen()
+    }
+
+    fn raw_read_ch(&mut self) -> char {
+        self.inner.raw_read_ch()
+    }
+
+    fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+        self.inner.raw_read_non_breakz_ch()
+    }
+
+    fn skip(&mut self) {
+        self.inner.skip();
+    }
+
+    fn skip_n(&mut self, count: usize) {
+        self.inner.skip_n(count);
+    }
+
+    fn peek(&self) -> char {
+        self.inner.peek()
+    }
+
+    fn peek_nth(&self, n: usize) -> char {
+        self.inner.peek_nth(n)
+    }
+
+    fn byte_offset(&self) -> Option<usize> {
+        self.inner.byte_offset()
+    }
+
+    fn slice_bytes(&self, start: usize, end: usize) -> Option<&str> {
+        self.source.get(start..end)
+    }
+
+    fn skip_while_non_breakz(&mut self) -> usize {
+        self.inner.skip_while_non_breakz()
+    }
+}
+
+impl<'input> BorrowedInput<'input> for SliceOnlyInput<'input> {
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
+        let _ = self;
+        None
+    }
 }
 
 #[test]
@@ -111,6 +183,27 @@ fn scanner_comment_span_stops_before_crlf() {
 }
 
 #[test]
+fn scanner_batched_comment_capture_tracks_unicode_offsets() {
+    let yaml = "# éβ🙂\nnext: item\n";
+    let mut scanner = Scanner::new(StrInput::new(yaml)).with_comments();
+
+    drain_scanner(&mut scanner);
+
+    let comments = scanner.comments();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].text, " éβ🙂");
+    assert_eq!(comments[0].span.slice(yaml), Some("# éβ🙂"));
+    assert_eq!(comments[0].span.start.index(), 0);
+    assert_eq!(comments[0].span.start.byte_offset(), Some(0));
+    assert_eq!(comments[0].span.start.line(), 1);
+    assert_eq!(comments[0].span.start.col(), 0);
+    assert_eq!(comments[0].span.end.index(), 5);
+    assert_eq!(comments[0].span.end.byte_offset(), Some(10));
+    assert_eq!(comments[0].span.end.line(), 1);
+    assert_eq!(comments[0].span.end.col(), 5);
+}
+
+#[test]
 fn scanner_comments_from_str_input_are_borrowed() {
     let mut scanner = Scanner::new(StrInput::new("# borrowed\n")).with_comments();
 
@@ -119,6 +212,22 @@ fn scanner_comments_from_str_input_are_borrowed() {
     match &scanner.comments()[0].text {
         Cow::Borrowed(text) => assert_eq!(*text, " borrowed"),
         Cow::Owned(text) => panic!("expected borrowed comment text, got {text:?}"),
+    }
+}
+
+#[test]
+fn scanner_uses_slice_bytes_fallback_when_comment_text_cannot_be_borrowed() {
+    let yaml = "# fallback\n";
+    let mut scanner = Scanner::new(SliceOnlyInput::new(yaml)).with_comments();
+
+    drain_scanner(&mut scanner);
+
+    let comments = scanner.comments();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].span.slice(yaml), Some("# fallback"));
+    match &comments[0].text {
+        Cow::Owned(text) => assert_eq!(text, " fallback"),
+        Cow::Borrowed(text) => panic!("expected owned fallback comment text, got {text:?}"),
     }
 }
 
@@ -155,6 +264,44 @@ fn scanner_treats_unseparated_hash_as_plain_scalar_content() {
     drain_scanner(&mut scanner);
 
     assert!(scanner.comments().is_empty());
+}
+
+#[test]
+fn scanner_unicode_trailing_comment_matches_str_and_buffered_inputs() {
+    let yaml = "key: value # unicode: äöü\n";
+
+    let mut str_scanner = Scanner::new(StrInput::new(yaml)).with_comments();
+    let mut buffered_scanner = Scanner::new(BufferedInput::new(yaml.chars())).with_comments();
+
+    drain_scanner(&mut str_scanner);
+    drain_scanner(&mut buffered_scanner);
+
+    let str_comments = str_scanner.comments();
+    let buffered_comments = buffered_scanner.comments();
+
+    assert_eq!(str_comments.len(), 1);
+    assert_eq!(buffered_comments.len(), 1);
+    assert_eq!(str_comments[0].text, " unicode: äöü");
+    assert_eq!(buffered_comments[0].text, str_comments[0].text);
+    assert_eq!(str_comments[0].span.slice(yaml), Some("# unicode: äöü"));
+    assert_eq!(
+        (
+            buffered_comments[0].span.start.index(),
+            buffered_comments[0].span.end.index(),
+            buffered_comments[0].span.start.line(),
+            buffered_comments[0].span.end.line(),
+            buffered_comments[0].span.start.col(),
+            buffered_comments[0].span.end.col(),
+        ),
+        (
+            str_comments[0].span.start.index(),
+            str_comments[0].span.end.index(),
+            str_comments[0].span.start.line(),
+            str_comments[0].span.end.line(),
+            str_comments[0].span.start.col(),
+            str_comments[0].span.end.col(),
+        )
+    );
 }
 
 #[test]
