@@ -110,7 +110,7 @@ Once you implement the step, make edit in this document marking it as done.
 - [ ] Document that comments are exposed only on `Scanner` and `Parser` initially.
 - [ ] Track `ParserStack` comment support as separate follow-up work.
   - [ ] Account for replayed event streams, which currently do not store comments.
-  - [ ] Define a policy for comments from included/replayed inputs before implementing.
+  - [ ] Comments in the included documents must be supported as well. 
 
 ### Tests
 
