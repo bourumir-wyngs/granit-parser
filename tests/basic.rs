@@ -118,10 +118,14 @@ a: b # This is another comment
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
+            Event::Comment(" This is a comment".into()),
             Event::DocumentStart(false),
             Event::MappingStart(0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+            Event::Comment(" This is another comment".into()),
+            Event::Comment("#".into()),
+            Event::Comment("".into()),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -229,7 +233,9 @@ foobar";
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
+            Event::Comment(" This is a comment".into()),
             Event::DocumentStart(true),
+            Event::Comment("-------".into()),
             Event::Scalar("foobar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -283,6 +289,7 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
+            Event::Comment("comment".into()),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -295,6 +302,7 @@ fn test_bad_docstart() {
             Event::StreamStart,
             Event::DocumentStart(false),
             Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
+            Event::Comment("comment".into()),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]

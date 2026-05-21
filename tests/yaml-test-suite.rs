@@ -405,7 +405,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 )
             }
             Event::Alias(idx) => format!("=ALI *{idx}"),
-            Event::Nothing => return,
+            Event::Comment(_) | Event::Nothing => return,
         };
         self.events.push(line);
     }

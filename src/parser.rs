@@ -6,7 +6,7 @@
 
 use crate::{
     input::{str::StrInput, BorrowedInput},
-    scanner::{Comment, ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
+    scanner::{ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
     BufferedInput,
 };
 
@@ -29,21 +29,30 @@ enum State {
     DocumentContent,
     DocumentEnd,
     BlockNode,
+    BlockNodeOrIndentlessSequence,
+    FlowNode,
     BlockSequenceFirstEntry,
     BlockSequenceEntry,
     IndentlessSequenceEntry,
+    IndentlessSequenceEntryNode,
     BlockMappingFirstKey,
     BlockMappingKey,
+    BlockMappingKeyNode,
     BlockMappingValue,
+    BlockMappingValueNode,
     FlowSequenceFirstEntry,
     FlowSequenceEntry,
     FlowSequenceEntryMappingKey,
     FlowSequenceEntryMappingValue,
+    FlowSequenceEntryMappingValueNode,
     FlowSequenceEntryMappingEnd,
     FlowMappingFirstKey,
     FlowMappingKey,
+    FlowMappingKeyNode,
     FlowMappingValue,
+    FlowMappingValueNode,
     FlowMappingEmptyValue,
+    BlockSequenceEntryNode,
     End,
 }
 
@@ -73,6 +82,15 @@ pub enum Event<'input> {
     Alias(
         /// The anchor ID the alias refers to.
         usize,
+    ),
+    /// A YAML source comment.
+    ///
+    /// Comments are presentation metadata, not YAML data nodes. The payload is the raw text
+    /// exactly after `#`, excluding only the line break. The companion parser [`Span`] covers the
+    /// whole source comment, including `#` and excluding the line break.
+    Comment(
+        /// Raw comment payload exactly after `#`, excluding only the line break.
+        Cow<'input, str>,
     ),
     /// Value, style, `anchor_id`, tag
     Scalar(
@@ -256,6 +274,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// `TokenType::Key` in block style, and is applied to the next emitted node event (the key
     /// itself).
     pending_key_indent: Option<usize>,
+    /// Pending anchor ID to attach to a node after an intervening comment.
+    pending_node_anchor_id: usize,
+    /// Pending tag to attach to a node after an intervening comment.
+    pending_node_tag: Option<Cow<'input, Tag>>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -597,6 +619,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             current: None,
 
             pending_key_indent: None,
+            pending_node_anchor_id: 0,
+            pending_node_tag: None,
 
             anchors: BTreeMap::new(),
             // valid anchor_id starts from 1
@@ -635,38 +659,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self
     }
 
-    /// Enable collection of YAML comments skipped by the parser.
-    ///
-    /// Comment collection is disabled by default. When enabled, comments are collected in source
-    /// order up to the underlying scanner's current input position. The parser's event stream is
-    /// unchanged.
-    #[must_use]
-    pub fn with_comments(mut self) -> Self {
-        self.scanner.enable_comments();
-        self
-    }
-
-    /// Return comments collected so far, in source order.
-    ///
-    /// This is a collection API, not a streaming interleaving API. Parser operations such as
-    /// [`Self::peek`] may scan ahead while resolving tokens, so returned comments are not defined
-    /// as "comments before the current event"; they are only guaranteed to be collected up to the
-    /// scanner's current input position.
-    #[inline]
-    #[must_use]
-    pub fn comments(&self) -> &[Comment<'input>] {
-        self.scanner.comments()
-    }
-
-    /// Return collected comments and clear the parser's comment buffer.
-    ///
-    /// Future parsing continues appending newly captured comments to the now-empty buffer.
-    #[inline]
-    #[must_use]
-    pub fn take_comments(&mut self) -> Vec<Comment<'input>> {
-        self.scanner.take_comments()
-    }
-
     /// Try to load the next event and return it, but do not consuming it from `self`.
     ///
     /// Any subsequent call to [`Parser::peek`] will return the same value, until a call to
@@ -696,7 +688,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match self.current.take() {
-            None => self.parse(),
+            None => {
+                if let Some(comment) = self.next_comment_event()? {
+                    Ok(comment)
+                } else {
+                    self.parse()
+                }
+            }
             Some(v) => Ok(v),
         }
     }
@@ -716,13 +714,32 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// This function does _not_ make use of `self.token`.
     fn scan_next_token(&mut self) -> Result<Token<'input>, ScanError> {
-        let token = self.scanner.next();
-        match token {
+        match self.scanner.next() {
             None => match self.scanner.get_error() {
                 None => Err(self.unexpected_eof()),
                 Some(e) => e.into_result(),
             },
             Some(tok) => Ok(tok),
+        }
+    }
+
+    fn next_comment_event<'a>(&mut self) -> Result<Option<(Event<'a>, Span)>, ScanError>
+    where
+        'input: 'a,
+    {
+        let is_comment = {
+            let token = self.peek_token()?;
+            matches!(token.1, TokenType::Comment(_))
+        };
+
+        if !is_comment {
+            return Ok(None);
+        }
+
+        let Token(span, token) = self.fetch_token();
+        match token {
+            TokenType::Comment(text) => Ok(Some((Event::Comment(text), span))),
+            _ => unreachable!("comment token disappeared after peek"),
         }
     }
 
@@ -738,13 +755,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
             State::FlowSequenceEntryMappingKey
             | State::FlowSequenceEntryMappingValue
-            | State::FlowSequenceEntryMappingEnd => {
-                "unexpected EOF while parsing an implicit flow mapping"
-            }
-            State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
+            | State::FlowSequenceEntryMappingEnd
+            | State::FlowNode => "unexpected EOF while parsing an implicit flow mapping",
+            State::BlockSequenceFirstEntry | State::BlockSequenceEntry | State::BlockNode => {
                 "unexpected EOF while parsing a block sequence"
             }
-            State::BlockMappingFirstKey | State::BlockMappingKey | State::BlockMappingValue => {
+            State::BlockMappingFirstKey
+            | State::BlockMappingKey
+            | State::BlockMappingValue
+            | State::BlockNodeOrIndentlessSequence => {
                 "unexpected EOF while parsing a block mapping"
             }
             _ => "unexpected eof",
@@ -774,6 +793,25 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.states.push(state);
     }
 
+    fn defer_parse_node<'a>(
+        &mut self,
+        node_state: State,
+        return_state: State,
+        block: bool,
+        indentless_sequence: bool,
+    ) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        self.push_state(return_state);
+        self.state = node_state;
+        if let Some(comment) = self.next_comment_event()? {
+            Ok(comment)
+        } else {
+            self.parse_node(block, indentless_sequence)
+        }
+    }
+
     fn parse<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -782,8 +820,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             return Ok((Event::StreamEnd, Span::empty(self.scanner.mark())));
         }
         let (ev, span) = self.state_machine()?;
-        if let Some(indent) = self.pending_key_indent.take() {
-            Ok((ev, span.with_indent(Some(indent))))
+        if ev.is_node() {
+            if let Some(indent) = self.pending_key_indent.take() {
+                Ok((ev, span.with_indent(Some(indent))))
+            } else {
+                Ok((ev, span))
+            }
         } else {
             Ok((ev, span))
         }
@@ -894,6 +936,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ParserTrait::try_load(self, recv, multi)
     }
 
+    #[cfg(test)]
     fn try_load_document<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         first_ev: Event<'input>,
@@ -919,6 +962,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok(())
     }
 
+    #[cfg(test)]
     fn try_load_node<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         first_ev: Event<'input>,
@@ -943,6 +987,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(test)]
     fn try_load_mapping<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         recv: &mut R,
@@ -965,6 +1010,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok(())
     }
 
+    #[cfg(test)]
     fn try_load_sequence<R: TrySpannedEventReceiver<'input>>(
         &mut self,
         recv: &mut R,
@@ -999,26 +1045,35 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             State::DocumentEnd => self.document_end(),
 
             State::BlockNode => self.parse_node(true, false),
-            // State::BlockNodeOrIndentlessSequence => self.parse_node(true, true),
-            // State::FlowNode => self.parse_node(false, false),
+            State::BlockNodeOrIndentlessSequence => self.parse_node(true, true),
+            State::FlowNode => self.parse_node(false, false),
             State::BlockMappingFirstKey => self.block_mapping_key(true),
             State::BlockMappingKey => self.block_mapping_key(false),
+            State::BlockMappingKeyNode => self.block_mapping_key_node(),
             State::BlockMappingValue => self.block_mapping_value(),
+            State::BlockMappingValueNode => self.block_mapping_value_node(),
 
             State::BlockSequenceFirstEntry => self.block_sequence_entry(true),
             State::BlockSequenceEntry => self.block_sequence_entry(false),
+            State::BlockSequenceEntryNode => self.block_sequence_entry_node(),
 
             State::FlowSequenceFirstEntry => self.flow_sequence_entry(true),
             State::FlowSequenceEntry => self.flow_sequence_entry(false),
 
             State::FlowMappingFirstKey => self.flow_mapping_key(true),
             State::FlowMappingKey => self.flow_mapping_key(false),
+            State::FlowMappingKeyNode => self.flow_mapping_key_node(),
             State::FlowMappingValue => self.flow_mapping_value(false),
+            State::FlowMappingValueNode => self.flow_mapping_value_node(),
 
             State::IndentlessSequenceEntry => self.indentless_sequence_entry(),
+            State::IndentlessSequenceEntryNode => self.indentless_sequence_entry_node(),
 
             State::FlowSequenceEntryMappingKey => self.flow_sequence_entry_mapping_key(),
             State::FlowSequenceEntryMappingValue => self.flow_sequence_entry_mapping_value(),
+            State::FlowSequenceEntryMappingValueNode => {
+                self.flow_sequence_entry_mapping_value_node()
+            }
             State::FlowSequenceEntryMappingEnd => self.flow_sequence_entry_mapping_end(),
             State::FlowMappingEmptyValue => self.flow_mapping_value(true),
 
@@ -1132,6 +1187,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         self.parser_process_directives()?;
+        if let Some(comment) = self.next_comment_event()? {
+            return Ok(comment);
+        }
         match *self.peek_token()? {
             Token(mark, TokenType::DocumentStart) => {
                 self.push_state(State::DocumentEnd);
@@ -1150,21 +1208,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        match *self.peek_token()? {
-            Token(
-                mark,
-                TokenType::VersionDirective(..)
-                | TokenType::TagDirective(..)
-                | TokenType::ReservedDirective(..)
-                | TokenType::DocumentStart
-                | TokenType::DocumentEnd
-                | TokenType::StreamEnd,
-            ) => {
-                self.pop_state();
-                // empty scalar
-                Ok((Event::empty_scalar(), mark))
-            }
-            _ => self.parse_node(true, false),
+        if let Token(
+            mark,
+            TokenType::VersionDirective(..)
+            | TokenType::TagDirective(..)
+            | TokenType::ReservedDirective(..)
+            | TokenType::DocumentStart
+            | TokenType::DocumentEnd
+            | TokenType::StreamEnd,
+        ) = *self.peek_token()?
+        {
+            self.pop_state();
+            // empty scalar
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.state = State::BlockNode;
+            self.parse_node(true, false)
         }
     }
 
@@ -1229,13 +1288,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok(new_id)
     }
 
+    fn save_pending_node_properties(&mut self, anchor_id: usize, tag: Option<Cow<'input, Tag>>) {
+        self.pending_node_anchor_id = anchor_id;
+        self.pending_node_tag = tag;
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_node<'a>(&mut self, block: bool, indentless_sequence: bool) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        let mut anchor_id = 0;
-        let mut tag = None;
+        if let Some(comment) = self.next_comment_event()? {
+            return Ok(comment);
+        }
+
+        let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
+        let mut tag = self.pending_node_tag.take();
         match *self.peek_token()? {
             Token(_, TokenType::Alias(_)) => {
                 self.pop_state();
@@ -1262,6 +1330,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                             unreachable!()
                         }
                     }
+                    if let Some(comment) = self.next_comment_event()? {
+                        self.save_pending_node_properties(anchor_id, tag);
+                        return Ok(comment);
+                    }
                 } else {
                     unreachable!()
                 }
@@ -1275,6 +1347,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                         } else {
                             unreachable!()
                         }
+                    }
+                    if let Some(comment) = self.next_comment_event()? {
+                        self.save_pending_node_properties(anchor_id, tag);
+                        return Ok(comment);
                     }
                 } else {
                     unreachable!()
@@ -1297,18 +1373,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Token(mark, TokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
+                self.skip();
                 Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
+                self.skip();
                 Ok((Event::MappingStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
+                self.skip();
                 Ok((Event::SequenceStart(anchor_id, tag), mark))
             }
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
+                self.skip();
                 Ok((Event::MappingStart(anchor_id, tag), mark))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
@@ -1327,15 +1407,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
                     State::FlowSequenceEntryMappingKey
                     | State::FlowSequenceEntryMappingValue
-                    | State::FlowSequenceEntryMappingEnd => {
-                        "unexpected EOF while parsing an implicit flow mapping"
-                    }
-                    State::BlockSequenceFirstEntry | State::BlockSequenceEntry => {
-                        "unexpected EOF while parsing a block sequence"
-                    }
+                    | State::FlowSequenceEntryMappingEnd
+                    | State::FlowNode => "unexpected EOF while parsing an implicit flow mapping",
+                    State::BlockSequenceFirstEntry
+                    | State::BlockSequenceEntry
+                    | State::BlockNode => "unexpected EOF while parsing a block sequence",
                     State::BlockMappingFirstKey
                     | State::BlockMappingKey
-                    | State::BlockMappingValue => "unexpected EOF while parsing a block mapping",
+                    | State::BlockMappingValue
+                    | State::BlockNodeOrIndentlessSequence => {
+                        "unexpected EOF while parsing a block mapping"
+                    }
                     _ => "while parsing a node, did not find expected node content",
                 };
                 Err(ScanError::new_str(span.start, info))
@@ -1343,16 +1425,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
-    fn block_mapping_key<'a>(&mut self, first: bool) -> ParseResult<'a>
+    fn block_mapping_key<'a>(&mut self, _first: bool) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        // skip BlockMappingStart
-        if first {
-            let _ = self.peek_token()?;
-            //self.marks.push(tok.0);
-            self.skip();
-        }
         match *self.peek_token()? {
             Token(_, TokenType::Key) => {
                 // Indentation is only meaningful for block mapping keys.
@@ -1360,15 +1436,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.pending_key_indent = Some(key_span.start.col());
                 }
                 self.skip();
-                if let Token(mark, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
-                    *self.peek_token()?
-                {
-                    self.state = State::BlockMappingValue;
-                    // empty scalar
-                    Ok((Event::empty_scalar(), mark))
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::BlockMappingKeyNode;
+                    Ok(comment)
                 } else {
-                    self.push_state(State::BlockMappingValue);
-                    self.parse_node(true, true)
+                    self.block_mapping_key_node()
                 }
             }
             // XXX(chenyh): libyaml failed to parse spec 1.2, ex8.18
@@ -1388,6 +1460,25 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    fn block_mapping_key_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(mark, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
+            *self.peek_token()?
+        {
+            self.state = State::BlockMappingValue;
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.defer_parse_node(
+                State::BlockNodeOrIndentlessSequence,
+                State::BlockMappingValue,
+                true,
+                true,
+            )
+        }
+    }
+
     fn block_mapping_value<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -1395,15 +1486,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::Value) => {
                 self.skip();
-                if let Token(_, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
-                    *self.peek_token()?
-                {
-                    self.state = State::BlockMappingKey;
-                    // empty scalar
-                    Ok((Event::empty_scalar(), mark))
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::BlockMappingValueNode;
+                    Ok(comment)
                 } else {
-                    self.push_state(State::BlockMappingKey);
-                    self.parse_node(true, true)
+                    self.block_mapping_value_node_with_empty_span(mark)
                 }
             }
             Token(mark, _) => {
@@ -1414,20 +1501,49 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    fn block_mapping_value_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let mark = self.peek_token()?.0;
+        self.block_mapping_value_node_with_empty_span(mark)
+    }
+
+    fn block_mapping_value_node_with_empty_span<'a>(&mut self, mark: Span) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(_, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
+            *self.peek_token()?
+        {
+            self.state = State::BlockMappingKey;
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.defer_parse_node(
+                State::BlockNodeOrIndentlessSequence,
+                State::BlockMappingKey,
+                true,
+                true,
+            )
+        }
+    }
+
     fn flow_mapping_key<'a>(&mut self, first: bool) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        if first {
-            let _ = self.peek_token()?;
-            self.skip();
-        }
         let span: Span = if let Token(mark, TokenType::FlowMappingEnd) = *self.peek_token()? {
             mark
         } else {
             if !first {
                 match *self.peek_token()? {
-                    Token(_, TokenType::FlowEntry) => self.skip(),
+                    Token(_, TokenType::FlowEntry) => {
+                        self.skip();
+                        if let Some(comment) = self.next_comment_event()? {
+                            self.state = State::FlowMappingFirstKey;
+                            return Ok(comment);
+                        }
+                    }
                     Token(span, _) => {
                         return Err(ScanError::new_str(
                             span.start,
@@ -1440,16 +1556,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match *self.peek_token()? {
                 Token(_, TokenType::Key) => {
                     self.skip();
-                    if let Token(
-                        mark,
-                        TokenType::Value | TokenType::FlowEntry | TokenType::FlowMappingEnd,
-                    ) = *self.peek_token()?
-                    {
-                        self.state = State::FlowMappingValue;
-                        return Ok((Event::empty_scalar(), mark));
+                    if let Some(comment) = self.next_comment_event()? {
+                        self.state = State::FlowMappingKeyNode;
+                        return Ok(comment);
                     }
-                    self.push_state(State::FlowMappingValue);
-                    return self.parse_node(false, false);
+                    return self.flow_mapping_key_node();
                 }
                 Token(marker, TokenType::Value) => {
                     self.state = State::FlowMappingValue;
@@ -1457,8 +1568,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
                 Token(_, TokenType::FlowMappingEnd) => (),
                 _ => {
-                    self.push_state(State::FlowMappingEmptyValue);
-                    return self.parse_node(false, false);
+                    return self.defer_parse_node(
+                        State::FlowNode,
+                        State::FlowMappingEmptyValue,
+                        false,
+                        false,
+                    );
                 }
             }
 
@@ -1468,6 +1583,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.pop_state();
         self.skip();
         Ok((Event::MappingEnd, span))
+    }
+
+    fn flow_mapping_key_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(mark, TokenType::Value | TokenType::FlowEntry | TokenType::FlowMappingEnd) =
+            *self.peek_token()?
+        {
+            self.state = State::FlowMappingValue;
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.defer_parse_node(State::FlowNode, State::FlowMappingValue, false, false)
+        }
     }
 
     fn flow_mapping_value<'a>(&mut self, empty: bool) -> ParseResult<'a>
@@ -1483,14 +1612,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match *self.peek_token()? {
                 Token(span, TokenType::Value) => {
                     self.skip();
-                    match self.peek_token()?.1 {
-                        TokenType::FlowEntry | TokenType::FlowMappingEnd => {}
-                        _ => {
-                            self.push_state(State::FlowMappingKey);
-                            return self.parse_node(false, false);
-                        }
+                    if let Some(comment) = self.next_comment_event()? {
+                        self.state = State::FlowMappingValueNode;
+                        return Ok(comment);
                     }
-                    span
+                    return self.flow_mapping_value_node_with_empty_span(span);
                 }
                 Token(marker, _) => marker,
             }
@@ -1500,16 +1626,31 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok((Event::empty_scalar(), span))
     }
 
+    fn flow_mapping_value_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let mark = Span::empty(self.peek_token()?.0.start);
+        self.flow_mapping_value_node_with_empty_span(mark)
+    }
+
+    fn flow_mapping_value_node_with_empty_span<'a>(&mut self, mark: Span) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        match self.peek_token()?.1 {
+            TokenType::FlowEntry | TokenType::FlowMappingEnd => {
+                self.state = State::FlowMappingKey;
+                Ok((Event::empty_scalar(), mark))
+            }
+            _ => self.defer_parse_node(State::FlowNode, State::FlowMappingKey, false, false),
+        }
+    }
+
     fn flow_sequence_entry<'a>(&mut self, first: bool) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        // skip FlowMappingStart
-        if first {
-            let _ = self.peek_token()?;
-            //self.marks.push(tok.0);
-            self.skip();
-        }
         match *self.peek_token()? {
             Token(mark, TokenType::FlowSequenceEnd) => {
                 self.pop_state();
@@ -1518,6 +1659,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Token(_, TokenType::FlowEntry) if !first => {
                 self.skip();
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::FlowSequenceFirstEntry;
+                    return Ok(comment);
+                }
             }
             Token(span, _) if !first => {
                 return Err(ScanError::new_str(
@@ -1538,10 +1683,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::MappingStart(0, None), mark))
             }
-            _ => {
-                self.push_state(State::FlowSequenceEntry);
-                self.parse_node(false, false)
-            }
+            _ => self.defer_parse_node(State::FlowNode, State::FlowSequenceEntry, false, false),
         }
     }
 
@@ -1552,16 +1694,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
-                if let Token(
-                    _,
-                    TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
-                ) = *self.peek_token()?
-                {
-                    self.state = State::IndentlessSequenceEntry;
-                    Ok((Event::empty_scalar(), mark))
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::IndentlessSequenceEntryNode;
+                    Ok(comment)
                 } else {
-                    self.push_state(State::IndentlessSequenceEntry);
-                    self.parse_node(true, false)
+                    self.indentless_sequence_entry_node_with_empty_span(mark)
                 }
             }
             Token(mark, _) => {
@@ -1571,16 +1708,39 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
-    fn block_sequence_entry<'a>(&mut self, first: bool) -> ParseResult<'a>
+    fn indentless_sequence_entry_node<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
     {
-        // BLOCK-SEQUENCE-START
-        if first {
-            let _ = self.peek_token()?;
-            //self.marks.push(tok.0);
-            self.skip();
+        let mark = self.peek_token()?.0;
+        self.indentless_sequence_entry_node_with_empty_span(mark)
+    }
+
+    fn indentless_sequence_entry_node_with_empty_span<'a>(&mut self, mark: Span) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(
+            _,
+            TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+        ) = *self.peek_token()?
+        {
+            self.state = State::IndentlessSequenceEntry;
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.defer_parse_node(
+                State::BlockNode,
+                State::IndentlessSequenceEntry,
+                true,
+                false,
+            )
         }
+    }
+
+    fn block_sequence_entry<'a>(&mut self, _first: bool) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEnd) => {
                 self.pop_state();
@@ -1589,18 +1749,37 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
-                if let Token(_, TokenType::BlockEntry | TokenType::BlockEnd) = *self.peek_token()? {
-                    self.state = State::BlockSequenceEntry;
-                    Ok((Event::empty_scalar(), mark))
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::BlockSequenceEntryNode;
+                    Ok(comment)
                 } else {
-                    self.push_state(State::BlockSequenceEntry);
-                    self.parse_node(true, false)
+                    self.block_sequence_entry_node_with_empty_span(mark)
                 }
             }
             Token(span, _) => Err(ScanError::new_str(
                 span.start,
                 "while parsing a block collection, did not find expected '-' indicator",
             )),
+        }
+    }
+
+    fn block_sequence_entry_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let mark = self.peek_token()?.0;
+        self.block_sequence_entry_node_with_empty_span(mark)
+    }
+
+    fn block_sequence_entry_node_with_empty_span<'a>(&mut self, mark: Span) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        if let Token(_, TokenType::BlockEntry | TokenType::BlockEnd) = *self.peek_token()? {
+            self.state = State::BlockSequenceEntry;
+            Ok((Event::empty_scalar(), mark))
+        } else {
+            self.defer_parse_node(State::BlockNode, State::BlockSequenceEntry, true, false)
         }
     }
 
@@ -1614,8 +1793,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             self.state = State::FlowSequenceEntryMappingValue;
             Ok((Event::empty_scalar(), mark))
         } else {
-            self.push_state(State::FlowSequenceEntryMappingValue);
-            self.parse_node(false, false)
+            self.defer_parse_node(
+                State::FlowNode,
+                State::FlowSequenceEntryMappingValue,
+                false,
+                false,
+            )
         }
     }
 
@@ -1626,20 +1809,35 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(_, TokenType::Value) => {
                 self.skip();
-                self.state = State::FlowSequenceEntryMappingValue;
-                let Token(span, ref tok) = *self.peek_token()?;
-                if matches!(tok, TokenType::FlowEntry | TokenType::FlowSequenceEnd) {
-                    self.state = State::FlowSequenceEntryMappingEnd;
-                    Ok((Event::empty_scalar(), Span::empty(span.start)))
+                if let Some(comment) = self.next_comment_event()? {
+                    self.state = State::FlowSequenceEntryMappingValueNode;
+                    Ok(comment)
                 } else {
-                    self.push_state(State::FlowSequenceEntryMappingEnd);
-                    self.parse_node(false, false)
+                    self.flow_sequence_entry_mapping_value_node()
                 }
             }
             Token(mark, _) => {
                 self.state = State::FlowSequenceEntryMappingEnd;
                 Ok((Event::empty_scalar(), mark))
             }
+        }
+    }
+
+    fn flow_sequence_entry_mapping_value_node<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let Token(span, ref tok) = *self.peek_token()?;
+        if matches!(tok, TokenType::FlowEntry | TokenType::FlowSequenceEnd) {
+            self.state = State::FlowSequenceEntryMappingEnd;
+            Ok((Event::empty_scalar(), Span::empty(span.start)))
+        } else {
+            self.defer_parse_node(
+                State::FlowNode,
+                State::FlowSequenceEntryMappingEnd,
+                false,
+                false,
+            )
         }
     }
 
@@ -1768,20 +1966,21 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
             return Ok(());
         }
+
         loop {
             let (ev, span) = self.next_event_impl()?;
-            if ev == Event::StreamEnd {
-                try_emit(recv, ev, span)?;
+            let is_doc_end = matches!(ev, Event::DocumentEnd);
+            let is_stream_end = matches!(ev, Event::StreamEnd);
+
+            try_emit(recv, ev, span)?;
+
+            if is_stream_end {
                 return Ok(());
             }
-            // clear anchors before a new document
-            self.anchors.clear();
-            self.try_load_document(ev, span, recv)?;
-            if !multi {
-                break;
+            if !multi && is_doc_end {
+                return Ok(());
             }
         }
-        Ok(())
     }
 }
 

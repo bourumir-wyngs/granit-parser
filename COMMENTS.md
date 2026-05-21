@@ -1,94 +1,109 @@
 # Comment Support Plan
 
-This document tracks work needed to preserve YAML comments without changing the
-default parser behavior. When implementing changes, always add relevant unit tests,
-format all code at the end and ensure pedantic Clippy is passing. All public
-functions and classes must have documentation comments.
+This document tracks work needed to preserve YAML comments as parser events with
+normal parser spans. This is a breaking event-stream change. When implementing
+changes, always add relevant unit tests, format all code at the end and ensure
+pedantic Clippy is passing. All public functions and classes must have
+documentation comments.
 
 Once you implement the step, make edit in this document marking it as done.
 
 ## Goals
 
-- Preserve comments as presentation data for callers that opt in.
-- Keep the existing `Parser` event stream unchanged by default.
+- Preserve comments as presentation data in the parser event stream.
+- Emit comments as parser events with the existing `(Event, Span)` result shape.
+- Keep comment spans local to the source parsed by the parser that emitted them.
 - Preserve current scanner/parser error behavior.
-- Avoid extra allocations on the current no-comments fast path.
 - Support both `StrInput` and streaming `BufferedInput`.
 
 ## Non-goals
 
 - Do not make comments part of the semantic YAML tree.
-- Do not add `Event::Comment` in the first implementation.
 - Do not alter scalar spans to include trailing comments.
+- Do not add source IDs, file names, or include provenance to `Span` or `Event`.
+- Do not add a separate `ParserStack` comment collection API for the event-based
+  implementation.
 
-## Collection Semantics
+## Event Semantics
 
-- `comments()` and `take_comments()` are collection APIs, not streaming interleaving APIs.
-- Comments are returned in source order, up to the scanner's current input position.
-- During parsing, collected comments may be ahead of the event most recently returned.
-- This can happen because the scanner buffers tokens and may scan ahead to resolve simple keys.
-- `peek()` may also scan input and collect comments without consuming a parser event.
-- Do not document or rely on `comments()` as "comments before the current event".
-- Consumers that need exact event/comment interleaving should use a future streaming API such as
-  `ParseItem::Event | ParseItem::Comment`.
+- Comments are emitted in source order as parser events.
+- A comment event uses the same spanned parser output as other events:
+  `(Event::Comment(text), span)`.
+- The comment span covers the whole source comment, including `#` and excluding
+  the line break.
+- The comment event payload is the raw text exactly after `#`, excluding only the
+  line break. Preserve leading spaces, including one space immediately after `#`.
+- Comment events are presentation metadata. Consumers building YAML data trees
+  must ignore them.
+- Comment events do not advance the YAML grammar state; after a comment is
+  emitted, parsing resumes in the same parser state.
+- `ParserStack` and `ReplayParser` should preserve included-document comments by
+  carrying them through the normal event stream.
+- Included-document comment spans remain local to the included document/source,
+  just as other included-document event spans do today. Source/file provenance is
+  left to callers that layer names around `ParserStack`.
+
+## Superseded Collection Design
+
+- The earlier `comments()` / `take_comments()` collection design is superseded.
+- Do not preserve comment storage as a second public API after `Event::Comment`
+  is implemented.
+- Remove `Parser::with_comments()`, `Parser::comments()`,
+  `Parser::take_comments()`, `Scanner::with_comments()`, `Scanner::comments()`,
+  and `Scanner::take_comments()`.
+- Remove scanner-side comment collection fields (`comments`, `collect_comments`)
+  unless they are temporarily needed during migration.
+- Replace collection tests with event-stream tests instead of maintaining both
+  behaviors.
 
 ## Task List
 
 ### API Design
 
-- [x] Add a public `Comment<'input>` type.
-  - [x] Store `span: Span` covering the whole source comment, including `#` and excluding the line break.
-  - [x] Store `text: Cow<'input, str>` containing the raw comment payload exactly after `#`, excluding only the line break.
-  - [x] Preserve leading spaces in `text`, including a single space immediately after `#` when present.
-  - [x] Add an ergonomic `trimmed_text()` helper. Do not strip payload text during capture.
-- [x] Add opt-in comment collection to `Scanner`.
-  - [x] Add `Scanner::with_comments()`.
-  - [x] Add `Scanner::comments(&self) -> &[Comment<'input>]`.
-  - [x] Add `Scanner::take_comments(&mut self) -> Vec<Comment<'input>>`.
-- [x] Add opt-in comment collection to `Parser`.
-  - [x] Add `Parser::with_comments()`.
-  - [x] Add `Parser::comments(&self) -> &[Comment<'input>]`.
-  - [x] Add `Parser::take_comments(&mut self) -> Vec<Comment<'input>>`.
-  - [x] Define `comments()` as collected comments in source order up to the scanner's current position, not comments interleaved before the current event.
-- [x] Re-export `Comment` from `src/lib.rs`.
-- [x] Keep `Event` and `TokenType` unchanged for the first implementation unless an API review decides otherwise.
+- [x] Add `Event::Comment(Cow<'input, str>)`.
+  - [x] Store the raw comment payload exactly after `#`, excluding only the line break.
+  - [x] Preserve leading spaces in the payload, including a single space immediately after `#`.
+  - [x] Use the companion parser `Span` for the full source comment range.
+- [x] Add `TokenType::Comment(Cow<'input, str>)` or an equivalent internal scanner token.
+  - [x] Store the comment payload in the token.
+  - [x] Store the full source comment range in the token span.
+- [x] Decide whether the public `Comment<'input>` type remains useful after the event-based API.
+  - [x] If kept, document it as a convenience struct rather than the primary parser API.
+  - [x] If removed, migrate tests and docs to `Event::Comment` plus `Span`. Not applicable:
+        `Comment` is kept as a convenience struct.
+- [x] Remove the superseded opt-in collection APIs.
+  - [x] Remove `Parser::with_comments()`, `Parser::comments()`, and `Parser::take_comments()`.
+  - [x] Remove `Scanner::with_comments()`, `Scanner::comments()`, and `Scanner::take_comments()`.
+  - [x] Remove collection-semantics documentation once the event API is complete.
 
-### Scanner Capture
+### Scanner Capture And Tokenization
 
-- [x] Add scanner storage for collected comments.
-  - [x] `comments: Vec<Comment<'input>>`.
-  - [x] `collect_comments: bool`.
-- [x] Add a scanner helper for comment capture.
-  - [x] Capture the start marker before consuming `#`.
-  - [x] Consume through, but not including, the line break or EOF.
-  - [x] Capture the end marker after the comment payload.
-  - [x] Return/update `Span::new(start, end)`.
-- [x] Preserve zero-copy comments for `StrInput`.
-  - [x] Use byte offsets and `slice_borrowed` when available.
-  - [x] Fall back to owned strings if borrowing is unavailable.
-- [x] Preserve owned comments for `BufferedInput`.
-  - [x] Collect payload into a `String` while consuming characters.
-  - [x] Consume through the normal lookahead buffer using `look_ch`, `peek`, and `skip`.
-  - [x] Do not use raw iterator reads for comment capture; they can desynchronize already-buffered input.
-  - [x] Keep marker accounting identical to current skip behavior.
-- [x] Ensure `#` inside quoted scalars and block scalar content is not captured.
+- [x] Rework scanner comment capture to emit comment tokens instead of only collecting
+  comments in side storage.
+  - [x] Capture comments through `skip_to_next_token`, `skip_yaml_whitespace`, and
+        `skip_ws_to_eol` without losing the current error behavior.
+  - [x] Preserve the current scanner error behavior; comment tokens are part of the
+        normal token stream after this change.
+  - [x] Keep `#` inside quoted scalars and block scalar content out of the comment stream.
+  - [x] Preserve zero-copy comment payloads for `StrInput` where possible.
+  - [x] Preserve owned comment payloads for `BufferedInput`.
+  - [x] Keep marker accounting identical to normal skipped-comment behavior.
+- [x] Remove scanner-side comment collection storage once comment tokens are emitted.
 
-### Discard Points To Refactor
+### Discard Points To Rework
 
-- [x] Refactor `Scanner::skip_to_next_token`.
-  - [x] Capture full-line and inter-token comments when comment collection is enabled.
-  - [x] Keep current `input.skip_while_non_breakz()` fast path when disabled.
+- [x] Rework `Scanner::skip_to_next_token`.
+  - [x] Emit full-line and inter-token comment tokens.
   - [x] Preserve line break consumption and simple-key behavior.
-- [x] Refactor `Scanner::skip_yaml_whitespace`.
-  - [x] Capture comments after explicit key whitespace.
+- [x] Rework `Scanner::skip_yaml_whitespace`.
+  - [x] Emit comments after explicit key whitespace.
   - [x] Preserve the current `expected whitespace` behavior.
-- [x] Refactor `Scanner::skip_ws_to_eol`.
-  - [x] Keep the existing `Input::skip_ws_to_eol()` path when comments are disabled.
-  - [x] Add a scanner-owned path when comments are enabled so comment text can be captured before it is discarded.
+- [x] Rework `Scanner::skip_ws_to_eol`.
+  - [x] Emit comment tokens before end-of-line comments are discarded.
   - [x] Preserve `SkipTabs` results.
   - [x] Preserve the existing error for comments not separated from tokens by whitespace.
-  - [x] Detect the unseparated-comment error before comment capture.
-  - [x] Do not consume or record an unseparated `#` as a valid comment.
+  - [x] Detect the unseparated-comment error before comment token emission.
+  - [x] Do not consume or emit an unseparated `#` as a valid comment.
 - [x] Review all callers of `skip_ws_to_eol`.
   - [x] Directives.
   - [x] Document end marker handling.
@@ -102,69 +117,77 @@ Once you implement the step, make edit in this document marking it as done.
 
 ### Parser Integration
 
-- [x] Thread scanner comment access through `Parser`.
-  - [x] `Parser::comments()` delegates to `self.scanner.comments()`.
-  - [x] `Parser::take_comments()` delegates to `self.scanner.take_comments()`.
-- [x] Keep `Parser::next_event`, `peek`, `load`, and `try_load` output unchanged.
-- [ ] Do not add a `ParserStack` comment API in the first implementation.
-- [ ] Document that comments are exposed only on `Scanner` and `Parser` initially.
-- [ ] Track `ParserStack` comment support as separate follow-up work.
-  - [ ] Account for replayed event streams, which currently do not store comments.
-  - [ ] Comments in the included documents must be supported as well. 
+- [x] Emit `Event::Comment` from `Parser::next_event_impl` before normal YAML
+  grammar-state handling.
+  - [x] Consume exactly one comment token per emitted comment event.
+  - [x] Leave the parser state unchanged after emitting a comment event.
+  - [x] Ensure comments after `StreamStart`, around document markers, inside flow
+        collections, and before `StreamEnd` are emitted in source order.
+- [x] Keep the parser result shape unchanged: `Result<(Event<'input>, Span), ScanError>`.
+- [x] Update `peek`, `next_event`, `load`, `try_load`, and iterator behavior to
+  carry comment events consistently.
+- [x] Preserve comments in `ReplayParser` without a side channel.
+  - [x] Replayed event streams should store comment events in the existing event vector.
+  - [x] `ReplayParser::load` and `try_load` should forward comment events like all other events.
+- [x] Preserve comments in included documents through `ParserStack`.
+  - [x] `ParserStack::resolve` should preserve comments because includes are replayed
+        through the normal parser event stream.
+  - [x] Included-document comment spans remain local to the included source.
+  - [x] Do not add source IDs, file names, or a dedicated comment collection API to
+        `ParserStack` for this implementation.
 
 ### Tests
 
-- [x] Add scanner-level comment capture tests.
-  - [x] Full-line comments.
-  - [x] Indented full-line comments.
-  - [x] Trailing comments after plain scalars.
-  - [x] Multiple consecutive comment lines.
-  - [x] EOF immediately after a comment.
-  - [x] Empty-ish comment: `#`.
-  - [x] Empty-ish comment with one payload space: `# `.
-  - [x] CRLF comment line endings; the comment span must end before `\r`, not after `\n`.
-- [x] Add parser-level comment capture tests.
-  - [x] Parsing events remain identical when comments are enabled.
-  - [x] Comments are available after full parse.
-  - [x] `take_comments()` drains collected comments.
-- [x] Add coverage for comments after syntax elements.
-  - [x] Directives.
-  - [x] Document start marker: `--- # document start comment`.
-  - [x] Document end marker: `... # document end comment`.
-  - [x] Tags and anchors.
-  - [x] Flow delimiters and flow entries.
-  - [x] Double-quoted scalar trailing comment: `key: "value" # after quoted scalar`.
-  - [x] Single-quoted scalar trailing comment: `key: 'value' # after quoted scalar`.
-  - [x] Plain scalar trailing comment: `key: value # after plain scalar`.
-  - [x] Block scalar header comments.
-- [x] Add negative/edge tests.
-  - [x] `#` inside single-quoted scalars is not a comment.
-  - [x] `#` inside double-quoted scalars is not a comment.
-  - [x] `#` inside block scalar content is not a comment.
-  - [x] `key: value#not-a-comment` treats `#not-a-comment` as scalar content.
-  - [x] `key: "value"#must-error` still errors and does not capture `#must-error`.
-  - [x] In `key: |\n  # this is block scalar content, not a captured comment`, the `#` line is scalar content only.
-  - [x] Unseparated comments still error.
-  - [x] Unseparated comment errors leave the invalid `#` unrecorded.
-  - [x] BS4K comment-interrupted multiline plain scalar still errors.
-- [x] Add non-ASCII tests.
-  - [x] Comment payload with multi-byte Unicode.
-  - [x] Plain scalar trailing Unicode comment: `key: value # unicode: äöü`.
-  - [x] Correct character offsets.
-  - [x] Correct byte offsets for `StrInput`.
-  - [x] Matching behavior between `StrInput` and `BufferedInput`.
+- [x] Add parser event tests for `Event::Comment`.
+  - [x] Full-line comments are emitted as events with spans.
+  - [x] Indented full-line comments are emitted as events with spans.
+  - [x] Trailing comments after plain scalars are emitted after the scalar event.
+  - [x] Empty-ish comments `#` and `# ` preserve payload text.
+  - [x] CRLF comment spans end before `\r`, not after `\n`.
+  - [x] `peek()` returns and preserves a pending comment event.
+  - [x] `load` and `try_load` deliver comment events to receivers.
+- [x] Add parser-stack and replay tests for comment events.
+  - [x] `ReplayParser` preserves comment events.
+  - [x] `ParserStack` forwards comment events from stacked parsers.
+  - [x] `ParserStack::resolve` / `push_include` forwards comments from included documents.
+  - [x] Included-document comment spans remain local to the included source.
+- [ ] Update existing parser-level collection tests.
+  - [ ] Replace "event stream unchanged when comments are enabled" expectations with
+        explicit `Event::Comment` expectations.
+  - [ ] Remove `comments()` and `take_comments()` drain tests.
+- [ ] Migrate scanner collection tests to scanner-token or parser-event tests.
+  - [ ] Full-line comments.
+  - [ ] Indented full-line comments.
+  - [ ] Trailing comments after plain scalars.
+  - [ ] Multiple consecutive comment lines.
+  - [ ] EOF immediately after a comment.
+  - [ ] Empty-ish comment: `#`.
+  - [ ] Empty-ish comment with one payload space: `# `.
+  - [ ] CRLF comment spans end before `\r`, not after `\n`.
+  - [ ] Comments after syntax elements: directives, document markers, tags,
+        anchors, aliases, flow delimiters, flow entries, block entries, block
+        scalar headers, quoted scalars, plain scalars, and mapping values.
+  - [ ] Negative cases: `#` inside quoted scalars and block scalar content,
+        unseparated comments, and BS4K comment-interrupted multiline plain scalar.
+  - [ ] Non-ASCII payloads, character offsets, byte offsets for `StrInput`, and
+        matching behavior between `StrInput` and `BufferedInput`.
 
 ### Documentation
 
 - [ ] Document comment support in `README.md`.
 - [ ] Add a crate-level example in `src/lib.rs`.
-- [ ] Explain that comments are presentation metadata, not YAML data events.
-- [ ] Document that `comments()` is not a streaming interleaving API.
+- [ ] Explain that `Event::Comment` is presentation metadata, not YAML data.
+- [ ] Document that comment locations use the normal companion `Span`.
+- [ ] Document that non-spanned receivers receive only `Event::Comment(text)`, while
+      spanned receivers receive the comment span in `on_event`.
 - [ ] Document `span.slice(source)` behavior for comments.
+- [ ] Document that included-document comment spans are local to the included source,
+      matching existing included-document event spans.
 - [ ] Update `CHANGELOG.md` when the implementation is complete.
 
-### Follow-up API Option
+### Follow-up API Options
 
-- [ ] Consider a future streaming API that preserves exact interleaving.
-  - [ ] Possible shape: `ParseItem<'input> = Event(Event<'input>, Span) | Comment(Comment<'input>)`.
-  - [ ] Keep this separate from the first implementation to avoid broad parser state-machine churn.
+- [ ] Consider source-aware `ParserStack` output only if callers need built-in
+      include/source provenance later.
+  - [ ] Possible shape: `SourceEvent { source: SourceId, event: Event, span: Span }`.
+  - [ ] Keep source provenance separate from `Event` and `Span`.
