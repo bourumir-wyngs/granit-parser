@@ -218,6 +218,39 @@ impl Span {
     }
 }
 
+/// A YAML comment captured from the source.
+///
+/// Comments are presentation metadata. The parser does not emit comments as YAML data events,
+/// but opt-in comment collection APIs can expose them to callers.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub struct Comment<'input> {
+    /// Span covering the whole source comment, including `#` and excluding the line break.
+    pub span: Span,
+    /// Raw comment payload exactly after `#`, excluding only the line break.
+    ///
+    /// Leading spaces are preserved, including a single space immediately after `#` when present.
+    pub text: Cow<'input, str>,
+}
+
+impl<'input> Comment<'input> {
+    /// Create a captured YAML comment from a source span and raw payload.
+    #[must_use]
+    pub fn new(span: Span, text: impl Into<Cow<'input, str>>) -> Self {
+        Self {
+            span,
+            text: text.into(),
+        }
+    }
+
+    /// Return the comment payload with surrounding whitespace removed.
+    ///
+    /// This helper is ergonomic only. The raw [`Self::text`] payload remains unchanged.
+    #[must_use]
+    pub fn trimmed_text(&self) -> &str {
+        self.text.trim()
+    }
+}
+
 /// An error that occurred while scanning.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub struct ScanError {

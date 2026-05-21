@@ -36,11 +36,11 @@ Once you implement the step, make edit in this document marking it as done.
 
 ### API Design
 
-- [ ] Add a public `Comment<'input>` type.
-  - [ ] Store `span: Span` covering the whole source comment, including `#` and excluding the line break.
-  - [ ] Store `text: Cow<'input, str>` containing the raw comment payload exactly after `#`, excluding only the line break.
-  - [ ] Preserve leading spaces in `text`, including a single space immediately after `#` when present.
-  - [ ] Add an ergonomic `trimmed_text()` helper . Do not strip payload text during capture.
+- [x] Add a public `Comment<'input>` type.
+  - [x] Store `span: Span` covering the whole source comment, including `#` and excluding the line break.
+  - [x] Store `text: Cow<'input, str>` containing the raw comment payload exactly after `#`, excluding only the line break.
+  - [x] Preserve leading spaces in `text`, including a single space immediately after `#` when present.
+  - [x] Add an ergonomic `trimmed_text()` helper. Do not strip payload text during capture.
 - [ ] Add opt-in comment collection to `Scanner`.
   - [ ] Add `Scanner::with_comments()`.
   - [ ] Add `Scanner::comments(&self) -> &[Comment<'input>]`.
@@ -50,7 +50,7 @@ Once you implement the step, make edit in this document marking it as done.
   - [ ] Add `Parser::comments(&self) -> &[Comment<'input>]`.
   - [ ] Add `Parser::take_comments(&mut self) -> Vec<Comment<'input>>`.
   - [ ] Define `comments()` as collected comments in source order up to the scanner's current position, not comments interleaved before the current event.
-- [ ] Re-export `Comment` from `src/lib.rs`.
+- [x] Re-export `Comment` from `src/lib.rs`.
 - [ ] Keep `Event` and `TokenType` unchanged for the first implementation unless an API review decides otherwise.
 
 ### Scanner Capture
