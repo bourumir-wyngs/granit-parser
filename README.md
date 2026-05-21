@@ -199,6 +199,9 @@ This crate includes fixes to improve resilience against:
 
 Like the upstream parser, it does **not** interpret application-level types, so parsing YAML does not trigger external side effects.
 
+### Improved ergonomics
+Release 0.0.3 includes some extensions to improve the parser ergonomics. See CHANGELOG.md for details.
+
 ## Tools
 
 The repository includes a few developer tools for inspecting parser output and measuring performance.
