@@ -8,8 +8,8 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
-    BorrowedInput, Event, Marker, Parser, ParserTrait, ScalarStyle, Span, SpannedEventReceiver,
-    StrInput, TryEventReceiver, TryLoadError,
+    BorrowedInput, Event, Marker, Parser, ParserTrait, ScalarStyle, ScanError, Span,
+    SpannedEventReceiver, StrInput, TryEventReceiver, TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -732,6 +732,41 @@ fn parser_stack_resolve_without_resolver_reports_error() {
     assert!(err
         .to_string()
         .contains("No include resolver set for parser stack."));
+}
+
+#[test]
+fn parser_stack_push_include_resolves_included_content() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: 1"), "parent".to_string());
+    stack.set_resolver(|name| match name {
+        "child" => Ok("b: 2".to_string()),
+        _ => Err(ScanError::new(
+            Marker::new(0, 1, 0),
+            "Not found".to_string(),
+        )),
+    });
+
+    stack.push_include("child").unwrap();
+
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(a)",
+            "Scalar(1)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
 }
 
 #[test]

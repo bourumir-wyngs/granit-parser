@@ -42,7 +42,11 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
             _ => {}
         }
 
-        lines.push(format!("{event:?} bytes={:?}", span.byte_range()));
+        lines.push(format!(
+            "{event:?} bytes={:?} source={:?}",
+            span.byte_range(),
+            span.slice(yaml)
+        ));
     }
 
     Ok(lines.join("\n"))

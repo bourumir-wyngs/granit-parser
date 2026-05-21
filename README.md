@@ -32,7 +32,7 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 ## Minimal example
 
-[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. You also get line, column and span information:
+[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. You also get line, column, byte range and source-slice information:
 
 ```rust
 use granit_parser::{Event, Parser};
@@ -61,7 +61,11 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
             _ => {}
         }
 
-        println!("{event:?} bytes={:?}", span.byte_range());
+        println!(
+            "{event:?} bytes={:?} source={:?}",
+            span.byte_range(),
+            span.slice(yaml)
+        );
     }
 
     Ok(())
@@ -71,34 +75,34 @@ music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pair
 This prints an event stream like:
 
 ```text
-StreamStart bytes=Some(0..0)
-DocumentStart(false) bytes=Some(1..1)
-MappingStart(0, None) bytes=Some(1..1)
-Scalar("items", Plain, 0, None) bytes=Some(1..6)
+StreamStart bytes=Some(0..0) source=Some("")
+DocumentStart(false) bytes=Some(1..1) source=Some("")
+MappingStart(0, None) bytes=Some(1..1) source=Some("")
+Scalar("items", Plain, 0, None) bytes=Some(1..6) source=Some("items")
 sequence tag: !shopping
-SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20)
-Scalar("milk", Plain, 0, None) bytes=Some(22..26)
+SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20) source=Some("")
+Scalar("milk", Plain, 0, None) bytes=Some(22..26) source=Some("milk")
 scalar tag: tag:yaml.org,2002:str for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42)
-SequenceEnd bytes=Some(43..43)
-Scalar("locations", Plain, 0, None) bytes=Some(43..52)
-MappingStart(0, None) bytes=Some(86..86)
-SequenceStart(0, None) bytes=Some(86..87)
-Scalar("47.3769", Plain, 0, None) bytes=Some(87..94)
-Scalar("8.5417", Plain, 0, None) bytes=Some(96..102)
-SequenceEnd bytes=Some(102..103)
-Scalar("local", Plain, 0, None) bytes=Some(105..110)
-SequenceStart(0, None) bytes=Some(113..114)
-Scalar("40.7128", Plain, 0, None) bytes=Some(114..121)
-Scalar("-74.0060", Plain, 0, None) bytes=Some(123..131)
-SequenceEnd bytes=Some(131..132)
-Scalar("remote", Plain, 0, None) bytes=Some(134..140)
-MappingEnd bytes=Some(141..141)
-Scalar("music", Plain, 0, None) bytes=Some(141..146)
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(148..222)
-MappingEnd bytes=Some(223..223)
-DocumentEnd bytes=Some(223..223)
-StreamEnd bytes=Some(223..223)
+Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42) source=Some("bread")
+SequenceEnd bytes=Some(43..43) source=Some("")
+Scalar("locations", Plain, 0, None) bytes=Some(43..52) source=Some("locations")
+MappingStart(0, None) bytes=Some(86..86) source=Some("")
+SequenceStart(0, None) bytes=Some(86..87) source=Some("[")
+Scalar("47.3769", Plain, 0, None) bytes=Some(87..94) source=Some("47.3769")
+Scalar("8.5417", Plain, 0, None) bytes=Some(96..102) source=Some("8.5417")
+SequenceEnd bytes=Some(102..103) source=Some("]")
+Scalar("local", Plain, 0, None) bytes=Some(105..110) source=Some("local")
+SequenceStart(0, None) bytes=Some(113..114) source=Some("[")
+Scalar("40.7128", Plain, 0, None) bytes=Some(114..121) source=Some("40.7128")
+Scalar("-74.0060", Plain, 0, None) bytes=Some(123..131) source=Some("-74.0060")
+SequenceEnd bytes=Some(131..132) source=Some("]")
+Scalar("remote", Plain, 0, None) bytes=Some(134..140) source=Some("remote")
+MappingEnd bytes=Some(141..141) source=Some("")
+Scalar("music", Plain, 0, None) bytes=Some(141..146) source=Some("music")
+Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(148..222) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\" # JSON-style \\uXXXX surrogate pairs")
+MappingEnd bytes=Some(223..223) source=Some("")
+DocumentEnd bytes=Some(223..223) source=Some("")
+StreamEnd bytes=Some(223..223) source=Some("")
 ```
 
 ## Event API choices

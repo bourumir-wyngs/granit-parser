@@ -83,6 +83,56 @@ fn span_helpers_report_length_empty_and_byte_range() {
 }
 
 #[test]
+fn span_slice_returns_source_text_for_valid_byte_ranges() {
+    let source = "key: value";
+    let span = granit_parser::Span::new(
+        Marker::new(5, 1, 5).with_byte_offset(Some(5)),
+        Marker::new(10, 1, 10).with_byte_offset(Some(10)),
+    );
+
+    assert_eq!(span.slice(source), Some("value"));
+}
+
+#[test]
+fn span_slice_handles_non_ascii_byte_ranges() {
+    let source = "a: 你好";
+    let span = granit_parser::Span::new(
+        Marker::new(3, 1, 3).with_byte_offset(Some(3)),
+        Marker::new(5, 1, 5).with_byte_offset(Some(source.len())),
+    );
+    let invalid_boundary = granit_parser::Span::new(
+        Marker::new(3, 1, 3).with_byte_offset(Some(4)),
+        Marker::new(5, 1, 5).with_byte_offset(Some(source.len())),
+    );
+
+    assert_eq!(span.slice(source), Some("你好"));
+    assert_eq!(invalid_boundary.slice(source), None);
+}
+
+#[test]
+fn span_slice_handles_empty_spans() {
+    let source = "key: value";
+    let empty = granit_parser::Span::empty(Marker::new(4, 1, 4).with_byte_offset(Some(4)));
+
+    assert_eq!(empty.slice(source), Some(""));
+}
+
+#[test]
+fn span_slice_returns_none_for_buffered_input_spans_without_byte_offsets() {
+    let source = "foo: bar";
+    let mut scalar_slices = Vec::new();
+
+    for parsed in Parser::new_from_iter(source.chars()) {
+        let (event, span) = parsed.unwrap();
+        if matches!(event, Event::Scalar(..)) {
+            scalar_slices.push(span.slice(source));
+        }
+    }
+
+    assert_eq!(scalar_slices, [None, None]);
+}
+
+#[test]
 fn test_plain() {
     assert_eq!(
         deref_pairs(&run_parser_and_deref_scalar_spans("foo: bar").unwrap()),

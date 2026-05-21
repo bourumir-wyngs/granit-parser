@@ -225,6 +225,18 @@ where
         }
     }
 
+    /// Resolves an include by name and pushes the resulting parser onto the stack.
+    ///
+    /// This is an alias for [`Self::resolve`] with a name that reads naturally in
+    /// include-oriented consumers: `stack.push_include("config.yaml")?`.
+    ///
+    /// # Errors
+    /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
+    /// included content cannot be parsed.
+    pub fn push_include(&mut self, include_name: &str) -> Result<(), ScanError> {
+        self.resolve(include_name)
+    }
+
     /// Pushes a string parser onto the stack.
     pub fn push_str_parser(&mut self, mut parser: Parser<'input, StrInput<'input>>, name: String) {
         if let Some(parent) = self.parsers.last() {

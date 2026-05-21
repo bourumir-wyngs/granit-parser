@@ -209,6 +209,13 @@ impl Span {
         let end = self.end.byte_offset()?;
         Some(start..end)
     }
+
+    /// Return the source text covered by this span, if byte offsets are available
+    /// and the range is valid for the provided input.
+    #[must_use]
+    pub fn slice<'source>(&self, source: &'source str) -> Option<&'source str> {
+        source.get(self.byte_range()?)
+    }
 }
 
 /// An error that occurred while scanning.
