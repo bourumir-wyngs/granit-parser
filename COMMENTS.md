@@ -42,11 +42,11 @@ Once you implement the step, make edit in this document marking it as done.
   - [ ] Preserve leading spaces in `text`, including a single space immediately after `#` when present.
   - [ ] Add an ergonomic `trimmed_text()` helper . Do not strip payload text during capture.
 - [ ] Add opt-in comment collection to `Scanner`.
-  - [ ] Add `Scanner::with_comments()` or equivalent builder-style method.
+  - [ ] Add `Scanner::with_comments()`.
   - [ ] Add `Scanner::comments(&self) -> &[Comment<'input>]`.
   - [ ] Add `Scanner::take_comments(&mut self) -> Vec<Comment<'input>>`.
 - [ ] Add opt-in comment collection to `Parser`.
-  - [ ] Add `Parser::with_comments()` or equivalent builder-style method.
+  - [ ] Add `Parser::with_comments()`.
   - [ ] Add `Parser::comments(&self) -> &[Comment<'input>]`.
   - [ ] Add `Parser::take_comments(&mut self) -> Vec<Comment<'input>>`.
   - [ ] Define `comments()` as collected comments in source order up to the scanner's current position, not comments interleaved before the current event.
