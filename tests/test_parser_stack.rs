@@ -216,7 +216,10 @@ fn test_three_parsers_dynamic_adding() {
         "StreamEnd",
     ]);
 
-    let expected_names: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
+    let expected_names: Vec<String> = expected
+        .into_iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     assert_eq!(names, expected_names);
 }
 
@@ -263,7 +266,7 @@ fn test_anchor_id_propagation() {
                     break;
                 }
             }
-            Some(Err(e)) => panic!("Parse error: {}", e),
+            Some(Err(e)) => panic!("Parse error: {e}"),
             None => break,
         }
     }

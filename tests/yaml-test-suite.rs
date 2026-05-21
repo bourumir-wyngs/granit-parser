@@ -450,11 +450,10 @@ fn events_differ(actual: &[String], expected: &str) -> Option<String> {
             (Some(act), Some(exp)) => {
                 if act == exp {
                     continue;
-                } else {
-                    Some(format!(
-                        "line {idx} differs: \n=> expected `{exp}`\n=>    found `{act}`",
-                    ))
                 }
+                Some(format!(
+                    "line {idx} differs: \n=> expected `{exp}`\n=>    found `{act}`",
+                ))
             }
             (Some(a), None) => Some(format!("extra actual line: {a:?}")),
             (None, Some(e)) => Some(format!("extra expected line: {e:?}")),

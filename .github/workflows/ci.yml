@@ -19,7 +19,7 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy --no-self-update
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy checks
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
       - name: Run format checks
         run: cargo fmt --check
 

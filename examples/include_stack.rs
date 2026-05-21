@@ -4,12 +4,12 @@ use granit_parser::{
 
 type IncludeStack = ParserStack<'static, core::iter::Empty<char>, StrInput<'static>>;
 
-const ROOT_YAML: &str = r#"
+const ROOT_YAML: &str = r"
 root:
   before: &root_anchor from-root
   include: !include something.yaml
   after: &after_anchor after-include
-"#;
+";
 
 fn resolve_include(name: &str) -> Result<String, ScanError> {
     match name {

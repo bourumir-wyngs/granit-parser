@@ -1,6 +1,7 @@
 # Changelog
 
 ## v0.0.3
+
 - Added `Span::slice(&str)` for convenient source extraction from parser-emitted
   spans when byte offsets are available.
 - Added small `Tag` inspection helpers (`is_yaml_core_schema_tag`, `is_custom`,
@@ -21,6 +22,7 @@
 - Fixed the span of quoted (single- and double-quoted) scalars to end at the
   closing quote rather than after trailing whitespace and an optional
   end-of-line comment. This makes `Span::slice` return only the scalar source.
+- Fixed pedantic Clippy warnings and switched into pedantic mode.
 
 ## v0.0.2
 

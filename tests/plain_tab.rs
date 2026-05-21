@@ -39,7 +39,7 @@ fn tab_at_start_of_block_scalar_is_rejected() {
     let mut got_err: Option<ScanError> = None;
     for item in Parser::new_from_str(yaml) {
         match item {
-            Ok(_) => continue,
+            Ok(_) => {}
             Err(e) => {
                 got_err = Some(e);
                 break;
@@ -71,5 +71,5 @@ fn explicit_indent_root_literal_can_end_before_comment() {
     let yaml = "|2\n# comment\n";
     let scalars = collect_scalars(yaml)
         .expect("parser should accept empty explicit-indented block scalar before comment");
-    assert_eq!(scalars, vec!["".to_string()]);
+    assert_eq!(scalars, vec![String::new()]);
 }

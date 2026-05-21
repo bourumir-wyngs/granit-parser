@@ -8,8 +8,7 @@ fn char_index_to_byte_index(s: &str, char_index: usize) -> usize {
     }
     s.char_indices()
         .nth(char_index)
-        .map(|(byte, _)| byte)
-        .unwrap_or_else(|| s.len())
+        .map_or_else(|| s.len(), |(byte, _)| byte)
 }
 
 fn span_offsets(input: &str, start: Marker, end: Marker) -> (usize, usize) {
@@ -119,7 +118,7 @@ fn parser_spans_use_byte_offsets_for_non_ascii_input() {
                 Some((
                     value.into_owned(),
                     span.byte_range(),
-                    span.slice(source).map(|slice| slice.to_owned()),
+                    span.slice(source).map(std::borrow::ToOwned::to_owned),
                 ))
             } else {
                 None
@@ -303,8 +302,7 @@ fn span_slice_for_quoted_scalar_excludes_trailing_comment() {
     let slices: Vec<_> = Parser::new_from_str(yaml)
         .filter_map(|parsed| {
             let (event, span) = parsed.unwrap();
-            matches!(event, Event::Scalar(..))
-                .then(|| span.slice(yaml).unwrap().to_string())
+            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
         })
         .collect();
 
@@ -317,8 +315,7 @@ fn span_slice_for_single_quoted_scalar_excludes_trailing_comment() {
     let slices: Vec<_> = Parser::new_from_str(yaml)
         .filter_map(|parsed| {
             let (event, span) = parsed.unwrap();
-            matches!(event, Event::Scalar(..))
-                .then(|| span.slice(yaml).unwrap().to_string())
+            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
         })
         .collect();
 

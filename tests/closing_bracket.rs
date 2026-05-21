@@ -1,6 +1,6 @@
 use granit_parser::{Event, Parser};
 
-/// Test case 4H7K in yaml_test_suite
+/// Test case 4H7K in `yaml_test_suite`
 #[test]
 fn misplaced_closing_bracket() {
     let yaml = "---\n[ a, b, c ] ]\n";

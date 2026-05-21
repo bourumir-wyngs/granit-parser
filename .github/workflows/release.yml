@@ -62,7 +62,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy  --offline --all-targets --all-features -- -D warnings
+        run: cargo clippy  --offline --all-targets --all-features -- -D warnings -D clippy::pedantic
 
       - name: Run tests
         run: cargo test  --offline

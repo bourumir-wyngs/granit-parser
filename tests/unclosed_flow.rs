@@ -15,7 +15,7 @@ fn test_unclosed_flow_sequence_at_eof() {
     let res = parser.load(&mut collector, false);
 
     println!("Events: {:?}", collector.0);
-    println!("Result: {:?}", res);
+    println!("Result: {res:?}");
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert_eq!(err.info(), "unclosed bracket '['");
@@ -30,7 +30,7 @@ fn test_unclosed_flow_mapping_at_eof() {
     let res = parser.load(&mut collector, false);
 
     println!("Events: {:?}", collector.0);
-    println!("Result: {:?}", res);
+    println!("Result: {res:?}");
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert_eq!(err.info(), "unclosed bracket '{'");
@@ -45,7 +45,7 @@ fn test_unclosed_implicit_flow_mapping_at_eof() {
     let res = parser.load(&mut collector, false);
 
     println!("Events: {:?}", collector.0);
-    println!("Result: {:?}", res);
+    println!("Result: {res:?}");
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert_eq!(err.info(), "unclosed bracket '['");
@@ -60,7 +60,7 @@ fn test_unclosed_quoted_scalar_at_eof() {
     let res = parser.load(&mut collector, false);
 
     println!("Events: {:?}", collector.0);
-    println!("Result: {:?}", res);
+    println!("Result: {res:?}");
     assert!(res.is_err());
     let err = res.unwrap_err();
     assert_eq!(err.info(), "unclosed quote");

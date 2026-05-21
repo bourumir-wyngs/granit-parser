@@ -18,7 +18,7 @@ fn case_6fwr_keep_space() {
             }
             Ok((Event::Scalar(cow, style, size, _tag), span)) => {
                 // "ab\n\n\n"|Literal|0|Span { start: Marker { index: 8, line: 2, col: 1 }, end: Marker { index: 14, line: 5, col: 0 } }
-                println!("{:?}|{:?}|{:?}|{:?}", cow, style, size, span);
+                println!("{cow:?}|{style:?}|{size:?}|{span:?}");
             }
             Ok((_event, _)) => {}
         }

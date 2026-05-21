@@ -60,8 +60,8 @@ fn minimal_example_output_matches_readme() {
     let actual =
         render_readme_example(yaml).expect("README example YAML should parse successfully");
 
-    println!("Actual output:\n{}", actual);
-    println!("Expected output:\n{}", expected);
+    println!("Actual output:\n{actual}");
+    println!("Expected output:\n{expected}");
 
     assert_eq!(actual, expected, "README example output is out of sync");
 }
