@@ -68,4 +68,6 @@ pub use crate::parser::{
     Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, Tag, TryEventReceiver,
     TryLoadError, TrySpannedEventReceiver,
 };
-pub use crate::scanner::{Marker, ScalarStyle, ScanError, Scanner, Span, Token, TokenType};
+pub use crate::scanner::{
+    Comment, Marker, ScalarStyle, ScanError, Scanner, Span, Token, TokenType,
+};

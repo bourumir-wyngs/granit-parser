@@ -6,7 +6,7 @@
 
 use crate::{
     input::{str::StrInput, BorrowedInput},
-    scanner::{ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
+    scanner::{Comment, ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
     BufferedInput,
 };
 
@@ -633,6 +633,38 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     pub fn keep_tags(mut self, value: bool) -> Self {
         self.keep_tags = value;
         self
+    }
+
+    /// Enable collection of YAML comments skipped by the parser.
+    ///
+    /// Comment collection is disabled by default. When enabled, comments are collected in source
+    /// order up to the underlying scanner's current input position. The parser's event stream is
+    /// unchanged.
+    #[must_use]
+    pub fn with_comments(mut self) -> Self {
+        self.scanner.enable_comments();
+        self
+    }
+
+    /// Return comments collected so far, in source order.
+    ///
+    /// This is a collection API, not a streaming interleaving API. Parser operations such as
+    /// [`Self::peek`] may scan ahead while resolving tokens, so returned comments are not defined
+    /// as "comments before the current event"; they are only guaranteed to be collected up to the
+    /// scanner's current input position.
+    #[inline]
+    #[must_use]
+    pub fn comments(&self) -> &[Comment<'input>] {
+        self.scanner.comments()
+    }
+
+    /// Return collected comments and clear the parser's comment buffer.
+    ///
+    /// Future parsing continues appending newly captured comments to the now-empty buffer.
+    #[inline]
+    #[must_use]
+    pub fn take_comments(&mut self) -> Vec<Comment<'input>> {
+        self.scanner.take_comments()
     }
 
     /// Try to load the next event and return it, but do not consuming it from `self`.

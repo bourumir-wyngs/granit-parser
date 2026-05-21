@@ -218,6 +218,39 @@ impl Span {
     }
 }
 
+/// A YAML comment captured from the source.
+///
+/// Comments are presentation metadata. The parser does not emit comments as YAML data events,
+/// but opt-in comment collection APIs can expose them to callers.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub struct Comment<'input> {
+    /// Span covering the whole source comment, including `#` and excluding the line break.
+    pub span: Span,
+    /// Raw comment payload exactly after `#`, excluding only the line break.
+    ///
+    /// Leading spaces are preserved, including a single space immediately after `#` when present.
+    pub text: Cow<'input, str>,
+}
+
+impl<'input> Comment<'input> {
+    /// Create a captured YAML comment from a source span and raw payload.
+    #[must_use]
+    pub fn new(span: Span, text: impl Into<Cow<'input, str>>) -> Self {
+        Self {
+            span,
+            text: text.into(),
+        }
+    }
+
+    /// Return the comment payload with surrounding whitespace removed.
+    ///
+    /// This helper is ergonomic only. The raw [`Self::text`] payload remains unchanged.
+    #[must_use]
+    pub fn trimmed_text(&self) -> &str {
+        self.text.trim()
+    }
+}
+
 /// An error that occurred while scanning.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub struct ScanError {
@@ -518,9 +551,13 @@ pub struct Scanner<'input, T> {
     /// follows. In this case, the token stays in the `VecDeque` but cannot be returned from
     /// [`Self::next`] until we have more context.
     tokens: VecDeque<Token<'input>>,
+    /// Comments captured from skipped presentation content.
+    comments: Vec<Comment<'input>>,
     /// The last error that happened.
     error: Option<ScanError>,
 
+    /// Whether skipped YAML comments should be captured.
+    collect_comments: bool,
     /// Whether we have already emitted the `StreamStart` token.
     stream_start_produced: bool,
     /// Whether we have already emitted the `StreamEnd` token.
@@ -876,8 +913,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             input,
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
+            comments: Vec::new(),
             error: None,
 
+            collect_comments: false,
             stream_start_produced: false,
             stream_end_produced: false,
             adjacent_value_allowed_at: 0,
@@ -898,6 +937,42 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             buf_trailing_breaks: String::with_capacity(128),
             buf_whitespaces: String::with_capacity(128),
         }
+    }
+
+    /// Enable collection of YAML comments skipped by the scanner.
+    ///
+    /// Comment collection is disabled by default so the scanner's normal no-comments path avoids
+    /// extra capture work. When enabled, comments are collected in source order up to the
+    /// scanner's current input position. The token stream is unchanged.
+    #[must_use]
+    pub fn with_comments(mut self) -> Self {
+        self.enable_comments();
+        self
+    }
+
+    /// Enable comment collection on this scanner in place.
+    pub(crate) fn enable_comments(&mut self) {
+        self.collect_comments = true;
+    }
+
+    /// Return comments collected so far, in source order.
+    ///
+    /// This is a collection API, not a streaming interleaving API. The scanner may read ahead to
+    /// resolve tokens, so these comments are only guaranteed to be collected up to the scanner's
+    /// current input position.
+    #[inline]
+    #[must_use]
+    pub fn comments(&self) -> &[Comment<'input>] {
+        &self.comments
+    }
+
+    /// Return collected comments and clear the scanner's comment buffer.
+    ///
+    /// Future scanning continues appending newly captured comments to the now-empty buffer.
+    #[inline]
+    #[must_use]
+    pub fn take_comments(&mut self) -> Vec<Comment<'input>> {
+        core::mem::take(&mut self.comments)
     }
 
     /// Get a copy of the last error that was encountered, if any.
@@ -981,6 +1056,48 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else if self.input.next_is_break() {
             self.skip_nl();
         }
+    }
+
+    fn capture_comment(&mut self) -> ScanResult {
+        let start_mark = self.mark;
+        debug_assert_eq!(self.input.peek(), '#');
+
+        self.skip_non_blank();
+
+        let text = if let Some(start) = self.input.byte_offset() {
+            // Stable byte offsets are available; slice the payload once at the end.
+            let n = self.input.skip_while_non_breakz();
+            self.mark.offsets.chars += n;
+            self.mark.col += n;
+            let byte_offset = self.input.byte_offset();
+            self.mark.offsets.bytes = byte_offset;
+            let end = byte_offset.expect("byte_offset must remain available once enabled");
+
+            if let Some(slice) = self.try_borrow_slice(start, end) {
+                Cow::Borrowed(slice)
+            } else if let Some(slice) = self.input.slice_bytes(start, end) {
+                // Defensive fallback for third-party inputs that expose offsets but cannot borrow.
+                Cow::Owned(slice.to_owned())
+            } else {
+                return Err(ScanError::new_str(
+                    start_mark,
+                    "internal error: input advertised offsets but did not provide a slice",
+                ));
+            }
+        } else {
+            // Streaming input without stable offsets; collect into an owned string.
+            let mut owned = String::new();
+            while !is_breakz(self.input.look_ch()) {
+                owned.push(self.input.peek());
+                self.skip_blank();
+            }
+            Cow::Owned(owned)
+        };
+
+        let end_mark = self.mark;
+        self.comments
+            .push(Comment::new(Span::new(start_mark, end_mark), text));
+        Ok(())
     }
 
     /// Return whether the [`TokenType::StreamStart`] event has been emitted.
@@ -1281,11 +1398,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 '\n' | '\r' => consume_linebreak(self),
 
                 '#' => {
-                    // Skip the whole comment payload in one go.
-                    let n = self.input.skip_while_non_breakz();
-                    self.mark.offsets.chars += n;
-                    self.mark.col += n;
-                    self.mark.offsets.bytes = self.input.byte_offset();
+                    if self.collect_comments {
+                        self.capture_comment()?;
+                    } else {
+                        // Skip the whole comment payload in one go.
+                        let n = self.input.skip_while_non_breakz();
+                        self.mark.offsets.chars += n;
+                        self.mark.col += n;
+                        self.mark.offsets.bytes = self.input.byte_offset();
+                    }
 
                     // Micro-opt: comment-only lines are common; consume the following linebreak here.
                     if matches!(self.input.look_ch(), '\n' | '\r') {
@@ -1352,10 +1473,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     need_whitespace = false;
                 }
                 '#' => {
-                    let comment_length = self.input.skip_while_non_breakz();
-                    self.mark.offsets.chars += comment_length;
-                    self.mark.col += comment_length;
-                    self.mark.offsets.bytes = self.input.byte_offset();
+                    if self.collect_comments && !need_whitespace {
+                        self.capture_comment()?;
+                    } else {
+                        let comment_length = self.input.skip_while_non_breakz();
+                        self.mark.offsets.chars += comment_length;
+                        self.mark.col += comment_length;
+                        self.mark.offsets.bytes = self.input.byte_offset();
+                    }
                 }
                 _ => break,
             }
@@ -1369,11 +1494,45 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
+        if self.collect_comments {
+            return self.skip_ws_to_eol_with_comments(skip_tabs);
+        }
+
         let (n_bytes, result) = self.input.skip_ws_to_eol(skip_tabs);
         self.mark.col += n_bytes;
         self.mark.offsets.chars += n_bytes;
         self.mark.offsets.bytes = self.input.byte_offset();
         result.map_err(|msg| ScanError::new_str(self.mark, msg))
+    }
+
+    fn skip_ws_to_eol_with_comments(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
+        debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
+
+        let mut encountered_tab = false;
+        let mut has_yaml_ws = false;
+
+        loop {
+            match self.input.look_ch() {
+                ' ' => {
+                    has_yaml_ws = true;
+                    self.skip_blank();
+                }
+                '\t' if skip_tabs != SkipTabs::No => {
+                    encountered_tab = true;
+                    self.skip_blank();
+                }
+                '#' if !encountered_tab && !has_yaml_ws => {
+                    return Err(ScanError::new_str(
+                        self.mark,
+                        "comments must be separated from other tokens by whitespace",
+                    ));
+                }
+                '#' => self.capture_comment()?,
+                _ => break,
+            }
+        }
+
+        Ok(SkipTabs::Result(encountered_tab, has_yaml_ws))
     }
 
     fn fetch_stream_start(&mut self) {
