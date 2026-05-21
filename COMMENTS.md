@@ -127,17 +127,17 @@ Once you implement the step, make edit in this document marking it as done.
   - [x] Parsing events remain identical when comments are enabled.
   - [x] Comments are available after full parse.
   - [x] `take_comments()` drains collected comments.
-- [ ] Add coverage for comments after syntax elements.
+- [x] Add coverage for comments after syntax elements.
   - [x] Directives.
   - [x] Document start marker: `--- # document start comment`.
   - [x] Document end marker: `... # document end comment`.
-  - [ ] Tags and anchors.
+  - [x] Tags and anchors.
   - [x] Flow delimiters and flow entries.
   - [x] Double-quoted scalar trailing comment: `key: "value" # after quoted scalar`.
   - [x] Single-quoted scalar trailing comment: `key: 'value' # after quoted scalar`.
   - [x] Plain scalar trailing comment: `key: value # after plain scalar`.
   - [x] Block scalar header comments.
-- [ ] Add negative/edge tests.
+- [x] Add negative/edge tests.
   - [x] `#` inside single-quoted scalars is not a comment.
   - [x] `#` inside double-quoted scalars is not a comment.
   - [x] `#` inside block scalar content is not a comment.
@@ -146,7 +146,7 @@ Once you implement the step, make edit in this document marking it as done.
   - [x] In `key: |\n  # this is block scalar content, not a captured comment`, the `#` line is scalar content only.
   - [x] Unseparated comments still error.
   - [x] Unseparated comment errors leave the invalid `#` unrecorded.
-  - [ ] BS4K comment-interrupted multiline plain scalar still errors.
+  - [x] BS4K comment-interrupted multiline plain scalar still errors.
 - [x] Add non-ASCII tests.
   - [x] Comment payload with multi-byte Unicode.
   - [x] Plain scalar trailing Unicode comment: `key: value # unicode: äöü`.

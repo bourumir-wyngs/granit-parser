@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
     BorrowedInput, BufferedInput, Comment, Event, Input, Marker, Parser, ScalarStyle, Scanner,
@@ -82,6 +82,153 @@ impl Input for SliceOnlyInput<'_> {
 }
 
 impl<'input> BorrowedInput<'input> for SliceOnlyInput<'input> {
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
+        let _ = self;
+        None
+    }
+}
+
+struct CountingInput<'input> {
+    inner: StrInput<'input>,
+    skip_calls: Rc<Cell<usize>>,
+    skip_while_non_breakz_calls: Rc<Cell<usize>>,
+}
+
+impl<'input> CountingInput<'input> {
+    #[must_use]
+    fn new(
+        source: &'input str,
+        skip_calls: Rc<Cell<usize>>,
+        skip_while_non_breakz_calls: Rc<Cell<usize>>,
+    ) -> Self {
+        Self {
+            inner: StrInput::new(source),
+            skip_calls,
+            skip_while_non_breakz_calls,
+        }
+    }
+}
+
+impl Input for CountingInput<'_> {
+    fn lookahead(&mut self, count: usize) {
+        self.inner.lookahead(count);
+    }
+
+    fn buflen(&self) -> usize {
+        self.inner.buflen()
+    }
+
+    fn bufmaxlen(&self) -> usize {
+        self.inner.bufmaxlen()
+    }
+
+    fn raw_read_ch(&mut self) -> char {
+        self.inner.raw_read_ch()
+    }
+
+    fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+        self.inner.raw_read_non_breakz_ch()
+    }
+
+    fn skip(&mut self) {
+        self.skip_calls.set(self.skip_calls.get() + 1);
+        self.inner.skip();
+    }
+
+    fn skip_n(&mut self, count: usize) {
+        self.skip_calls.set(self.skip_calls.get() + count);
+        self.inner.skip_n(count);
+    }
+
+    fn peek(&self) -> char {
+        self.inner.peek()
+    }
+
+    fn peek_nth(&self, n: usize) -> char {
+        self.inner.peek_nth(n)
+    }
+
+    fn byte_offset(&self) -> Option<usize> {
+        self.inner.byte_offset()
+    }
+
+    fn slice_bytes(&self, start: usize, end: usize) -> Option<&str> {
+        self.inner.slice_bytes(start, end)
+    }
+
+    fn skip_while_non_breakz(&mut self) -> usize {
+        self.skip_while_non_breakz_calls
+            .set(self.skip_while_non_breakz_calls.get() + 1);
+        self.inner.skip_while_non_breakz()
+    }
+}
+
+impl<'input> BorrowedInput<'input> for CountingInput<'input> {
+    fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'input str> {
+        self.inner.slice_borrowed(start, end)
+    }
+}
+
+struct OffsetOnlyInput<'input> {
+    inner: StrInput<'input>,
+}
+
+impl<'input> OffsetOnlyInput<'input> {
+    #[must_use]
+    fn new(source: &'input str) -> Self {
+        Self {
+            inner: StrInput::new(source),
+        }
+    }
+}
+
+impl Input for OffsetOnlyInput<'_> {
+    fn lookahead(&mut self, count: usize) {
+        self.inner.lookahead(count);
+    }
+
+    fn buflen(&self) -> usize {
+        self.inner.buflen()
+    }
+
+    fn bufmaxlen(&self) -> usize {
+        self.inner.bufmaxlen()
+    }
+
+    fn raw_read_ch(&mut self) -> char {
+        self.inner.raw_read_ch()
+    }
+
+    fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+        self.inner.raw_read_non_breakz_ch()
+    }
+
+    fn skip(&mut self) {
+        self.inner.skip();
+    }
+
+    fn skip_n(&mut self, count: usize) {
+        self.inner.skip_n(count);
+    }
+
+    fn peek(&self) -> char {
+        self.inner.peek()
+    }
+
+    fn peek_nth(&self, n: usize) -> char {
+        self.inner.peek_nth(n)
+    }
+
+    fn byte_offset(&self) -> Option<usize> {
+        self.inner.byte_offset()
+    }
+
+    fn skip_while_non_breakz(&mut self) -> usize {
+        self.inner.skip_while_non_breakz()
+    }
+}
+
+impl<'input> BorrowedInput<'input> for OffsetOnlyInput<'input> {
     fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
         let _ = self;
         None
@@ -204,6 +351,41 @@ fn scanner_batched_comment_capture_tracks_unicode_offsets() {
 }
 
 #[test]
+fn scanner_batched_comment_capture_tracks_unicode_offsets_at_eof() {
+    let yaml = "# éβ🙂";
+    let mut scanner = Scanner::new(StrInput::new(yaml)).with_comments();
+
+    drain_scanner(&mut scanner);
+
+    let comments = scanner.comments();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].text, " éβ🙂");
+    assert_eq!(comments[0].span.byte_range(), Some(0..10));
+    assert_eq!(comments[0].span.slice(yaml), Some(yaml));
+    assert_eq!(comments[0].span.end.index(), 5);
+    assert_eq!(comments[0].span.end.line(), 1);
+    assert_eq!(comments[0].span.end.col(), 5);
+}
+
+#[test]
+fn scanner_batched_comment_capture_uses_one_input_skip_while_call() {
+    let skip_calls = Rc::new(Cell::new(0));
+    let skip_while_non_breakz_calls = Rc::new(Cell::new(0));
+    let mut scanner = Scanner::new(CountingInput::new(
+        "# payload",
+        Rc::clone(&skip_calls),
+        Rc::clone(&skip_while_non_breakz_calls),
+    ))
+    .with_comments();
+
+    drain_scanner(&mut scanner);
+
+    assert_eq!(scanner.comments()[0].text, " payload");
+    assert_eq!(skip_while_non_breakz_calls.get(), 1);
+    assert_eq!(skip_calls.get(), 1);
+}
+
+#[test]
 fn scanner_comments_from_str_input_are_borrowed() {
     let mut scanner = Scanner::new(StrInput::new("# borrowed\n")).with_comments();
 
@@ -229,6 +411,25 @@ fn scanner_uses_slice_bytes_fallback_when_comment_text_cannot_be_borrowed() {
         Cow::Owned(text) => assert_eq!(text, " fallback"),
         Cow::Borrowed(text) => panic!("expected owned fallback comment text, got {text:?}"),
     }
+}
+
+#[test]
+fn scanner_errors_when_offset_input_cannot_slice_comment_text() {
+    let mut scanner = Scanner::new(OffsetOnlyInput::new("# broken\n")).with_comments();
+
+    let error = loop {
+        match scanner.next_token() {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("expected scanner error"),
+            Err(error) => break error,
+        }
+    };
+
+    assert_eq!(
+        error.info(),
+        "internal error: input advertised offsets but did not provide a slice"
+    );
+    assert!(scanner.comments().is_empty());
 }
 
 #[test]
@@ -305,6 +506,20 @@ fn scanner_unicode_trailing_comment_matches_str_and_buffered_inputs() {
 }
 
 #[test]
+fn parser_comment_only_line_after_mapping_key_keeps_indented_value() {
+    let yaml = "key:\n# divider\n  - value\n";
+    let mut parser = Parser::new_from_str(yaml).with_comments();
+
+    while parser.next_event().transpose().unwrap().is_some() {}
+
+    let comments = parser.comments();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].text, " divider");
+    assert_eq!(comments[0].span.start.line(), 2);
+    assert_eq!(comments[0].span.end.line(), 2);
+}
+
+#[test]
 fn scanner_collects_comments_after_syntax_elements() {
     let cases = [
         (
@@ -330,6 +545,10 @@ fn scanner_collects_comments_after_syntax_elements() {
             &[" double quoted", " single quoted"][..],
         ),
         ("key: | # block header\n  text\n", &[" block header"][..]),
+        (
+            "anchored: &id value # anchored value\ntagged: !str value # tagged value\n",
+            &[" anchored value", " tagged value"][..],
+        ),
         (
             "key: a\n\t# plain scalar tab line\nnext: b\n",
             &[" plain scalar tab line"][..],
