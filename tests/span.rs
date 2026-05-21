@@ -110,6 +110,35 @@ fn span_slice_handles_non_ascii_byte_ranges() {
 }
 
 #[test]
+fn parser_spans_use_byte_offsets_for_non_ascii_input() {
+    let source = "a: 你好\nb: c\n";
+    let scalars: Vec<_> = Parser::new_from_str(source)
+        .filter_map(|parsed| {
+            let (event, span) = parsed.unwrap();
+            if let Event::Scalar(value, ..) = event {
+                Some((
+                    value.into_owned(),
+                    span.byte_range(),
+                    span.slice(source).map(|slice| slice.to_owned()),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert_eq!(
+        scalars,
+        vec![
+            ("a".to_string(), Some(0..1), Some("a".to_string())),
+            ("你好".to_string(), Some(3..9), Some("你好".to_string())),
+            ("b".to_string(), Some(10..11), Some("b".to_string())),
+            ("c".to_string(), Some(13..14), Some("c".to_string())),
+        ]
+    );
+}
+
+#[test]
 fn span_slice_handles_empty_spans() {
     let source = "key: value";
     let empty = granit_parser::Span::empty(Marker::new(4, 1, 4).with_byte_offset(Some(4)));

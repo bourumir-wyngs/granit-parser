@@ -22,7 +22,7 @@ fn resolve_include(name: &str) -> Result<String, ScanError> {
 }
 
 fn is_include_tag(tag: &Tag) -> bool {
-    tag.handle == "!" && tag.suffix == "include"
+    tag.parts() == ("!", "include")
 }
 
 fn main() -> Result<(), ScanError> {

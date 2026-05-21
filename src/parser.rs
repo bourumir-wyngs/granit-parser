@@ -133,7 +133,10 @@ impl Tag {
         self.is_yaml_core_schema() && self.suffix == suffix
     }
 
-    /// Return true for a non-core, application-defined tag.
+    /// Return true for a tag outside the YAML core-schema namespace.
+    ///
+    /// This checks only the tag handle. It returns `false` for any tag whose handle is
+    /// `tag:yaml.org,2002:`, regardless of suffix.
     #[must_use]
     pub fn is_custom(&self) -> bool {
         !self.is_yaml_core_schema()
@@ -161,7 +164,7 @@ impl<'input> Event<'input> {
     ///
     /// Returns `Some(id)` when this event defines an anchor on a scalar, sequence, or mapping
     /// node. Returns `None` for all other events, including `Alias` (which references an anchor
-    /// rather than defining one — match on `Event::Alias(id)` directly to obtain the target).
+    /// rather than defining one; use [`Self::alias_id`] to obtain the target anchor ID).
     #[must_use]
     pub fn anchor_id(&self) -> Option<usize> {
         match self {
@@ -172,6 +175,15 @@ impl<'input> Event<'input> {
             {
                 Some(*anchor_id)
             }
+            _ => None,
+        }
+    }
+
+    /// Return the target anchor ID if this event is an alias.
+    #[must_use]
+    pub fn alias_id(&self) -> Option<usize> {
+        match self {
+            Self::Alias(anchor_id) => Some(*anchor_id),
             _ => None,
         }
     }
@@ -1834,31 +1846,37 @@ mod test {
         let mapping = Event::MappingStart(9, Some(Cow::Borrowed(&tag)));
 
         assert_eq!(scalar.anchor_id(), Some(7));
+        assert_eq!(scalar.alias_id(), None);
         assert_eq!(scalar.tag(), Some(&tag));
         assert_eq!(scalar.scalar(), Some(("value", ScalarStyle::DoubleQuoted)));
         assert!(scalar.is_node());
 
         assert_eq!(sequence.anchor_id(), Some(8));
+        assert_eq!(sequence.alias_id(), None);
         assert_eq!(sequence.tag(), Some(&tag));
         assert_eq!(sequence.scalar(), None);
         assert!(sequence.is_node());
 
         assert_eq!(mapping.anchor_id(), Some(9));
+        assert_eq!(mapping.alias_id(), None);
         assert_eq!(mapping.tag(), Some(&tag));
         assert_eq!(mapping.scalar(), None);
         assert!(mapping.is_node());
 
         let alias = Event::Alias(10);
         assert_eq!(alias.anchor_id(), None);
+        assert_eq!(alias.alias_id(), Some(10));
         assert_eq!(alias.tag(), None);
         assert_eq!(alias.scalar(), None);
         assert!(alias.is_node());
 
         let unanchored_scalar = Event::Scalar("x".into(), ScalarStyle::Plain, 0, None);
         assert_eq!(unanchored_scalar.anchor_id(), None);
+        assert_eq!(unanchored_scalar.alias_id(), None);
 
         let stream_start = Event::StreamStart;
         assert_eq!(stream_start.anchor_id(), None);
+        assert_eq!(stream_start.alias_id(), None);
         assert_eq!(stream_start.tag(), None);
         assert_eq!(stream_start.scalar(), None);
         assert!(!stream_start.is_node());
