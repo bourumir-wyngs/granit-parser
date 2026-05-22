@@ -159,6 +159,11 @@ where
 /// stream/document wrapper appears.
 ///
 /// That is exactly what we want for `!include`-style subtree injection.
+///
+/// Included parser events, including [`Event::Comment`] events, are replayed through the same
+/// event stream as parent events. Their [`Span`] values remain local to the included source, just
+/// like every other event span from an included parser. `ParserStack` does not attach file names,
+/// source IDs, or other include provenance to events or spans.
 pub struct ParserStack<'input, I = core::iter::Empty<char>, T = StrInput<'input>>
 where
     I: Iterator<Item = char>,
@@ -197,6 +202,10 @@ where
 
     /// Resolves an include string using the include resolver.
     ///
+    /// Comment events from the included content are preserved. Their spans are local to the
+    /// included content returned by the resolver, matching the existing behavior for all included
+    /// document events.
+    ///
     /// # Errors
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
     /// included content cannot be parsed.
@@ -229,6 +238,7 @@ where
     ///
     /// This is an alias for [`Self::resolve`] with a name that reads naturally in
     /// include-oriented consumers: `stack.push_include("config.yaml")?`.
+    /// Comment spans from the included content are local to that included source.
     ///
     /// # Errors
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the

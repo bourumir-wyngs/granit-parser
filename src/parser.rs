@@ -341,6 +341,12 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 /// The [`EventReceiver`] trait only receives events. In order to receive both events and their
 /// location in the source, use [`SpannedEventReceiver`]. Note that [`EventReceiver`]s implement
 /// [`SpannedEventReceiver`] automatically.
+/// Non-spanned receivers receive [`Event::Comment(text, placement)`](Event::Comment) like any
+/// other event, but without source location. Spanned receivers receive the same comment event plus
+/// the comment [`Span`] in [`SpannedEventReceiver::on_event`]. For comments, that span covers the
+/// whole source comment, including `#` and excluding the line break. When parsing from an input
+/// with byte offsets, such as [`Parser::new_from_str`], [`Span::slice`] returns that source
+/// comment text.
 ///
 /// # Event hierarchy
 /// The event stream starts with an [`Event::StreamStart`] event followed by an
@@ -415,6 +421,7 @@ pub trait EventReceiver<'input> {
 /// Trait to be implemented for using the low-level parsing API.
 ///
 /// Functionally similar to [`EventReceiver`], but receives a [`Span`] as well as the event.
+/// For [`Event::Comment`], the span is the source range of the whole comment.
 pub trait SpannedEventReceiver<'input> {
     /// Handler called for each event that occurs.
     fn on_event(&mut self, ev: Event<'input>, span: Span);

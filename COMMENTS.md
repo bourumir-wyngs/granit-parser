@@ -177,13 +177,12 @@ Once you implement the step, make edit in this document marking it as done.
         matching behavior between `StrInput` and `BufferedInput`.
 
 ### Documentation
-- [ ] Add a crate-level example in `src/lib.rs`.
-- [ ] Explain that `Event::Comment` is presentation metadata, not YAML data.
-- [ ] Document that comment locations use the normal companion `Span`.
-- [ ] Document that non-spanned receivers receive `Event::Comment(text, placement)`,
+- [x] Add a crate-level example in `src/lib.rs`.
+- [x] Explain that `Event::Comment` is presentation metadata, not YAML data.
+- [x] Document that comment locations use the normal companion `Span`.
+- [x] Document that non-spanned receivers receive `Event::Comment(text, placement)`,
       while spanned receivers receive the comment span in `on_event`.
-- [ ] Document `span.slice(source)` behavior for comments.
-- [ ] Document that included-document comment spans are local to the included source,
+- [x] Document `span.slice(source)` behavior for comments.
+- [x] Document that included-document comment spans are local to the included source,
       matching existing included-document event spans.
-- [ ] Update `CHANGELOG.md` when the implementation is complete.
-
+- [x] Update `CHANGELOG.md` when the implementation is complete.

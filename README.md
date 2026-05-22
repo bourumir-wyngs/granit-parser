@@ -35,6 +35,8 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges plus source slices:
 
+Comments are emitted as `Event::Comment(text, placement)`. They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion `Span` for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from `Parser::new_from_str`, `span.slice(yaml)` returns that source comment text.
+
 ```rust
 use granit_parser::Parser;
 
@@ -122,6 +124,13 @@ https://docs.rs/granit-parser/latest/granit_parser/trait.TrySpannedEventReceiver
 and returns
 https://docs.rs/granit-parser/latest/granit_parser/enum.TryLoadError.html to
 distinguish parser errors from receiver errors.
+
+Event-only receivers receive comment events as `Event::Comment(text, placement)`.
+Spanned receivers receive the same event plus the comment span in `on_event`.
+When using `ParserStack::resolve` or `ParserStack::push_include`, comment events
+from included documents are forwarded through the normal event stream. Their
+spans remain local to the included source, matching the existing span behavior
+for other included-document events.
 
 Use the iterator API when the caller should pull events and decide when to stop
 parsing. https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load

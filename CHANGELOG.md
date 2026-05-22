@@ -11,8 +11,11 @@
   returns `Option<usize>` for events that define an anchor; `alias_id` returns
   `Option<usize>` for aliases that reference an anchor; `is_node` returns `true`
   for any event that produces a value in the document tree.
-- Added `Placement` metadata for comments, exposed on scanner comment tokens
-  and parser `Event::Comment(text, placement)` events.
+- Added comment events. Comments are emitted as parser
+  `Event::Comment(text, placement)` events with normal companion spans, and as
+  scanner comment tokens carrying `Placement` metadata. This is an event-stream
+  change: consumers building YAML data trees should ignore comment events, while
+  formatting/linting tools can use the placement hint and comment span.
 - Added `StructureStyle` metadata for sequences and mappings, exposed on
   `Event::SequenceStart(style, anchor_id, tag)` and
   `Event::MappingStart(style, anchor_id, tag)` events.
