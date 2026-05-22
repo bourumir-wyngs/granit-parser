@@ -360,6 +360,10 @@ pub struct EventReporter<'input> {
 
 impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
     fn on_event(&mut self, ev: Event<'input>, span: Span) {
+        if matches!(ev, Event::Comment(..) | Event::Nothing) {
+            return;
+        }
+
         if let Some((last_ev, last_span)) = self.last_span.take() {
             if span.start.index() < last_span.start.index()
                 || span.end.index() < last_span.end.index()
@@ -405,7 +409,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 )
             }
             Event::Alias(idx) => format!("=ALI *{idx}"),
-            Event::Comment(..) | Event::Nothing => return,
+            Event::Comment(..) | Event::Nothing => unreachable!("comments are ignored above"),
         };
         self.events.push(line);
     }

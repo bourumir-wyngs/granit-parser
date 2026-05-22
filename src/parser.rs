@@ -115,7 +115,7 @@ pub enum Event<'input> {
     SequenceEnd,
     /// The start of a YAML mapping (object, hash).
     MappingStart(
-        /// The notation style used for the mapping.
+        /// The notation style used for the mapping (Flow or Block).
         StructureStyle,
         /// The anchor ID of the start of the mapping.
         usize,
