@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use granit_parser::{
-    BufferedInput, Comment, Event, EventReceiver, Marker, Parser, Placement, ScalarStyle,
-    ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
+    BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Parser, Placement,
+    ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
 };
 
 fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
@@ -160,7 +160,7 @@ fn scanner_emits_trailing_comment_after_plain_scalar_token() {
 }
 
 #[test]
-fn scanner_emits_comments_after_leading_syntax_tokens() {
+fn scanner_emits_comments_after_syntax_tokens() {
     struct Case<'input> {
         yaml: &'input str,
         syntax_matches: fn(&TokenType<'_>) -> bool,
@@ -174,14 +174,60 @@ fn scanner_emits_comments_after_leading_syntax_tokens() {
             expected_comment: " directive",
         },
         Case {
+            yaml: "%TAG !e! tag:example.com,2020:app/ # tag directive\n---\n",
+            syntax_matches: |token| {
+                matches!(token, TokenType::TagDirective(handle, prefix)
+                if handle == "!e!" && prefix == "tag:example.com,2020:app/")
+            },
+            expected_comment: " tag directive",
+        },
+        Case {
+            yaml: "---\nkey: value\n... # document end\n",
+            syntax_matches: |token| matches!(token, TokenType::DocumentEnd),
+            expected_comment: " document end",
+        },
+        Case {
             yaml: "[ # flow start\n]\n",
             syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart),
             expected_comment: " flow start",
         },
         Case {
+            yaml: "[a] # flow end\n",
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd),
+            expected_comment: " flow end",
+        },
+        Case {
+            yaml: "{a: b} # flow mapping end\n",
+            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd),
+            expected_comment: " flow mapping end",
+        },
+        Case {
+            yaml: "[a, # flow entry\nb]\n",
+            syntax_matches: |token| matches!(token, TokenType::FlowEntry),
+            expected_comment: " flow entry",
+        },
+        Case {
             yaml: "? # explicit key\n: value\n",
             syntax_matches: |token| matches!(token, TokenType::Key),
             expected_comment: " explicit key",
+        },
+        Case {
+            yaml: "!local # tag\nvalue\n",
+            syntax_matches: |token| {
+                matches!(token, TokenType::Tag(handle, suffix)
+                if handle == "!" && suffix == "local")
+            },
+            expected_comment: " tag",
+        },
+        Case {
+            yaml: "&a # anchor\nvalue\n",
+            syntax_matches: |token| matches!(token, TokenType::Anchor(anchor) if anchor == "a"),
+            expected_comment: " anchor",
+        },
+        Case {
+            yaml: "ref: *a # alias\n",
+            syntax_matches: |token| matches!(token, TokenType::Alias(alias) if alias == "a"),
+            expected_comment: " alias",
         },
         Case {
             yaml: "key: \"value\" # quoted\n",
@@ -210,6 +256,20 @@ fn scanner_emits_comments_after_leading_syntax_tokens() {
 
         assert!(syntax_index < comment_index, "{:?}", case.yaml);
     }
+}
+
+#[test]
+fn scanner_emits_comments_after_block_scalar_headers() {
+    let yaml = "key: | # block scalar header\n  body\n";
+    let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+
+    assert!(tokens.iter().any(
+        |Token(_, token)| matches!(token, TokenType::Comment(comment)
+            if comment.text == " block scalar header")
+    ));
+    assert!(tokens.iter().any(|Token(_, token)| {
+        matches!(token, TokenType::Scalar(ScalarStyle::Literal, value) if value == "body\n")
+    }));
 }
 
 #[test]
@@ -260,6 +320,10 @@ fn scanner_preserves_non_ascii_comment_payload_offsets() {
 
     assert_eq!(comment.0.text, " ž🎵");
     assert_eq!(comment.1.slice(yaml), Some("# ž🎵"));
+    assert_eq!(comment.1.start.index(), 0);
+    assert_eq!(comment.1.end.index(), 4);
+    assert_eq!(comment.1.start.byte_offset(), Some(0));
+    assert_eq!(comment.1.end.byte_offset(), Some(8));
 }
 
 #[test]
@@ -289,6 +353,74 @@ fn scanner_comment_text_is_owned_for_buffered_input() {
     match comment {
         Cow::Owned(text) => assert_eq!(text, " streamed"),
         Cow::Borrowed(text) => panic!("expected owned comment text, got {text:?}"),
+    }
+}
+
+#[test]
+fn scanner_comment_tokens_match_between_str_and_buffered_input() {
+    fn collect_comments<'input, T>(
+        scanner: Scanner<'input, T>,
+    ) -> Vec<(String, Placement, usize, usize)>
+    where
+        T: BorrowedInput<'input>,
+    {
+        scanner
+            .filter_map(|Token(span, token)| match token {
+                TokenType::Comment(comment) => Some((
+                    comment.text.into_owned(),
+                    comment.placement,
+                    span.start.index(),
+                    span.end.index(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let yaml = "# top\nkey: value # ž🎵\n#eof";
+
+    assert_eq!(
+        collect_comments(Scanner::new(StrInput::new(yaml))),
+        collect_comments(Scanner::new(BufferedInput::new(yaml.chars())))
+    );
+}
+
+#[test]
+fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
+    let cases = [
+        (
+            "key: \"# not a comment\"\n",
+            ScalarStyle::DoubleQuoted,
+            "# not a comment",
+        ),
+        (
+            "key: '# not a comment'\n",
+            ScalarStyle::SingleQuoted,
+            "# not a comment",
+        ),
+        (
+            "key: |\n  # not a comment\n",
+            ScalarStyle::Literal,
+            "# not a comment\n",
+        ),
+    ];
+
+    for (yaml, style, expected_value) in cases {
+        let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+
+        assert!(
+            !tokens
+                .iter()
+                .any(|Token(_, token)| matches!(token, TokenType::Comment(_))),
+            "{yaml:?}"
+        );
+        assert!(
+            tokens.iter().any(|Token(_, token)| {
+                matches!(token, TokenType::Scalar(scalar_style, value)
+                    if *scalar_style == style && value == expected_value)
+            }),
+            "{yaml:?}"
+        );
     }
 }
 

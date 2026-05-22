@@ -155,30 +155,28 @@ Once you implement the step, make edit in this document marking it as done.
   - [x] `ParserStack` forwards comment events from stacked parsers.
   - [x] `ParserStack::resolve` / `push_include` forwards comments from included documents.
   - [x] Included-document comment spans remain local to the included source.
-- [ ] Update existing parser-level collection tests.
-  - [ ] Replace "event stream unchanged when comments are enabled" expectations with
+- [x] Update existing parser-level collection tests.
+  - [x] Replace "event stream unchanged when comments are enabled" expectations with
         explicit `Event::Comment` expectations.
-  - [ ] Remove `comments()` and `take_comments()` drain tests.
-- [ ] Migrate scanner collection tests to scanner-token or parser-event tests.
-  - [ ] Full-line comments.
-  - [ ] Indented full-line comments.
-  - [ ] Trailing comments after plain scalars.
-  - [ ] Multiple consecutive comment lines.
-  - [ ] EOF immediately after a comment.
-  - [ ] Empty-ish comment: `#`.
-  - [ ] Empty-ish comment with one payload space: `# `.
-  - [ ] CRLF comment spans end before `\r`, not after `\n`.
-  - [ ] Comments after syntax elements: directives, document markers, tags,
+  - [x] Remove `comments()` and `take_comments()` drain tests.
+- [x] Migrate scanner collection tests to scanner-token or parser-event tests.
+  - [x] Full-line comments.
+  - [x] Indented full-line comments.
+  - [x] Trailing comments after plain scalars.
+  - [x] Multiple consecutive comment lines.
+  - [x] EOF immediately after a comment.
+  - [x] Empty-ish comment: `#`.
+  - [x] Empty-ish comment with one payload space: `# `.
+  - [x] CRLF comment spans end before `\r`, not after `\n`.
+  - [x] Comments after syntax elements: directives, document markers, tags,
         anchors, aliases, flow delimiters, flow entries, block entries, block
         scalar headers, quoted scalars, plain scalars, and mapping values.
-  - [ ] Negative cases: `#` inside quoted scalars and block scalar content,
+  - [x] Negative cases: `#` inside quoted scalars and block scalar content,
         unseparated comments, and BS4K comment-interrupted multiline plain scalar.
-  - [ ] Non-ASCII payloads, character offsets, byte offsets for `StrInput`, and
+  - [x] Non-ASCII payloads, character offsets, byte offsets for `StrInput`, and
         matching behavior between `StrInput` and `BufferedInput`.
 
 ### Documentation
-
-- [ ] Document comment support in `README.md`.
 - [ ] Add a crate-level example in `src/lib.rs`.
 - [ ] Explain that `Event::Comment` is presentation metadata, not YAML data.
 - [ ] Document that comment locations use the normal companion `Span`.
@@ -189,9 +187,3 @@ Once you implement the step, make edit in this document marking it as done.
       matching existing included-document event spans.
 - [ ] Update `CHANGELOG.md` when the implementation is complete.
 
-### Follow-up API Options
-
-- [ ] Consider source-aware `ParserStack` output only if callers need built-in
-      include/source provenance later.
-  - [ ] Possible shape: `SourceEvent { source: SourceId, event: Event, span: Span }`.
-  - [ ] Keep source provenance separate from `Event` and `Span`.
