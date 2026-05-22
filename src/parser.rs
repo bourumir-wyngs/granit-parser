@@ -12,7 +12,7 @@ use crate::{
 
 use alloc::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     string::{String, ToString},
     vec::Vec,
 };
@@ -301,6 +301,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     token: Option<Token<'input>>,
     /// The next YAML event to emit.
     current: Option<(Event<'input>, Span)>,
+    /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
+    queued_events: VecDeque<(Event<'input>, Span)>,
 
     /// Pending indentation hint to be attached to the next emitted event span.
     ///
@@ -664,6 +666,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             state: State::StreamStart,
             token: None,
             current: None,
+            queued_events: VecDeque::new(),
 
             pending_key_indent: None,
             pending_node_anchor_id: 0,
@@ -737,7 +740,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         match self.current.take() {
             None => {
-                if let Some(comment) = self.next_comment_event()? {
+                if let Some(event) = self.queued_events.pop_front() {
+                    Ok(event)
+                } else if let Some(comment) = self.next_comment_event()? {
                     Ok(comment)
                 } else {
                     self.parse()
@@ -787,7 +792,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let Token(span, token) = self.fetch_token();
         match token {
             TokenType::Comment(mut comment) => {
-                comment.placement = self.refined_comment_placement(&comment)?;
+                comment.placement = self.refined_comment_placement(&comment);
                 Ok(Some((
                     Event::Comment(comment.text, comment.placement),
                     span,
@@ -797,20 +802,78 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
-    fn refined_comment_placement(&mut self, comment: &Comment<'_>) -> Result<Placement, ScanError> {
+    fn next_comment_events(&mut self) -> Result<Vec<(Event<'input>, Span)>, ScanError> {
+        let mut comments = Vec::new();
+        loop {
+            match self.peek_token() {
+                Ok(token) if matches!(token.1, TokenType::Comment(_)) => {}
+                Err(error) if comments.is_empty() => return Err(error),
+                Ok(_) | Err(_) => return Ok(comments),
+            }
+
+            let comment = self
+                .next_comment_event()?
+                .expect("comment token disappeared after peek");
+            comments.push(comment);
+        }
+    }
+
+    fn queue_tail_and_return_first(
+        &mut self,
+        events: Vec<(Event<'input>, Span)>,
+    ) -> (Event<'input>, Span) {
+        let mut events = events.into_iter();
+        let first = events
+            .next()
+            .expect("event queue must contain at least one event");
+        self.queued_events.extend(events);
+        first
+    }
+
+    fn queue_event_by_span(
+        &mut self,
+        comments: Vec<(Event<'input>, Span)>,
+        event: (Event<'input>, Span),
+    ) -> (Event<'input>, Span) {
+        let insert_at = comments
+            .iter()
+            .position(|(_, comment_span)| {
+                comment_span.start.index() >= event.1.start.index()
+                    && comment_span.end.index() >= event.1.end.index()
+            })
+            .unwrap_or(comments.len());
+        let mut ordered = Vec::with_capacity(comments.len() + 1);
+        let mut comments = comments.into_iter();
+
+        for _ in 0..insert_at {
+            ordered.push(
+                comments
+                    .next()
+                    .expect("comment disappeared while ordering queued events"),
+            );
+        }
+        ordered.push(event);
+        ordered.extend(comments);
+
+        self.queue_tail_and_return_first(ordered)
+    }
+
+    fn refined_comment_placement(&mut self, comment: &Comment<'_>) -> Placement {
         if comment.placement == Placement::Right {
-            return Ok(Placement::Right);
+            return Placement::Right;
         }
 
-        let next = self.peek_token()?;
+        let Ok(next) = self.peek_token() else {
+            return comment.placement;
+        };
         if matches!(next.1, TokenType::StreamEnd) {
-            return Ok(Placement::Last);
+            return Placement::Last;
         }
 
         if next.0.start.line() == comment.span.end.line() + 1 {
-            Ok(Placement::Above)
+            Placement::Above
         } else {
-            Ok(Placement::Free)
+            Placement::Free
         }
     }
 
@@ -1431,11 +1494,19 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) if indentless_sequence => {
-                self.state = State::IndentlessSequenceEntry;
-                Ok((
+                self.skip();
+                let comments = self.next_comment_events()?;
+                self.pending_empty_scalar_span = Some(mark);
+                self.state = State::IndentlessSequenceEntryNode;
+                let start = (
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
                     mark,
-                ))
+                );
+                if comments.is_empty() {
+                    Ok(start)
+                } else {
+                    Ok(self.queue_event_by_span(comments, start))
+                }
             }
             Token(_, TokenType::Scalar(..)) => {
                 self.pop_state();
@@ -1572,12 +1643,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::Value) => {
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                let comments = self.next_comment_events()?;
+                if comments.is_empty() {
+                    self.block_mapping_value_node_with_empty_span(mark)
+                } else if let Ok(Token(
+                    _,
+                    TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                )) = self.peek_token()
+                {
+                    self.state = State::BlockMappingKey;
+                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
+                } else {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::BlockMappingValueNode;
-                    Ok(comment)
-                } else {
-                    self.block_mapping_value_node_with_empty_span(mark)
+                    Ok(self.queue_tail_and_return_first(comments))
                 }
             }
             Token(mark, _) => {
@@ -1702,12 +1781,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match *self.peek_token()? {
                 Token(span, TokenType::Value) => {
                     self.skip();
-                    if let Some(comment) = self.next_comment_event()? {
-                        self.pending_empty_scalar_span = Some(span);
-                        self.state = State::FlowMappingValueNode;
-                        return Ok(comment);
+                    let comments = self.next_comment_events()?;
+                    if comments.is_empty() {
+                        return self.flow_mapping_value_node_with_empty_span(span);
                     }
-                    return self.flow_mapping_value_node_with_empty_span(span);
+                    if let Ok(Token(_, TokenType::FlowEntry | TokenType::FlowMappingEnd)) =
+                        self.peek_token()
+                    {
+                        self.state = State::FlowMappingKey;
+                        return Ok(
+                            self.queue_event_by_span(comments, (Event::empty_scalar(), span))
+                        );
+                    }
+
+                    self.pending_empty_scalar_span = Some(span);
+                    self.state = State::FlowMappingValueNode;
+                    return Ok(self.queue_tail_and_return_first(comments));
                 }
                 Token(marker, _) => marker,
             }
@@ -1788,12 +1877,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                let comments = self.next_comment_events()?;
+                if comments.is_empty() {
+                    self.indentless_sequence_entry_node_with_empty_span(mark)
+                } else if let Ok(Token(
+                    _,
+                    TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                )) = self.peek_token()
+                {
+                    self.state = State::IndentlessSequenceEntry;
+                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
+                } else {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::IndentlessSequenceEntryNode;
-                    Ok(comment)
-                } else {
-                    self.indentless_sequence_entry_node_with_empty_span(mark)
+                    Ok(self.queue_tail_and_return_first(comments))
                 }
             }
             Token(mark, _) => {
@@ -1847,12 +1944,18 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                let comments = self.next_comment_events()?;
+                if comments.is_empty() {
+                    self.block_sequence_entry_node_with_empty_span(mark)
+                } else if let Ok(Token(_, TokenType::BlockEntry | TokenType::BlockEnd)) =
+                    self.peek_token()
+                {
+                    self.state = State::BlockSequenceEntry;
+                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
+                } else {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::BlockSequenceEntryNode;
-                    Ok(comment)
-                } else {
-                    self.block_sequence_entry_node_with_empty_span(mark)
+                    Ok(self.queue_tail_and_return_first(comments))
                 }
             }
             Token(span, _) => Err(ScanError::new_str(

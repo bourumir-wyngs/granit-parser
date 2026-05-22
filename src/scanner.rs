@@ -618,6 +618,8 @@ pub struct Scanner<'input, T> {
     tokens: VecDeque<Token<'input>>,
     /// The last error that happened.
     error: Option<ScanError>,
+    /// Error found after one or more already-scanned comment tokens.
+    deferred_error: Option<ScanError>,
 
     /// Whether we have already emitted the `StreamStart` token.
     stream_start_produced: bool,
@@ -975,6 +977,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             error: None,
+            deferred_error: None,
 
             stream_start_produced: false,
             stream_end_produced: false,
@@ -1004,7 +1007,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// clone of) the same error.
     #[inline]
     pub fn get_error(&self) -> Option<ScanError> {
-        self.error.clone()
+        self.error.clone().or_else(|| self.deferred_error.clone())
     }
 
     #[cold]
@@ -1323,12 +1326,33 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// # Errors
     /// Returns `ScanError` when scanning fails to find an expected next token.
     pub fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
+        if self.deferred_error.is_some() {
+            if !matches!(
+                self.tokens.front().map(|token| &token.1),
+                Some(TokenType::Comment(_))
+            ) {
+                if let Some(error) = self.deferred_error.take() {
+                    return error.into_result();
+                }
+            }
+            self.token_available = true;
+        }
+
         if self.stream_end_produced {
             return Ok(None);
         }
 
         if !self.token_available {
-            self.fetch_more_tokens()?;
+            if let Err(error) = self.fetch_more_tokens() {
+                if matches!(
+                    self.tokens.front().map(|token| &token.1),
+                    Some(TokenType::Comment(_))
+                ) {
+                    self.deferred_error = Some(error);
+                } else {
+                    return Err(error);
+                }
+            }
         }
         let Some(t) = self.tokens.pop_front() else {
             return Err(ScanError::new_str(

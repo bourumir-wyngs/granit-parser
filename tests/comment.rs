@@ -19,6 +19,22 @@ fn first_empty_scalar_span(events: &[(Event<'_>, Span)]) -> Span {
         .expect("empty scalar should be emitted")
 }
 
+fn assert_monotonic_spans(events: &[(Event<'_>, Span)]) {
+    let mut last: Option<(&Event<'_>, Span)> = None;
+
+    for (event, span) in events {
+        if let Some((last_event, last_span)) = last {
+            assert!(
+                span.start.index() >= last_span.start.index()
+                    && span.end.index() >= last_span.end.index(),
+                "event {event:?}@{span:?} came before event {last_event:?}@{last_span:?}",
+            );
+        }
+
+        last = Some((event, *span));
+    }
+}
+
 #[test]
 fn comment_type_is_a_convenience_container() {
     let span = Span::new(
@@ -506,6 +522,44 @@ fn parser_refines_comment_placements() {
 }
 
 #[test]
+fn own_line_comment_before_invalid_token_is_emitted_before_error() {
+    let mut parser = Parser::new_from_str("# c\n@\n");
+
+    assert!(matches!(
+        parser.next_event().unwrap().unwrap().0,
+        Event::StreamStart
+    ));
+
+    assert!(matches!(
+        parser.next_event().unwrap().unwrap().0,
+        Event::Comment(text, _) if text == " c"
+    ));
+
+    let error = parser.next_event().unwrap().unwrap_err();
+    assert!(error.info().contains("unexpected character"));
+}
+
+#[test]
+fn syntax_comment_before_invalid_token_is_emitted_before_error() {
+    let mut parser = Parser::new_from_str("key: # c\n@\n");
+
+    let comment = loop {
+        let (event, _) = parser
+            .next_event()
+            .expect("parser should not end before comment")
+            .expect("comment should be emitted before error");
+        if let Event::Comment(text, _) = event {
+            break text;
+        }
+    };
+
+    assert_eq!(comment, " c");
+
+    let error = parser.next_event().unwrap().unwrap_err();
+    assert!(error.info().contains("unexpected character"));
+}
+
+#[test]
 fn parser_reports_comment_placements_in_nested_document() {
     let yaml = "\
 # root
@@ -630,6 +684,38 @@ fn empty_flow_mapping_value_after_comment_keeps_value_span() {
     assert_eq!(empty_value.start.index(), colon);
     assert_eq!(empty_value.end.index(), colon);
     assert_ne!(empty_value.start.index(), closing_brace);
+}
+
+#[test]
+fn s3pd_comment_after_both_empty_preserves_span_order() {
+    let yaml = "plain key: in-line value\n: # Both empty\n\"quoted key\":\n- entry\n";
+    let events = parser_events(yaml).expect("S3PD should parse");
+
+    assert_monotonic_spans(&events);
+}
+
+#[test]
+fn empty_block_sequence_entry_after_comment_preserves_span_order() {
+    let yaml = "- # c\n- v\n";
+    let events = parser_events(yaml).expect("sequence should parse");
+
+    assert_monotonic_spans(&events);
+}
+
+#[test]
+fn empty_indentless_sequence_entry_after_comment_preserves_span_order() {
+    let yaml = "key:\n- # c\n- v\n";
+    let events = parser_events(yaml).expect("indentless sequence should parse");
+
+    assert_monotonic_spans(&events);
+}
+
+#[test]
+fn empty_flow_mapping_value_after_comment_preserves_span_order() {
+    let yaml = "{key: # c\n}";
+    let events = parser_events(yaml).expect("flow mapping should parse");
+
+    assert_monotonic_spans(&events);
 }
 
 #[test]
