@@ -16,7 +16,7 @@
 >
 > — [Ethiraric](https://crates.io/users/Ethiraric)
 
-**granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std support, and spans for parser events. “Granit” is a correct word in many European languages (English *granite*).
+**granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, comment and style support, no-std support, and spans for parser events. “Granit” is a correct word in many European languages (English *granite*).
 
 This crate started as a fork of [saphyr-parser](https://crates.io/crates/saphyr-parser) that descends from [yaml-rust](https://github.com/chyh1990/yaml-rust), with influences from [libyaml](https://crates.io/crates/libyaml) and [yaml-cpp](https://github.com/jbeder/yaml-cpp). The project has since diverged significantly and is now maintained as an independent project.
 
@@ -115,25 +115,28 @@ StreamEnd bytes=Some(225..225) source=Some("")
 
 ## Event API choices
 
-Use https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.try_load
+Use [`try_load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.try_load)
 when a receiver may return a validation or application error and parsing should
 stop immediately. It accepts
-https://docs.rs/granit-parser/latest/granit_parser/trait.TryEventReceiver.html
+[`TryEventReceiver`](https://docs.rs/granit-parser/latest/granit_parser/trait.TryEventReceiver.html)
 or
-https://docs.rs/granit-parser/latest/granit_parser/trait.TrySpannedEventReceiver.html
+[`TrySpannedEventReceiver`](https://docs.rs/granit-parser/latest/granit_parser/trait.TrySpannedEventReceiver.html)
 and returns
-https://docs.rs/granit-parser/latest/granit_parser/enum.TryLoadError.html to
+[`TryLoadError`](https://docs.rs/granit-parser/latest/granit_parser/enum.TryLoadError.html) to
 distinguish parser errors from receiver errors.
 
 Event-only receivers receive comment events as `Event::Comment(text, placement)`.
-Spanned receivers receive the same event plus the comment span in `on_event`.
-When using `ParserStack::resolve` or `ParserStack::push_include`, comment events
+Spanned receivers receive the same event plus the comment span in
+[`on_event`](https://docs.rs/granit-parser/latest/granit_parser/trait.SpannedEventReceiver.html#tymethod.on_event).
+When using [`resolve`](https://docs.rs/granit-parser/latest/granit_parser/parser_stack/struct.ParserStack.html#method.resolve)
+or [`push_include`](https://docs.rs/granit-parser/latest/granit_parser/parser_stack/struct.ParserStack.html#method.push_include)
+on `ParserStack`, comment events
 from included documents are forwarded through the normal event stream. Their
 spans remain local to the included source, matching the existing span behavior
 for other included-document events.
 
 Use the iterator API when the caller should pull events and decide when to stop
-parsing. https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load
+parsing. [`load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load)
 is `infallible`.
 
 ## Key differences from saphyr-parser
