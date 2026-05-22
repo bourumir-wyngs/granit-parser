@@ -2209,7 +2209,7 @@ mod test {
     use crate::scanner::{Marker, ScalarStyle, ScanError, Span};
 
     use super::{
-        Event, EventReceiver, Parser, StructureStyle, Tag, TryEventReceiver, TryLoadError,
+        Event, EventReceiver, Parser, State, StructureStyle, Tag, TryEventReceiver, TryLoadError,
         TrySpannedEventReceiver,
     };
 
@@ -2231,6 +2231,51 @@ mod test {
             }
         }
         panic!("expected parser error")
+    }
+
+    #[test]
+    fn deferred_parse_node_can_emit_comment_before_flow_node() {
+        let mut parser = Parser::new_from_str("# deferred\nvalue\n");
+        assert_eq!(parser.stream_start().unwrap().0, Event::StreamStart);
+        assert_eq!(
+            parser.document_start(true).unwrap().0,
+            Event::DocumentStart(false)
+        );
+
+        let (event, _) = parser
+            .defer_parse_node(State::FlowNode, State::FlowMappingKey, false, false)
+            .unwrap();
+
+        assert!(matches!(event, Event::Comment(text, _) if text == " deferred"));
+        assert_eq!(parser.state, State::FlowNode);
+    }
+
+    #[test]
+    fn state_machine_handles_deferred_flow_node_states() {
+        let mut parser = Parser::new_from_str("value\n");
+        assert_eq!(parser.stream_start().unwrap().0, Event::StreamStart);
+        assert_eq!(
+            parser.document_start(true).unwrap().0,
+            Event::DocumentStart(false)
+        );
+        parser.state = State::FlowNode;
+        parser.push_state(State::End);
+
+        let (event, _) = parser.state_machine().unwrap();
+
+        assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
+
+        let mut parser = Parser::new_from_str("value\n");
+        assert_eq!(parser.stream_start().unwrap().0, Event::StreamStart);
+        assert_eq!(
+            parser.document_start(true).unwrap().0,
+            Event::DocumentStart(false)
+        );
+        parser.state = State::FlowSequenceEntryMappingValueNode;
+
+        let (event, _) = parser.state_machine().unwrap();
+
+        assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
     }
 
     #[test]

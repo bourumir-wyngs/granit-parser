@@ -46,6 +46,7 @@ fn comment_type_is_a_convenience_container() {
     assert_eq!(comment.span, span);
     assert_eq!(comment.text, " payload ");
     assert_eq!(comment.placement, Placement::Free);
+    assert_eq!(comment.as_ref(), " payload ");
     assert_eq!(comment.trimmed_text(), "payload");
 }
 
@@ -716,6 +717,131 @@ fn empty_flow_mapping_value_after_comment_preserves_span_order() {
     let events = parser_events(yaml).expect("flow mapping should parse");
 
     assert_monotonic_spans(&events);
+}
+
+#[test]
+fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key() {
+    let yaml = "key:\n- first\n- # empty\nnext: value\n";
+    let events = parser_events(yaml).expect("indentless sequence should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "Scalar(key)",
+            "Scalar(first)",
+            "Comment( empty)",
+            "Scalar(~)",
+            "SequenceEnd",
+            "Scalar(next)",
+            "Scalar(value)",
+        ]
+    );
+}
+
+#[test]
+fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
+    let yaml = "key:\n- first\n- # value\n  second\nnext: value\n";
+    let events = parser_events(yaml).expect("indentless sequence should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "Scalar(key)",
+            "Scalar(first)",
+            "Comment( value)",
+            "Scalar(second)",
+            "SequenceEnd",
+            "Scalar(next)",
+            "Scalar(value)",
+        ]
+    );
+}
+
+#[test]
+fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
+    let yaml = "{? # key\n  key\n: value, # comma\nnext: value}\n";
+    let events = parser_events(yaml).expect("flow mapping should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "Comment( key)",
+            "Scalar(key)",
+            "Scalar(value)",
+            "Comment( comma)",
+            "Scalar(next)",
+            "Scalar(value)",
+        ]
+    );
+}
+
+#[test]
+fn parser_handles_flow_mapping_value_after_comment() {
+    let yaml = "{key: # value\n value}\n";
+    let events = parser_events(yaml).expect("flow mapping should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec!["Scalar(key)", "Comment( value)", "Scalar(value)"]
+    );
+}
+
+#[test]
+fn parser_handles_implicit_flow_mapping_value_after_comment() {
+    let yaml = "[key: # value\n value]\n";
+    let events = parser_events(yaml).expect("implicit flow mapping should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec!["Scalar(key)", "Comment( value)", "Scalar(value)"]
+    );
 }
 
 #[test]

@@ -3892,7 +3892,7 @@ mod test {
     use core::cell::Cell;
 
     use crate::{
-        input::{str::StrInput, BufferedInput, Input},
+        input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{Scanner, Token, TokenType},
     };
 
@@ -3910,6 +3910,76 @@ mod test {
                 self.read.set(self.read.get() + 1);
             }
             next
+        }
+    }
+
+    struct SlicingOnlyInput<'input> {
+        inner: StrInput<'input>,
+        expose_slice: bool,
+    }
+
+    impl<'input> SlicingOnlyInput<'input> {
+        fn new(source: &'input str, expose_slice: bool) -> Self {
+            Self {
+                inner: StrInput::new(source),
+                expose_slice,
+            }
+        }
+    }
+
+    impl Input for SlicingOnlyInput<'_> {
+        fn lookahead(&mut self, count: usize) {
+            self.inner.lookahead(count);
+        }
+
+        fn buflen(&self) -> usize {
+            self.inner.buflen()
+        }
+
+        fn bufmaxlen(&self) -> usize {
+            self.inner.bufmaxlen()
+        }
+
+        fn raw_read_ch(&mut self) -> char {
+            self.inner.raw_read_ch()
+        }
+
+        fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+            self.inner.raw_read_non_breakz_ch()
+        }
+
+        fn skip(&mut self) {
+            self.inner.skip();
+        }
+
+        fn skip_n(&mut self, count: usize) {
+            self.inner.skip_n(count);
+        }
+
+        fn peek(&self) -> char {
+            self.inner.peek()
+        }
+
+        fn peek_nth(&self, n: usize) -> char {
+            self.inner.peek_nth(n)
+        }
+
+        fn byte_offset(&self) -> Option<usize> {
+            self.inner.byte_offset()
+        }
+
+        fn slice_bytes(&self, start: usize, end: usize) -> Option<&str> {
+            if self.expose_slice {
+                self.inner.slice_bytes(start, end)
+            } else {
+                None
+            }
+        }
+    }
+
+    impl<'input> BorrowedInput<'input> for SlicingOnlyInput<'input> {
+        fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
+            None
         }
     }
 
@@ -3973,6 +4043,63 @@ mod test {
 
         assert!(scanner.leading_whitespace);
         assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " streaming"));
+    }
+
+    #[test]
+    fn comment_capture_falls_back_to_owned_slice_when_borrow_unavailable() {
+        let mut scanner = Scanner::new(SlicingOnlyInput::new("# sliced\n", true));
+        scanner.input.lookahead(2);
+        assert_eq!(scanner.input.peek_nth(1), ' ');
+
+        let token = scanner.scan_comment_token().unwrap();
+
+        assert!(matches!(token.1, TokenType::Comment(ref comment)
+            if matches!(comment.text, Cow::Owned(ref text) if text == " sliced")));
+    }
+
+    #[test]
+    fn comment_capture_errors_when_offsets_have_no_slice() {
+        let mut scanner = Scanner::new(SlicingOnlyInput::new("# broken\n", false));
+
+        let error = scanner.scan_comment_token().unwrap_err();
+
+        assert_eq!(
+            error.info(),
+            "internal error: input advertised offsets but did not provide a slice"
+        );
+    }
+
+    #[test]
+    fn comment_skipping_path_consumes_comment_without_tokenizing_it() {
+        let mut scanner = Scanner::new(StrInput::new("# skipped\nnext: value\n"));
+
+        scanner.skip_yaml_whitespace().unwrap();
+
+        assert!(scanner.tokens.is_empty());
+        assert_eq!(scanner.mark.line(), 2);
+        assert_eq!(scanner.mark.col(), 0);
+    }
+
+    #[test]
+    fn deferred_error_waits_for_all_comment_tokens() {
+        let mut scanner = Scanner::new(StrInput::new("# first\n# second\n@\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " first"
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " second"
+        ));
+
+        let error = scanner.next_token().unwrap_err();
+
+        assert!(error.info().contains("unexpected character"));
     }
 
     /// Ensure anchors scanned from `StrInput` are returned as `Cow::Borrowed`.
