@@ -11,6 +11,11 @@
   returns `Option<usize>` for events that define an anchor; `alias_id` returns
   `Option<usize>` for aliases that reference an anchor; `is_node` returns `true`
   for any event that produces a value in the document tree.
+- Added `Placement` metadata for comments, exposed on scanner comment tokens
+  and parser `Event::Comment(text, placement)` events.
+- Added `StructureStyle` metadata for sequences and mappings, exposed on
+  `Event::SequenceStart(style, anchor_id, tag)` and
+  `Event::MappingStart(style, anchor_id, tag)` events.
 - Added `ParserStack::push_include` as an include-oriented alias for
   `ParserStack::resolve`.
 - Added a custom-tag example showing how to inspect application tags such as

@@ -9,24 +9,25 @@
 
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
-[![0.0.1 compatible (see API note)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
+[![0.0.3 compatible (see API note)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
 [![crates.io](https://img.shields.io/crates/d/granit-parser.svg)](https://crates.io/crates/granit-parser)
 
 > “YAML is hard. Much more than I had anticipated. If you are exploring dark corners of YAML ... I'm curious to know what it is.”
 >
 > — [Ethiraric](https://crates.io/users/Ethiraric)
 
-**granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std support, and spans for parser events.
+**granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, no-std support, and spans for parser events. “Granit” is a correct word in many European languages (English *granite*).
 
 This crate started as a fork of [saphyr-parser](https://crates.io/crates/saphyr-parser) that descends from [yaml-rust](https://github.com/chyh1990/yaml-rust), with influences from [libyaml](https://crates.io/crates/libyaml) and [yaml-cpp](https://github.com/jbeder/yaml-cpp). The project has since diverged significantly and is now maintained as an independent project.
 
 Its primary goals are:
 
-* full compliance with the [yaml-test-suite](https://github.com/yaml/yaml-test-suite), including correctness in edge cases
+* [`Comment`](https://docs.rs/granit-parser/latest/granit_parser/struct.Comment.html) support and [`StructureStyle`](https://docs.rs/granit-parser/latest/granit_parser/enum.StructureStyle.html) information. This is for linting, formatting, and analysis.
+* compliance with the [yaml-test-suite](https://github.com/yaml/yaml-test-suite), including correctness in edge cases
 * compatibility with real-world YAML usage
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
-`granit-parser`’s public API is very similar to that of `saphyr-parser`, so it is typically an easy replacement. However, some changes are still breaking (crate rename, MSRV bump, lifetimes on events, Cow payloads, etc.).
+`granit-parser`’s 0.0.1 or 0.0.2 public API is very similar to that of `saphyr-parser`, so it is typically an easy replacement. Later versions emit style and comment information, you need to adjust your code to handle or discard them.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
@@ -45,7 +46,9 @@ items: !shopping
 locations: # Example with composite keys
   [47.3769, 8.5417]: local
   [40.7128, -74.0060]: remote
-music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6" # JSON-style \uXXXX surrogate pairs
+
+# JSON-style \uXXXX surrogate pairs:
+music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6"
 "#;
 
     for next in Parser::new_from_str(yaml) {
@@ -78,44 +81,51 @@ This prints an event stream like:
 ```text
 StreamStart bytes=Some(0..0) source=Some("")
 DocumentStart(false) bytes=Some(1..1) source=Some("")
-MappingStart(0, None) bytes=Some(1..1) source=Some("")
+MappingStart(Block, 0, None) bytes=Some(1..1) source=Some("")
 Scalar("items", Plain, 0, None) bytes=Some(1..6) source=Some("items")
 node tag: !shopping custom=true
-SequenceStart(0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20) source=Some("")
+SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20) source=Some("")
 Scalar("milk", Plain, 0, None) bytes=Some(22..26) source=Some("milk")
 scalar tag: tag:yaml.org,2002:str core-str=true for "bread"
 Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42) source=Some("bread")
 SequenceEnd bytes=Some(43..43) source=Some("")
 Scalar("locations", Plain, 0, None) bytes=Some(43..52) source=Some("locations")
-Comment(" Example with composite keys") bytes=Some(54..83) source=Some("# Example with composite keys")
-MappingStart(0, None) bytes=Some(86..86) source=Some("")
-SequenceStart(0, None) bytes=Some(86..87) source=Some("[")
+Comment(" Example with composite keys", Right) bytes=Some(54..83) source=Some("# Example with composite keys")
+MappingStart(Block, 0, None) bytes=Some(86..86) source=Some("")
+SequenceStart(Flow, 0, None) bytes=Some(86..87) source=Some("[")
 Scalar("47.3769", Plain, 0, None) bytes=Some(87..94) source=Some("47.3769")
 Scalar("8.5417", Plain, 0, None) bytes=Some(96..102) source=Some("8.5417")
 SequenceEnd bytes=Some(102..103) source=Some("]")
 Scalar("local", Plain, 0, None) bytes=Some(105..110) source=Some("local")
-SequenceStart(0, None) bytes=Some(113..114) source=Some("[")
+SequenceStart(Flow, 0, None) bytes=Some(113..114) source=Some("[")
 Scalar("40.7128", Plain, 0, None) bytes=Some(114..121) source=Some("40.7128")
 Scalar("-74.0060", Plain, 0, None) bytes=Some(123..131) source=Some("-74.0060")
 SequenceEnd bytes=Some(131..132) source=Some("]")
 Scalar("remote", Plain, 0, None) bytes=Some(134..140) source=Some("remote")
-MappingEnd bytes=Some(141..141) source=Some("")
-Scalar("music", Plain, 0, None) bytes=Some(141..146) source=Some("music")
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(148..186) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-Comment(" JSON-style \\uXXXX surrogate pairs") bytes=Some(187..222) source=Some("# JSON-style \\uXXXX surrogate pairs")
-MappingEnd bytes=Some(223..223) source=Some("")
-DocumentEnd bytes=Some(223..223) source=Some("")
-StreamEnd bytes=Some(223..223) source=Some("")
+Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(142..178) source=Some("# JSON-style \\uXXXX surrogate pairs:")
+MappingEnd bytes=Some(179..179) source=Some("")
+Scalar("music", Plain, 0, None) bytes=Some(179..184) source=Some("music")
+Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(186..224) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
+MappingEnd bytes=Some(225..225) source=Some("")
+DocumentEnd bytes=Some(225..225) source=Some("")
+StreamEnd bytes=Some(225..225) source=Some("")
 ```
 
 ## Event API choices
 
+Use https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.try_load
+when a receiver may return a validation or application error and parsing should
+stop immediately. It accepts
+https://docs.rs/granit-parser/latest/granit_parser/trait.TryEventReceiver.html
+or
+https://docs.rs/granit-parser/latest/granit_parser/trait.TrySpannedEventReceiver.html
+and returns
+https://docs.rs/granit-parser/latest/granit_parser/enum.TryLoadError.html to
+distinguish parser errors from receiver errors.
+
 Use the iterator API when the caller should pull events and decide when to stop
-parsing. Use `Parser::load` for infallible receiver-style event sinks. If a
-receiver may return a validation or application error and parsing should stop
-immediately, use `Parser::try_load` with `TryEventReceiver` or
-`TrySpannedEventReceiver`; it returns `TryLoadError::Scan` for parser errors and
-`TryLoadError::Receiver` for receiver errors.
+parsing. https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load
+is `infallible`.
 
 ## Key differences from saphyr-parser
 

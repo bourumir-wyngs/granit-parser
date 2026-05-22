@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScalarStyle};
+use granit_parser::{Event, Parser, ScalarStyle, StructureStyle};
 
 #[test]
 fn misplaced_closing_bracket_at_col_0() {
@@ -18,13 +18,19 @@ fn misplaced_closing_bracket_at_col_0() {
     assert_eq!(events.len(), 9);
     assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(events[1], Event::DocumentStart(false)));
-    assert!(matches!(events[2], Event::MappingStart(0, None)));
+    assert!(matches!(
+        events[2],
+        Event::MappingStart(StructureStyle::Block, 0, None)
+    ));
     if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
-    assert!(matches!(events[4], Event::SequenceStart(0, None)));
+    assert!(matches!(
+        events[4],
+        Event::SequenceStart(StructureStyle::Flow, 0, None)
+    ));
     assert!(matches!(events[5], Event::SequenceEnd));
     assert!(matches!(events[6], Event::MappingEnd));
     assert!(matches!(events[7], Event::DocumentEnd));
@@ -49,13 +55,19 @@ fn misplaced_closing_brace_at_col_0() {
     assert_eq!(events.len(), 9);
     assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(events[1], Event::DocumentStart(false)));
-    assert!(matches!(events[2], Event::MappingStart(0, None)));
+    assert!(matches!(
+        events[2],
+        Event::MappingStart(StructureStyle::Block, 0, None)
+    ));
     if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
-    assert!(matches!(events[4], Event::MappingStart(0, None)));
+    assert!(matches!(
+        events[4],
+        Event::MappingStart(StructureStyle::Flow, 0, None)
+    ));
     assert!(matches!(events[5], Event::MappingEnd));
     assert!(matches!(events[6], Event::MappingEnd));
     assert!(matches!(events[7], Event::DocumentEnd));
@@ -80,13 +92,19 @@ fn misplaced_comma_at_col_0() {
     assert_eq!(events.len(), 11);
     assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(events[1], Event::DocumentStart(false)));
-    assert!(matches!(events[2], Event::MappingStart(0, None)));
+    assert!(matches!(
+        events[2],
+        Event::MappingStart(StructureStyle::Block, 0, None)
+    ));
     if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
-    assert!(matches!(events[4], Event::SequenceStart(0, None)));
+    assert!(matches!(
+        events[4],
+        Event::SequenceStart(StructureStyle::Flow, 0, None)
+    ));
     if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[5] {
         assert_eq!(&**v, "a");
     } else {

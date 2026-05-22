@@ -28,11 +28,13 @@ Once you implement the step, make edit in this document marking it as done.
 
 - Comments are emitted in source order as parser events.
 - A comment event uses the same spanned parser output as other events:
-  `(Event::Comment(text), span)`.
+  `(Event::Comment(text, placement), span)`.
 - The comment span covers the whole source comment, including `#` and excluding
   the line break.
 - The comment event payload is the raw text exactly after `#`, excluding only the
   line break. Preserve leading spaces, including one space immediately after `#`.
+- The comment event placement is presentation metadata that provides a best-effort
+  positional hint such as `Above`, `Right`, `Free`, or `Last`.
 - Comment events are presentation metadata. Consumers building YAML data trees
   must ignore them.
 - Comment events do not advance the YAML grammar state; after a comment is
@@ -60,13 +62,15 @@ Once you implement the step, make edit in this document marking it as done.
 
 ### API Design
 
-- [x] Add `Event::Comment(Cow<'input, str>)`.
+- [x] Add `Event::Comment(Cow<'input, str>, Placement)`.
   - [x] Store the raw comment payload exactly after `#`, excluding only the line break.
   - [x] Preserve leading spaces in the payload, including a single space immediately after `#`.
+  - [x] Store a best-effort placement hint for correlating presentation comments.
   - [x] Use the companion parser `Span` for the full source comment range.
-- [x] Add `TokenType::Comment(Cow<'input, str>)` or an equivalent internal scanner token.
+- [x] Add `TokenType::Comment(Comment<'input>)` or an equivalent internal scanner token.
   - [x] Store the comment payload in the token.
   - [x] Store the full source comment range in the token span.
+  - [x] Store the scanner's initial placement hint.
 - [x] Decide whether the public `Comment<'input>` type remains useful after the event-based API.
   - [x] If kept, document it as a convenience struct rather than the primary parser API.
   - [x] If removed, migrate tests and docs to `Event::Comment` plus `Span`. Not applicable:
@@ -178,8 +182,8 @@ Once you implement the step, make edit in this document marking it as done.
 - [ ] Add a crate-level example in `src/lib.rs`.
 - [ ] Explain that `Event::Comment` is presentation metadata, not YAML data.
 - [ ] Document that comment locations use the normal companion `Span`.
-- [ ] Document that non-spanned receivers receive only `Event::Comment(text)`, while
-      spanned receivers receive the comment span in `on_event`.
+- [ ] Document that non-spanned receivers receive `Event::Comment(text, placement)`,
+      while spanned receivers receive the comment span in `on_event`.
 - [ ] Document `span.slice(source)` behavior for comments.
 - [ ] Document that included-document comment spans are local to the included source,
       matching existing included-document event spans.

@@ -39,8 +39,8 @@ impl<'input> ReplayParser<'input> {
     fn advance_anchor_offset(&mut self, event: &Event<'input>) {
         let anchor_id = match event {
             Event::Scalar(_, _, anchor_id, _)
-            | Event::SequenceStart(anchor_id, _)
-            | Event::MappingStart(anchor_id, _) => *anchor_id,
+            | Event::SequenceStart(_, anchor_id, _)
+            | Event::MappingStart(_, anchor_id, _) => *anchor_id,
             _ => 0,
         };
 

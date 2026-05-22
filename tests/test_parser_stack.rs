@@ -8,8 +8,8 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
-    BorrowedInput, Event, Marker, Parser, ParserTrait, ScalarStyle, ScanError, Span,
-    SpannedEventReceiver, StrInput, TryEventReceiver, TryLoadError,
+    BorrowedInput, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle, ScanError, Span,
+    SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver, TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -62,11 +62,11 @@ fn format_events(events: &[Event]) -> Vec<String> {
             Event::StreamEnd => "StreamEnd".to_string(),
             Event::DocumentStart(_) => "DocStart".to_string(),
             Event::DocumentEnd => "DocEnd".to_string(),
-            Event::Comment(text) => alloc::format!("Comment({})", text.as_ref()),
+            Event::Comment(text, _) => alloc::format!("Comment({})", text.as_ref()),
             Event::Scalar(val, _, _, _) => alloc::format!("Scalar({})", val.as_ref()),
-            Event::MappingStart(_, _) => "MapStart".to_string(),
+            Event::MappingStart(..) => "MapStart".to_string(),
             Event::MappingEnd => "MapEnd".to_string(),
-            Event::SequenceStart(_, _) => "SeqStart".to_string(),
+            Event::SequenceStart(..) => "SeqStart".to_string(),
             Event::SequenceEnd => "SeqEnd".to_string(),
             _ => "Other".to_string(),
         })
@@ -514,7 +514,7 @@ fn test_replay_parser_updates_anchor_offset() {
     let replay_events = vec![
         (Event::StreamStart, span),
         (Event::DocumentStart(false), span),
-        (Event::MappingStart(0, None), span),
+        (Event::MappingStart(StructureStyle::Block, 0, None), span),
         (
             Event::Scalar("k2".into(), granit_parser::ScalarStyle::Plain, 0, None),
             span,
@@ -562,7 +562,7 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
     let replay_events = vec![
         (Event::StreamStart, span),
         (Event::DocumentStart(false), span),
-        (Event::MappingStart(0, None), span),
+        (Event::MappingStart(StructureStyle::Block, 0, None), span),
         (
             Event::Scalar(
                 "included".into(),
@@ -603,9 +603,9 @@ fn replay_parser_peek_next_and_load_track_collection_anchors() {
     let replay_events = vec![
         (Event::StreamStart, span),
         (Event::DocumentStart(false), span),
-        (Event::SequenceStart(4, None), span),
+        (Event::SequenceStart(StructureStyle::Block, 4, None), span),
         (Event::SequenceEnd, span),
-        (Event::MappingStart(7, None), span),
+        (Event::MappingStart(StructureStyle::Block, 7, None), span),
         (Event::MappingEnd, span),
         (Event::DocumentEnd, span),
         (Event::StreamEnd, span),
@@ -719,7 +719,7 @@ fn replay_parser_preserves_comment_events() {
     let span = test_span();
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::Comment(" replay".into()), span),
+        (Event::Comment(" replay".into(), Placement::Free), span),
         (Event::DocumentStart(false), span),
         (plain_scalar("value", 0), span),
         (Event::DocumentEnd, span),
@@ -793,7 +793,7 @@ fn parser_stack_resolve_preserves_included_comment_events_and_local_spans() {
 
     let (_, span) = events
         .iter()
-        .find(|(event, _)| matches!(event, Event::Comment(text) if text == " inc"))
+        .find(|(event, _)| matches!(event, Event::Comment(text, _) if text == " inc"))
         .expect("included comment should be forwarded");
 
     assert_eq!(span.start.index(), 0);

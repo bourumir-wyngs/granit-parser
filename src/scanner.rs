@@ -218,11 +218,48 @@ impl Span {
     }
 }
 
+/// A positional hint for a YAML source comment.The parser currently recognizes these placements:
+///
+/// ```yaml
+/// # Above
+/// key: value # Right
+///
+/// # Free
+///
+/// next: value
+///
+/// # Last
+/// ```
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
+pub enum Placement {
+    /// An own-line comment immediately before another YAML token.
+    ///
+    /// This usually means the comment visually describes the following node.
+    /// Consecutive own-line comments without blank lines between them are also considered
+    /// `Above`, so a comment block can attach to the next YAML element as a group.
+    Above,
+    /// A same-line comment after YAML content or syntax. Examples include `key: value # Right`
+    /// and `- # Right` for an empty sequence entry.
+    Right,
+    /// A standalone own-line comment that is separated from nearby YAML tokens.
+    ///
+    /// This is the fallback for comments that are neither same-line comments, immediately above a
+    /// following token, nor the final comment in the stream. Consumers should treat `Free` as not
+    /// having an obvious neighboring node.
+    #[default]
+    Free,
+    /// An own-line comment at the end of the input stream.
+    ///
+    /// A `Last` comment may be followed by blank lines, but no further YAML token appears before
+    /// `StreamEnd`.
+    Last,
+}
+
 /// A YAML comment captured from the source.
 ///
-/// Comments are presentation metadata, not YAML data. This type is a convenience struct for
-/// callers that want to carry a raw comment payload with its source span; the primary parser API
-/// represents comments as `Event::Comment(text)` paired with the normal companion [`Span`].
+/// Comments are presentation metadata, not YAML data. This type carries the raw comment payload,
+/// source span, and a best-effort [`Placement`] hint for callers that want to correlate comments
+/// with nearby YAML presentation.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub struct Comment<'input> {
     /// Span covering the whole source comment, including `#` and excluding the line break.
@@ -231,16 +268,29 @@ pub struct Comment<'input> {
     ///
     /// Leading spaces are preserved, including a single space immediately after `#` when present.
     pub text: Cow<'input, str>,
+    /// Best-effort placement of this comment relative to nearby YAML content.
+    pub placement: Placement,
 }
 
 impl<'input> Comment<'input> {
     /// Create a captured YAML comment from a source span and raw payload.
+    ///
+    /// The placement defaults to [`Placement::Free`]. Use [`Comment::with_placement`] when the
+    /// caller already knows a more specific placement.
     #[must_use]
     pub fn new(span: Span, text: impl Into<Cow<'input, str>>) -> Self {
         Self {
             span,
             text: text.into(),
+            placement: Placement::Free,
         }
+    }
+
+    /// Return this comment with the given placement.
+    #[must_use]
+    pub fn with_placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
     }
 
     /// Return the comment payload with surrounding whitespace removed.
@@ -249,6 +299,12 @@ impl<'input> Comment<'input> {
     #[must_use]
     pub fn trimmed_text(&self) -> &str {
         self.text.trim()
+    }
+}
+
+impl AsRef<str> for Comment<'_> {
+    fn as_ref(&self) -> &str {
+        self.text.as_ref()
     }
 }
 
@@ -378,11 +434,11 @@ pub enum TokenType<'input> {
     Scalar(ScalarStyle, Cow<'input, str>),
     /// A YAML source comment.
     ///
-    /// The payload is the raw text exactly after `#`, excluding only the line break. The token's
-    /// [`Span`] covers the whole source comment, including `#` and excluding the line break.
+    /// The token payload carries the raw text exactly after `#`, the source span, and an initial
+    /// [`Placement`] hint. The token's companion [`Span`] is the same as [`Comment::span`].
     Comment(
-        /// Raw comment payload exactly after `#`, excluding only the line break.
-        Cow<'input, str>,
+        /// Captured comment metadata.
+        Comment<'input>,
     ),
     /// A reserved YAML directive.
     ReservedDirective(
@@ -1042,6 +1098,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_comment_token(&mut self) -> Result<Token<'input>, ScanError> {
         let start_mark = self.mark;
         debug_assert_eq!(self.input.peek(), '#');
+        let placement = if self.leading_whitespace {
+            Placement::Free
+        } else {
+            Placement::Right
+        };
 
         self.skip_comment_char();
 
@@ -1076,9 +1137,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         let end_mark = self.mark;
+        let span = Span::new(start_mark, end_mark);
         Ok(Token(
-            Span::new(start_mark, end_mark),
-            TokenType::Comment(text),
+            span,
+            TokenType::Comment(Comment::new(span, text).with_placement(placement)),
         ))
     }
 
@@ -3878,7 +3940,7 @@ mod test {
         let token = scanner.scan_comment_token().unwrap();
 
         assert!(scanner.leading_whitespace);
-        assert!(matches!(token.1, TokenType::Comment(ref text) if text == " comment"));
+        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " comment"));
 
         let mut scanner = Scanner::new(BufferedInput::new("# streaming\n".chars()));
         scanner.input.lookahead(1);
@@ -3886,7 +3948,7 @@ mod test {
         let token = scanner.scan_comment_token().unwrap();
 
         assert!(scanner.leading_whitespace);
-        assert!(matches!(token.1, TokenType::Comment(ref text) if text == " streaming"));
+        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " streaming"));
     }
 
     /// Ensure anchors scanned from `StrInput` are returned as `Cow::Borrowed`.

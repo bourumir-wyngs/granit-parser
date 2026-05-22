@@ -379,12 +379,12 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
             Event::DocumentStart(_) => "+DOC".into(),
             Event::DocumentEnd => "-DOC".into(),
 
-            Event::SequenceStart(idx, tag) => {
+            Event::SequenceStart(_, idx, tag) => {
                 format!("+SEQ{}{}", format_index(idx), format_tag(tag.as_ref()))
             }
             Event::SequenceEnd => "-SEQ".into(),
 
-            Event::MappingStart(idx, tag) => {
+            Event::MappingStart(_, idx, tag) => {
                 format!("+MAP{}{}", format_index(idx), format_tag(tag.as_ref()))
             }
             Event::MappingEnd => "-MAP".into(),
@@ -405,7 +405,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 )
             }
             Event::Alias(idx) => format!("=ALI *{idx}"),
-            Event::Comment(_) | Event::Nothing => return,
+            Event::Comment(..) | Event::Nothing => return,
         };
         self.events.push(line);
     }

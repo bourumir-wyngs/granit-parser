@@ -6,7 +6,7 @@
 
 use crate::{
     input::{str::StrInput, BorrowedInput},
-    scanner::{ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
+    scanner::{Comment, Placement, ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
     BufferedInput,
 };
 
@@ -86,11 +86,14 @@ pub enum Event<'input> {
     /// A YAML source comment.
     ///
     /// Comments are presentation metadata, not YAML data nodes. The payload is the raw text
-    /// exactly after `#`, excluding only the line break. The companion parser [`Span`] covers the
-    /// whole source comment, including `#` and excluding the line break.
+    /// exactly after `#`, excluding only the line break. The placement is a best-effort hint for
+    /// correlating the comment with nearby YAML presentation. The companion parser [`Span`] covers
+    /// the whole source comment, including `#` and excluding the line break.
     Comment(
         /// Raw comment payload exactly after `#`, excluding only the line break.
         Cow<'input, str>,
+        /// Best-effort placement relative to nearby YAML content.
+        Placement,
     ),
     /// Value, style, `anchor_id`, tag
     Scalar(
@@ -101,6 +104,8 @@ pub enum Event<'input> {
     ),
     /// The start of a YAML sequence (array).
     SequenceStart(
+        /// The notation style used for the sequence.
+        StructureStyle,
         /// The anchor ID of the start of the sequence.
         usize,
         /// An optional tag
@@ -110,6 +115,8 @@ pub enum Event<'input> {
     SequenceEnd,
     /// The start of a YAML mapping (object, hash).
     MappingStart(
+        /// The notation style used for the mapping.
+        StructureStyle,
         /// The anchor ID of the start of the mapping.
         usize,
         /// An optional tag
@@ -117,6 +124,33 @@ pub enum Event<'input> {
     ),
     /// The end of a YAML mapping (object, hash).
     MappingEnd,
+}
+
+/// The notation style used for a YAML sequence or mapping.
+///
+/// [`StructureStyle::Block`] means block notation:
+///
+/// ```yaml
+/// items:
+///   - milk
+///   - bread
+/// mapping:
+///   name: Ada
+///   active: true
+/// ```
+///
+/// [`StructureStyle::Flow`] means flow notation:
+///
+/// ```yaml
+/// items: [milk, bread]
+/// mapping: {name: Ada, active: true}
+/// ```
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
+pub enum StructureStyle {
+    /// Block notation, such as `- item` sequences and `key: value` mappings.
+    Block,
+    /// Flow notation, such as `[item]` sequences and `{key: value}` mappings.
+    Flow,
 }
 
 /// A YAML tag.
@@ -187,8 +221,8 @@ impl<'input> Event<'input> {
     pub fn anchor_id(&self) -> Option<usize> {
         match self {
             Self::Scalar(_, _, anchor_id, _)
-            | Self::SequenceStart(anchor_id, _)
-            | Self::MappingStart(anchor_id, _)
+            | Self::SequenceStart(_, anchor_id, _)
+            | Self::MappingStart(_, anchor_id, _)
                 if *anchor_id != 0 =>
             {
                 Some(*anchor_id)
@@ -211,8 +245,8 @@ impl<'input> Event<'input> {
     pub fn tag(&self) -> Option<&Tag> {
         match self {
             Self::Scalar(_, _, _, tag)
-            | Self::SequenceStart(_, tag)
-            | Self::MappingStart(_, tag) => tag.as_deref(),
+            | Self::SequenceStart(_, _, tag)
+            | Self::MappingStart(_, _, tag) => tag.as_deref(),
             _ => None,
         }
     }
@@ -278,6 +312,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_anchor_id: usize,
     /// Pending tag to attach to a node after an intervening comment.
     pending_node_tag: Option<Cow<'input, Tag>>,
+    /// Pending empty scalar span captured before an intervening comment.
+    pending_empty_scalar_span: Option<Span>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -312,10 +348,14 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 /// [`Event::MappingStart`] event is emitted. If it starts with a sequence (an array), an
 /// [`Event::SequenceStart`] event is emitted. Otherwise, an [`Event::Scalar`] event is emitted.
 ///
-/// In a mapping, key-values are sent as consecutive events. The first event after an
-/// [`Event::MappingStart`] will be the key, and following its value. If the mapping contains no
-/// sub-mapping or sub-sequence, then even events (starting from 0) will always be keys and odd
-/// ones will always be values. The mapping ends when an [`Event::MappingEnd`] event is received.
+/// In a mapping, key-values are sent as consecutive data events. Comments can appear in the raw
+/// event stream between a key and its value; they are presentation metadata, not YAML data nodes.
+/// Consumers building YAML data trees should ignore [`Event::Comment`]. Any key/value alternation
+/// shortcut applies only after filtering out comments and other presentation metadata. After that
+/// filtering, the first event after an [`Event::MappingStart`] will be the key, and the following
+/// event will be its value. If the mapping contains no sub-mapping or sub-sequence, then even events
+/// (starting from 0) will always be keys and odd ones will always be values. The mapping ends when
+/// an [`Event::MappingEnd`] event is received.
 ///
 /// In a sequence, values are sent consecutively until the [`Event::SequenceEnd`] event.
 ///
@@ -621,6 +661,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             pending_key_indent: None,
             pending_node_anchor_id: 0,
             pending_node_tag: None,
+            pending_empty_scalar_span: None,
 
             anchors: BTreeMap::new(),
             // valid anchor_id starts from 1
@@ -738,8 +779,31 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         let Token(span, token) = self.fetch_token();
         match token {
-            TokenType::Comment(text) => Ok(Some((Event::Comment(text), span))),
+            TokenType::Comment(mut comment) => {
+                comment.placement = self.refined_comment_placement(&comment)?;
+                Ok(Some((
+                    Event::Comment(comment.text, comment.placement),
+                    span,
+                )))
+            }
             _ => unreachable!("comment token disappeared after peek"),
+        }
+    }
+
+    fn refined_comment_placement(&mut self, comment: &Comment<'_>) -> Result<Placement, ScanError> {
+        if comment.placement == Placement::Right {
+            return Ok(Placement::Right);
+        }
+
+        let next = self.peek_token()?;
+        if matches!(next.1, TokenType::StreamEnd) {
+            return Ok(Placement::Last);
+        }
+
+        if next.0.start.line() == comment.span.end.line() + 1 {
+            Ok(Placement::Above)
+        } else {
+            Ok(Placement::Free)
         }
     }
 
@@ -1361,7 +1425,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             Token(mark, TokenType::BlockEntry) if indentless_sequence => {
                 self.state = State::IndentlessSequenceEntry;
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
+                    mark,
+                ))
             }
             Token(_, TokenType::Scalar(..)) => {
                 self.pop_state();
@@ -1374,22 +1441,34 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Token(mark, TokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
                 self.skip();
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(StructureStyle::Flow, anchor_id, tag),
+                    mark,
+                ))
             }
             Token(mark, TokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
                 self.skip();
-                Ok((Event::MappingStart(anchor_id, tag), mark))
+                Ok((
+                    Event::MappingStart(StructureStyle::Flow, anchor_id, tag),
+                    mark,
+                ))
             }
             Token(mark, TokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
                 self.skip();
-                Ok((Event::SequenceStart(anchor_id, tag), mark))
+                Ok((
+                    Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
+                    mark,
+                ))
             }
             Token(mark, TokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
                 self.skip();
-                Ok((Event::MappingStart(anchor_id, tag), mark))
+                Ok((
+                    Event::MappingStart(StructureStyle::Block, anchor_id, tag),
+                    mark,
+                ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
             Token(mark, _) if tag.is_some() || anchor_id > 0 => {
@@ -1487,6 +1566,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Token(mark, TokenType::Value) => {
                 self.skip();
                 if let Some(comment) = self.next_comment_event()? {
+                    self.pending_empty_scalar_span = Some(mark);
                     self.state = State::BlockMappingValueNode;
                     Ok(comment)
                 } else {
@@ -1505,7 +1585,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = self.peek_token()?.0;
+        let mark = match self.pending_empty_scalar_span.take() {
+            Some(mark) => mark,
+            None => self.peek_token()?.0,
+        };
         self.block_mapping_value_node_with_empty_span(mark)
     }
 
@@ -1613,6 +1696,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 Token(span, TokenType::Value) => {
                     self.skip();
                     if let Some(comment) = self.next_comment_event()? {
+                        self.pending_empty_scalar_span = Some(span);
                         self.state = State::FlowMappingValueNode;
                         return Ok(comment);
                     }
@@ -1630,7 +1714,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = Span::empty(self.peek_token()?.0.start);
+        let mark = match self.pending_empty_scalar_span.take() {
+            Some(mark) => mark,
+            None => Span::empty(self.peek_token()?.0.start),
+        };
         self.flow_mapping_value_node_with_empty_span(mark)
     }
 
@@ -1681,7 +1768,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Token(mark, TokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
-                Ok((Event::MappingStart(0, None), mark))
+                Ok((Event::MappingStart(StructureStyle::Flow, 0, None), mark))
             }
             _ => self.defer_parse_node(State::FlowNode, State::FlowSequenceEntry, false, false),
         }
@@ -1695,6 +1782,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
                 if let Some(comment) = self.next_comment_event()? {
+                    self.pending_empty_scalar_span = Some(mark);
                     self.state = State::IndentlessSequenceEntryNode;
                     Ok(comment)
                 } else {
@@ -1712,7 +1800,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = self.peek_token()?.0;
+        let mark = match self.pending_empty_scalar_span.take() {
+            Some(mark) => mark,
+            None => self.peek_token()?.0,
+        };
         self.indentless_sequence_entry_node_with_empty_span(mark)
     }
 
@@ -1750,6 +1841,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Token(mark, TokenType::BlockEntry) => {
                 self.skip();
                 if let Some(comment) = self.next_comment_event()? {
+                    self.pending_empty_scalar_span = Some(mark);
                     self.state = State::BlockSequenceEntryNode;
                     Ok(comment)
                 } else {
@@ -1767,7 +1859,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = self.peek_token()?.0;
+        let mark = match self.pending_empty_scalar_span.take() {
+            Some(mark) => mark,
+            None => self.peek_token()?.0,
+        };
         self.block_sequence_entry_node_with_empty_span(mark)
     }
 
@@ -2004,7 +2099,8 @@ mod test {
     use crate::scanner::{Marker, ScalarStyle, ScanError, Span};
 
     use super::{
-        Event, EventReceiver, Parser, Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
+        Event, EventReceiver, Parser, StructureStyle, Tag, TryEventReceiver, TryLoadError,
+        TrySpannedEventReceiver,
     };
 
     #[derive(Default)]
@@ -2073,8 +2169,9 @@ mod test {
             7,
             Some(Cow::Borrowed(&tag)),
         );
-        let sequence = Event::SequenceStart(8, Some(Cow::Owned(tag.clone())));
-        let mapping = Event::MappingStart(9, Some(Cow::Borrowed(&tag)));
+        let sequence =
+            Event::SequenceStart(StructureStyle::Block, 8, Some(Cow::Owned(tag.clone())));
+        let mapping = Event::MappingStart(StructureStyle::Block, 9, Some(Cow::Borrowed(&tag)));
 
         assert_eq!(scalar.anchor_id(), Some(7));
         assert_eq!(scalar.alias_id(), None);
@@ -2207,14 +2304,14 @@ a5: *x
             vec![
                 Event::StreamStart,
                 Event::DocumentStart(false),
-                Event::MappingStart(0, None),
+                Event::MappingStart(StructureStyle::Block, 0, None),
                 Event::Scalar("root".into(), ScalarStyle::Plain, 0, None),
-                Event::SequenceStart(0, None),
-                Event::MappingStart(0, None),
+                Event::SequenceStart(StructureStyle::Block, 0, None),
+                Event::MappingStart(StructureStyle::Block, 0, None),
                 Event::Scalar("item".into(), ScalarStyle::Plain, 0, None),
                 Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
                 Event::MappingEnd,
-                Event::SequenceStart(0, None),
+                Event::SequenceStart(StructureStyle::Flow, 0, None),
                 Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
                 Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
                 Event::SequenceEnd,
@@ -2597,7 +2694,7 @@ baz: "qux"
 "#;
         for x in Parser::new_from_str(text).keep_tags(true) {
             let x = x.unwrap();
-            if let Event::MappingStart(_, tag) = x.0 {
+            if let Event::MappingStart(_, _, tag) = x.0 {
                 let tag = tag.unwrap();
                 assert_eq!(tag.handle, "tag:test,2024:");
             }
