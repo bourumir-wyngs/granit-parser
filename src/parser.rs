@@ -741,7 +741,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match self.current.take() {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
-                    Ok(event)
+                    Ok(self.apply_pending_key_indent(event))
                 } else if let Some(comment) = self.next_comment_event()? {
                     Ok(comment)
                 } else {
@@ -750,6 +750,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Some(v) => Ok(v),
         }
+    }
+
+    fn apply_pending_key_indent<'a>(&mut self, (ev, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
+        if ev.is_node() {
+            if let Some(indent) = self.pending_key_indent.take() {
+                return (ev, span.with_indent(Some(indent)));
+            }
+        }
+
+        (ev, span)
     }
 
     /// Peek at the next token from the scanner.
@@ -953,16 +963,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         if self.state == State::End {
             return Ok((Event::StreamEnd, Span::empty(self.scanner.mark())));
         }
-        let (ev, span) = self.state_machine()?;
-        if ev.is_node() {
-            if let Some(indent) = self.pending_key_indent.take() {
-                Ok((ev, span.with_indent(Some(indent))))
-            } else {
-                Ok((ev, span))
-            }
-        } else {
-            Ok((ev, span))
-        }
+        let event = self.state_machine()?;
+        Ok(self.apply_pending_key_indent(event))
     }
 
     /// Load the YAML from the stream in `self`, pushing events into `recv`.
@@ -2248,6 +2250,26 @@ mod test {
 
         assert!(matches!(event, Event::Comment(text, _) if text == " deferred"));
         assert_eq!(parser.state, State::FlowNode);
+    }
+
+    #[test]
+    fn queued_node_event_gets_pending_key_indent() {
+        let mut parser = Parser::new_from_str("");
+        let span = Span::empty(Marker::new(0, 1, 0));
+
+        parser.pending_key_indent = Some(3);
+        parser
+            .queued_events
+            .push_back((Event::SequenceStart(StructureStyle::Block, 0, None), span));
+
+        let (event, span) = parser.next_event_impl().unwrap();
+
+        assert!(matches!(
+            event,
+            Event::SequenceStart(StructureStyle::Block, 0, None)
+        ));
+        assert_eq!(span.indent, Some(3));
+        assert_eq!(parser.pending_key_indent, None);
     }
 
     #[test]
