@@ -21,7 +21,11 @@
 //! use granit_parser::{Event, Parser, Placement};
 //!
 //! # fn main() -> Result<(), granit_parser::ScanError> {
-//! let yaml = "# header\nitems: # inline\n  - milk\n  - bread\n";
+//! let yaml = r#"# header
+//! items: # inline
+//!   - milk
+//!   - bread
+//! "#;
 //! let mut comments = Vec::new();
 //!
 //! for next in Parser::new_from_str(yaml) {
