@@ -11,6 +11,14 @@
   returns `Option<usize>` for events that define an anchor; `alias_id` returns
   `Option<usize>` for aliases that reference an anchor; `is_node` returns `true`
   for any event that produces a value in the document tree.
+- Added comment events. Comments are emitted as parser
+  `Event::Comment(text, placement)` events with normal companion spans, and as
+  scanner comment tokens carrying `Placement` metadata. This is an event-stream
+  change: consumers building YAML data trees should ignore comment events, while
+  formatting/linting tools can use the placement hint and comment span.
+- Added `StructureStyle` metadata for sequences and mappings, exposed on
+  `Event::SequenceStart(style, anchor_id, tag)` and
+  `Event::MappingStart(style, anchor_id, tag)` events.
 - Added `ParserStack::push_include` as an include-oriented alias for
   `ParserStack::resolve`.
 - Added a custom-tag example showing how to inspect application tags such as

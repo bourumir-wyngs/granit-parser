@@ -63,3 +63,20 @@ fn indentation_is_reported_for_nested_block_mapping_keys() {
     assert_eq!(b_indent, Some(2));
     assert_eq!(c_indent, None);
 }
+
+#[test]
+fn queued_key_node_after_comment_keeps_key_indent() {
+    let yaml = "? - # key sequence comment\n    item\n: value\n";
+
+    let mut key_sequence_indent = None;
+
+    for next in Parser::new_from_str(yaml) {
+        let (event, span) = next.expect("valid yaml");
+        if matches!(event, Event::SequenceStart(..)) {
+            key_sequence_indent = span.indent;
+            break;
+        }
+    }
+
+    assert_eq!(key_sequence_indent, Some(0));
+}

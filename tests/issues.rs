@@ -1,4 +1,15 @@
-use granit_parser::{Event, Marker, Parser, ScalarStyle, ScanError, Span};
+use granit_parser::{
+    Event, Marker, Parser, ScalarStyle, ScanError, Span, StructureStyle,
+    StructureStyle::{Block, Flow},
+};
+
+fn seq(style: StructureStyle) -> Event<'static> {
+    Event::SequenceStart(style, 0, None)
+}
+
+fn map(style: StructureStyle) -> Event<'static> {
+    Event::MappingStart(style, 0, None)
+}
 
 /// Run the parser through the string.
 ///
@@ -96,10 +107,10 @@ fn test_issue1() {
     let expected = [
         Event::StreamStart,
         Event::DocumentStart(false),
-        Event::SequenceStart(0, None),
-        Event::MappingStart(0, None),
+        seq(Block),
+        map(Block),
         Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-        Event::SequenceStart(0, None),
+        seq(Block),
         Event::Scalar("42".into(), ScalarStyle::Plain, 0, None),
         Event::SequenceEnd,
         Event::MappingEnd,
@@ -108,17 +119,31 @@ fn test_issue1() {
         Event::StreamEnd,
     ];
     assert_eq!(run_parser(reference).unwrap(), expected);
-    assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected);
-    assert_eq!(run_parser("[a: [42]]").unwrap(), expected);
+    let expected_flow = [
+        Event::StreamStart,
+        Event::DocumentStart(false),
+        seq(Flow),
+        map(Flow),
+        Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
+        seq(Flow),
+        Event::Scalar("42".into(), ScalarStyle::Plain, 0, None),
+        Event::SequenceEnd,
+        Event::MappingEnd,
+        Event::SequenceEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected_flow);
+    assert_eq!(run_parser("[a: [42]]").unwrap(), expected_flow);
     assert_eq!(
         run_parser("[a: [1, 2]]").unwrap(),
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
+            seq(Flow),
             Event::Scalar("1".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("2".into(), ScalarStyle::Plain, 0, None),
             Event::SequenceEnd,
@@ -132,10 +157,10 @@ fn test_issue1() {
     let expected_mapping = [
         Event::StreamStart,
         Event::DocumentStart(false),
-        Event::SequenceStart(0, None),
-        Event::MappingStart(0, None),
+        seq(Flow),
+        map(Flow),
         Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-        Event::MappingStart(0, None),
+        map(Flow),
         Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
         Event::Scalar("c".into(), ScalarStyle::Plain, 0, None),
         Event::Scalar("d".into(), ScalarStyle::Plain, 0, None),
@@ -156,11 +181,11 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            map(Block),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
+            seq(Flow),
             Event::Scalar("bar".into(), ScalarStyle::Plain, 0, None),
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -178,8 +203,8 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -195,11 +220,11 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -222,13 +247,13 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
+            seq(Flow),
             // No `MappingStart` here.
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -252,10 +277,10 @@ fn test_issue1() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("a".into(), ScalarStyle::DoubleQuoted, 0, None),
-            Event::SequenceStart(0, None),
+            seq(Flow),
             Event::SequenceEnd,
             Event::MappingEnd,
             Event::SequenceEnd,
@@ -272,8 +297,8 @@ fn test_flow_sequence_empty_key_with_value() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -291,10 +316,10 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
+            seq(Flow),
             Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
             Event::SequenceEnd,
             Event::MappingEnd,
@@ -309,10 +334,10 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
+            map(Flow),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -328,10 +353,10 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Flow),
+            map(Flow),
             Event::MappingEnd,
-            Event::MappingStart(0, None),
+            map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -349,7 +374,7 @@ fn test_flow_mapping_quoted_key_colon_on_next_line() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            map(Flow),
             Event::Scalar("foo".into(), ScalarStyle::DoubleQuoted, 0, None),
             Event::Scalar("bar".into(), ScalarStyle::DoubleQuoted, 0, None),
             Event::MappingEnd,
@@ -366,12 +391,12 @@ fn test_flow_mapping_plain_key_spans_line_break() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Block),
+            map(Flow),
             Event::Scalar("single line".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
-            Event::MappingStart(0, None),
+            map(Flow),
             Event::Scalar("multi line".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -389,9 +414,9 @@ fn test_flow_mapping_key_and_colon_on_separate_lines() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
+            map(Flow),
             Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("v".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -409,7 +434,7 @@ fn test_pr12() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::SequenceStart(0, None),
+            seq(Block),
             Event::Scalar("a\n".into(), ScalarStyle::Literal, 0, None),
             Event::SequenceEnd,
             Event::DocumentEnd,
@@ -456,20 +481,20 @@ array:
         [
             Event::StreamStart,
             Event::DocumentStart(true),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Block),
+            map(Block),
             Event::Scalar("object".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Block),
+            map(Block),
             Event::Scalar("object".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(0, None),
-            Event::MappingStart(0, None),
+            seq(Block),
+            map(Block),
             Event::Scalar("text".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("Line 1 Line 2".into(), ScalarStyle::Folded, 0, None),
             Event::MappingEnd,
@@ -497,7 +522,7 @@ fn test_issue22() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("comment".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("hello ... world".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -531,18 +556,18 @@ fn test_issue37() {
         [
             (Event::StreamStart,                                                          Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(0, 1, 0).with_byte_offset(Some(0)))),
             (Event::DocumentStart(true),                                                  Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(3, 1, 3).with_byte_offset(Some(3)))),
-            (Event::MappingStart(0, None),                                                Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(8, 2, 4).with_byte_offset(Some(8)))),
+            (map(Block),                                                Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(8, 2, 4).with_byte_offset(Some(8)))),
             (Event::Scalar("hash_block_null_value".into(), ScalarStyle::Plain, 0, None),  Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(29, 2, 25).with_byte_offset(Some(29))).with_indent(Some(4))),
 
             (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                      Span::new(Marker::new(29, 2, 25).with_byte_offset(Some(29)), Marker::new(29, 2, 25).with_byte_offset(Some(29)))),
 
             (Event::Scalar("hash_flow".into(), ScalarStyle::Plain, 0, None),              Span::new(Marker::new(35, 3, 4).with_byte_offset(Some(35)), Marker::new(44, 3, 13).with_byte_offset(Some(44))).with_indent(Some(4))),
-            (Event::MappingStart(0, None),                                                Span::new(Marker::new(46, 3, 15).with_byte_offset(Some(46)), Marker::new(47, 3, 16).with_byte_offset(Some(47)))),
+            (map(Flow),                                                 Span::new(Marker::new(46, 3, 15).with_byte_offset(Some(46)), Marker::new(47, 3, 16).with_byte_offset(Some(47)))),
             (Event::Scalar("hash_flow_null_value".into(), ScalarStyle::Plain, 0, None),   Span::new(Marker::new(47, 3, 16).with_byte_offset(Some(47)), Marker::new(67, 3, 36).with_byte_offset(Some(67)))),
             (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                   Span::new(Marker::new(69, 3, 38).with_byte_offset(Some(69)), Marker::new(73, 3, 42).with_byte_offset(Some(73)))),
             (Event::MappingEnd,                                                           Span::new(Marker::new(73, 3, 42).with_byte_offset(Some(73)), Marker::new(74, 3, 43).with_byte_offset(Some(74)))),
             (Event::Scalar("array_block_null_value".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(79, 4, 4).with_byte_offset(Some(79)), Marker::new(101, 4, 26).with_byte_offset(Some(101))).with_indent(Some(4))),
-            (Event::SequenceStart(0, None),                                               Span::new(Marker::new(109, 5, 6).with_byte_offset(Some(109)), Marker::new(109, 5, 6).with_byte_offset(Some(109)))),
+            (seq(Block),                                               Span::new(Marker::new(109, 5, 6).with_byte_offset(Some(109)), Marker::new(109, 5, 6).with_byte_offset(Some(109)))),
 
             (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                      Span::new(Marker::new(110, 5, 7).with_byte_offset(Some(110)), Marker::new(110, 5, 7).with_byte_offset(Some(110)))),
 
@@ -550,12 +575,12 @@ fn test_issue37() {
             (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                              Span::new(Marker::new(129, 7, 8).with_byte_offset(Some(129)), Marker::new(133, 7, 12).with_byte_offset(Some(133)))),
             (Event::SequenceEnd,                                                                     Span::new(Marker::new(138, 8, 4).with_byte_offset(Some(138)), Marker::new(138, 8, 4).with_byte_offset(Some(138)))),
             (Event::Scalar("array_flow_null_value".into(), ScalarStyle::Plain, 0, None),             Span::new(Marker::new(138, 8, 4).with_byte_offset(Some(138)), Marker::new(159, 8, 25).with_byte_offset(Some(159))).with_indent(Some(4))),
-            (Event::SequenceStart(0, None),                                                          Span::new(Marker::new(161, 8, 27).with_byte_offset(Some(161)), Marker::new(162, 8, 28).with_byte_offset(Some(162)))),
+            (seq(Flow),                                                           Span::new(Marker::new(161, 8, 27).with_byte_offset(Some(161)), Marker::new(162, 8, 28).with_byte_offset(Some(162)))),
             (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),                                 Span::new(Marker::new(162, 8, 28).with_byte_offset(Some(162)), Marker::new(163, 8, 29).with_byte_offset(Some(163)))),
             (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None),                              Span::new(Marker::new(165, 8, 31).with_byte_offset(Some(165)), Marker::new(169, 8, 35).with_byte_offset(Some(169)))),
             (Event::SequenceEnd,                                                                     Span::new(Marker::new(169, 8, 35).with_byte_offset(Some(169)), Marker::new(170, 8, 36).with_byte_offset(Some(170)))),
             (Event::Scalar("indentless_array_block_null_value".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(175, 9, 4).with_byte_offset(Some(175)), Marker::new(208, 9, 37).with_byte_offset(Some(208))).with_indent(Some(4))),
-            (Event::SequenceStart(0, None),                                                          Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
+            (seq(Block),                                                          Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
 
             (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),    Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
 
@@ -581,9 +606,9 @@ fn test_issue84() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("hello".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(0, None),
+            map(Block),
             Event::Scalar("world".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar(
                 "this is a string --- still a string".into(),

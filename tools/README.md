@@ -24,16 +24,16 @@ Running `cargo run --bin dump_events -- input.yaml` outputs:
 ```
       ↳ StreamStart
       ↳ DocumentStart
-      ↳ SequenceStart(0, None)
-      ↳ MappingStart(0, None)
+      ↳ SequenceStart(Block, 0, None)
+      ↳ MappingStart(Block, 0, None)
       ↳ Scalar("foo", Plain, 0, None)
       ↳ Scalar("bar", Plain, 0, None)
       ↳ MappingEnd
-      ↳ MappingStart(0, None)
+      ↳ MappingStart(Block, 0, None)
       ↳ Scalar("baz", Plain, 0, None)
       ↳ Scalar("~", Plain, 0, None)
       ↳ Scalar("c", Plain, 0, None)
-      ↳ SequenceStart(0, None)
+      ↳ SequenceStart(Flow, 0, None)
       ↳ Scalar("3", Plain, 0, None)
       ↳ Scalar("4", Plain, 0, None)
       ↳ Scalar("5", Plain, 0, None)

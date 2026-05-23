@@ -19,7 +19,7 @@ use core::{char, fmt};
 
 use crate::{
     char_traits::{
-        as_hex, is_anchor_char, is_blank_or_breakz, is_break, is_breakz, is_flow, is_hex,
+        as_hex, is_anchor_char, is_blank_or_breakz, is_bom, is_break, is_breakz, is_flow, is_hex,
         is_tag_char, is_uri_char,
     },
     input::{BorrowedInput, SkipTabs},
@@ -35,7 +35,7 @@ pub enum TEncoding {
     Utf8,
 }
 
-/// The style as which the scalar was written in the YAML document.
+/// The source style used for a YAML scalar.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
 pub enum ScalarStyle {
     /// A YAML plain scalar.
@@ -85,7 +85,7 @@ impl PartialEq for MarkerOffsets {
 
 impl Eq for MarkerOffsets {}
 
-/// A location in a yaml document.
+/// A location in a YAML document.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub struct Marker {
     /// Offsets in the source.
@@ -142,7 +142,7 @@ impl Marker {
     }
 }
 
-/// A range of locations in a Yaml document.
+/// A range of locations in a YAML document.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub struct Span {
     /// The start (inclusive) of the range.
@@ -168,7 +168,7 @@ impl Span {
         }
     }
 
-    /// Create a empty [`Span`] at a given location.
+    /// Create an empty [`Span`] at a given location.
     ///
     /// An empty span doesn't contain any characters, but its position may still be meaningful.
     /// For example, for an indented sequence [`SequenceEnd`] has a location but an empty span.
@@ -215,6 +215,98 @@ impl Span {
     #[must_use]
     pub fn slice<'source>(&self, source: &'source str) -> Option<&'source str> {
         source.get(self.byte_range()?)
+    }
+}
+
+/// A positional hint for a YAML source comment.
+///
+/// The parser currently recognizes these placements:
+///
+/// ```yaml
+/// # Above
+/// key: value # Right
+///
+/// # Free
+///
+/// next: value
+///
+/// # Last
+/// ```
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
+pub enum Placement {
+    /// An own-line comment immediately before another YAML token.
+    ///
+    /// This usually means the comment visually describes the following node.
+    /// Consecutive own-line comments without blank lines between them are also considered
+    /// `Above`, so a comment block can attach to the next YAML element as a group.
+    Above,
+    /// A same-line comment after YAML content or syntax. Examples include `key: value # Right`
+    /// and `- # Right` for an empty sequence entry.
+    Right,
+    /// A standalone own-line comment that is separated from nearby YAML tokens.
+    ///
+    /// This is the fallback for comments that are neither same-line comments, immediately above a
+    /// following token, nor the final comment in the stream. Consumers should treat `Free` as not
+    /// having an obvious neighboring node.
+    #[default]
+    Free,
+    /// An own-line comment at the end of the input stream.
+    ///
+    /// A `Last` comment may be followed by blank lines, but no further YAML token appears before
+    /// `StreamEnd`.
+    Last,
+}
+
+/// A YAML comment captured from the source.
+///
+/// Comments are presentation metadata, not YAML data. This type carries the raw comment payload,
+/// source span, and a best-effort [`Placement`] hint for callers that want to correlate comments
+/// with nearby YAML presentation.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub struct Comment<'input> {
+    /// Span covering the whole source comment, including `#` and excluding the line break.
+    pub span: Span,
+    /// Raw comment payload exactly after `#`, excluding only the line break.
+    ///
+    /// Leading spaces are preserved, including a single space immediately after `#` when present.
+    pub text: Cow<'input, str>,
+    /// Best-effort placement of this comment relative to nearby YAML content.
+    pub placement: Placement,
+}
+
+impl<'input> Comment<'input> {
+    /// Create a captured YAML comment from a source span and raw payload.
+    ///
+    /// The placement defaults to [`Placement::Free`]. Use [`Comment::with_placement`] when the
+    /// caller already knows a more specific placement.
+    #[must_use]
+    pub fn new(span: Span, text: impl Into<Cow<'input, str>>) -> Self {
+        Self {
+            span,
+            text: text.into(),
+            placement: Placement::Free,
+        }
+    }
+
+    /// Return this comment with the given placement.
+    #[must_use]
+    pub fn with_placement(mut self, placement: Placement) -> Self {
+        self.placement = placement;
+        self
+    }
+
+    /// Return the comment payload with surrounding whitespace removed.
+    ///
+    /// This helper is ergonomic only. The raw [`Self::text`] payload remains unchanged.
+    #[must_use]
+    pub fn trimmed_text(&self) -> &str {
+        self.text.trim()
+    }
+}
+
+impl AsRef<str> for Comment<'_> {
+    fn as_ref(&self) -> &str {
+        self.text.as_ref()
     }
 }
 
@@ -287,16 +379,16 @@ pub enum TokenType<'input> {
     StreamEnd,
     /// A YAML version directive.
     VersionDirective(
-        /// Major
+        /// Major version number.
         u32,
-        /// Minor
+        /// Minor version number.
         u32,
     ),
     /// A YAML tag directive (e.g.: `!!str`, `!foo!bar`, ...).
     TagDirective(
-        /// Handle
+        /// Tag directive handle, such as `!` or `!app!`.
         Cow<'input, str>,
-        /// Prefix
+        /// Tag URI prefix associated with the handle.
         Cow<'input, str>,
     ),
     /// The start of a YAML document (`---`).
@@ -307,9 +399,9 @@ pub enum TokenType<'input> {
     ///
     /// Sequence blocks are arrays starting with a `-`.
     BlockSequenceStart,
-    /// The start of a sequence mapping.
+    /// The start of a block mapping.
     ///
-    /// Sequence mappings are "dictionaries" with "key: value" entries.
+    /// Block mappings are key-value collections written with `key: value` entries.
     BlockMappingStart,
     /// End of the corresponding `BlockSequenceStart` or `BlockMappingStart`.
     BlockEnd,
@@ -321,17 +413,17 @@ pub enum TokenType<'input> {
     FlowMappingStart,
     /// End of an inline mapping.
     FlowMappingEnd,
-    /// An entry in a block sequence (c.f.: [`TokenType::BlockSequenceStart`]).
+    /// An entry in a block sequence (see [`TokenType::BlockSequenceStart`]).
     BlockEntry,
-    /// An entry in a flow sequence (c.f.: [`TokenType::FlowSequenceStart`]).
+    /// An entry in a flow sequence (see [`TokenType::FlowSequenceStart`]).
     FlowEntry,
     /// A key in a mapping.
     Key,
     /// A value in a mapping.
     Value,
-    /// A reference to an anchor.
+    /// A reference to a previously defined anchor.
     Alias(Cow<'input, str>),
-    /// A YAML anchor (`&`/`*`).
+    /// A YAML anchor definition introduced by `&`.
     Anchor(Cow<'input, str>),
     /// A YAML tag (starting with bangs `!`).
     Tag(
@@ -342,22 +434,35 @@ pub enum TokenType<'input> {
     ),
     /// A regular YAML scalar.
     Scalar(ScalarStyle, Cow<'input, str>),
+    /// A YAML source comment.
+    ///
+    /// The token payload carries the raw text exactly after `#`, the source span, and an initial
+    /// [`Placement`] hint. The token's companion [`Span`] is the same as [`Comment::span`].
+    Comment(
+        /// Captured comment metadata.
+        Comment<'input>,
+    ),
     /// A reserved YAML directive.
     ReservedDirective(
-        /// Name
+        /// Directive name.
         String,
-        /// Parameters
+        /// Directive parameters, split on YAML whitespace.
         Vec<String>,
     ),
 }
 
 /// A scanner token.
 #[derive(Clone, PartialEq, Debug, Eq)]
-pub struct Token<'input>(pub Span, pub TokenType<'input>);
+pub struct Token<'input>(
+    /// Source span covered by this token.
+    pub Span,
+    /// Token payload emitted by the scanner.
+    pub TokenType<'input>,
+);
 
 /// A scalar that was parsed and may correspond to a simple key.
 ///
-/// Upon scanning the following yaml:
+/// Upon scanning the following YAML:
 /// ```yaml
 /// a: b
 /// ```
@@ -366,7 +471,7 @@ pub struct Token<'input>(pub Span, pub TokenType<'input>);
 /// kept inside the scanner until more context is fetched and we are able to know whether it is a
 /// plain scalar or a key.
 ///
-/// For example, see the following 2 yaml documents:
+/// For example, see the following two YAML documents:
 /// ```yaml
 /// ---
 /// a: b # Here, `a` is a key.
@@ -387,8 +492,8 @@ pub struct Token<'input>(pub Span, pub TokenType<'input>);
 /// [`crate::parser::Parser`] would read the [`TokenType::Key`] token before the
 /// [`TokenType::Scalar`] token.
 ///
-/// In the second document however, reaching the EOF would stale the [`SimpleKey`] and no
-/// [`TokenType::Key`] would be emitted by the scanner.
+/// In the second document however, reaching EOF would mark the [`SimpleKey`] as no longer possible,
+/// and no [`TokenType::Key`] would be emitted by the scanner.
 #[derive(Clone, PartialEq, Debug, Eq)]
 struct SimpleKey {
     /// Whether the token this [`SimpleKey`] refers to may still be a key.
@@ -401,16 +506,17 @@ struct SimpleKey {
     /// key
     ///   : value
     /// ```
-    /// Upon reading the `\n` after `key`, the [`SimpleKey`] that was created for `key` is staled
-    /// and [`Self::possible`] set to `false`.
+    /// Upon reading the `\n` after `key`, the [`SimpleKey`] that was created for `key` is no longer
+    /// possible and [`Self::possible`] is set to `false`.
     possible: bool,
     /// Whether the token this [`SimpleKey`] refers to is required to be a key.
     ///
-    /// With more context, we may know for sure that the token must be a key. If the YAML is
-    /// invalid, it may happen that the token be deemed not a key. In such event, an error has to
-    /// be raised. This boolean helps us know when to raise such error.
+    /// With more context, we may know for sure that the token must be a key. If later input makes
+    /// that impossible, the scanner must report an error instead of silently treating the token as a
+    /// plain scalar.
     ///
-    /// TODO(ethiraric, 30/12/2023): Example of when this happens.
+    /// This happens for simple keys at the current block indentation where the surrounding
+    /// collection requires the next token to be a mapping key.
     required: bool,
     /// The index of the token referred to by the [`SimpleKey`].
     ///
@@ -487,7 +593,7 @@ enum ImplicitMappingState {
     /// This state is the one when we have just encountered the opening `[`. We need more context
     /// to know whether an implicit mapping follows.
     Possible,
-    /// We are inside the implcit mapping.
+    /// We are inside the implicit mapping.
     ///
     /// Note that this state is not set immediately (we need to have encountered the `:` to know).
     Inside(u8),
@@ -495,7 +601,7 @@ enum ImplicitMappingState {
 
 /// The YAML scanner.
 ///
-/// This corresponds to the low-level interface when reading YAML. The scanner emits token as they
+/// This corresponds to the low-level interface when reading YAML. The scanner emits tokens as they
 /// are read (akin to a lexer), but it also holds sufficient context to be able to disambiguate
 /// some of the constructs. It has understanding of indentation and whitespace and is able to
 /// generate error messages for some invalid YAML constructs.
@@ -520,11 +626,19 @@ pub struct Scanner<'input, T> {
     tokens: VecDeque<Token<'input>>,
     /// The last error that happened.
     error: Option<ScanError>,
+    /// Error found after one or more already-scanned comment tokens.
+    deferred_error: Option<ScanError>,
 
     /// Whether we have already emitted the `StreamStart` token.
     stream_start_produced: bool,
     /// Whether we have already emitted the `StreamEnd` token.
     stream_end_produced: bool,
+    /// Whether the scanner is still in the prefix of the next document.
+    ///
+    /// A BOM may appear in a document prefix, before directives/comments/content. Once a document
+    /// start marker or any content token is scanned, another BOM is document content and must be
+    /// rejected unless it appears inside a quoted scalar.
+    document_prefix_allowed: bool,
     /// In some flow contexts, the value of a mapping is allowed to be adjacent to the `:`. When it
     /// is, the index at which the `:` may be must be stored in `adjacent_value_allowed_at`.
     adjacent_value_allowed_at: usize,
@@ -566,7 +680,7 @@ pub struct Scanner<'input, T> {
     /// [`Inside`].
     ///
     /// There is one entry in this [`Vec`] for each nested flow sequence that we are in.
-    /// The entries are created with the opening `]` and popped with the closing `]`.
+    /// The entries are created with the opening `[` and popped with the closing `]`.
     ///
     /// [`Possible`]: ImplicitMappingState::Possible
     /// [`Inside`]: ImplicitMappingState::Inside
@@ -869,7 +983,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         Ok(Cow::Borrowed(slice))
     }
-    /// Creates the YAML tokenizer.
+    /// Create a scanner over the given input source.
     pub fn new(input: T) -> Self {
         let initial_byte_offset = input.byte_offset();
         Scanner {
@@ -877,9 +991,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             error: None,
+            deferred_error: None,
 
             stream_start_produced: false,
             stream_end_produced: false,
+            document_prefix_allowed: true,
             adjacent_value_allowed_at: 0,
             simple_key_allowed: true,
             simple_keys: smallvec::SmallVec::new(),
@@ -900,13 +1016,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
-    /// Get a copy of the last error that was encountered, if any.
+    /// Return a copy of the last error that was encountered, if any.
     ///
     /// This does not clear the error state and further calls to [`Self::get_error`] will return (a
     /// clone of) the same error.
     #[inline]
     pub fn get_error(&self) -> Option<ScanError> {
-        self.error.clone()
+        self.error.clone().or_else(|| self.deferred_error.clone())
     }
 
     #[cold]
@@ -946,6 +1062,32 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.leading_whitespace = false;
     }
 
+    /// Consume a byte order mark from a document prefix.
+    ///
+    /// The source index advances, but the logical column remains unchanged so directives and
+    /// document markers immediately following the BOM are still recognized as line-start tokens.
+    #[inline]
+    fn skip_bom(&mut self) {
+        self.input.skip();
+
+        self.mark.offsets.chars += 1;
+        self.mark.offsets.bytes = self.input.byte_offset();
+    }
+
+    /// Consume one character that belongs to a comment.
+    ///
+    /// Unlike [`Self::skip_non_blank`], this deliberately does not change
+    /// `leading_whitespace`. Comments are presentation content, so consuming one for either
+    /// tokenization or skipping should only advance position bookkeeping.
+    #[inline]
+    fn skip_comment_char(&mut self) {
+        self.input.skip();
+
+        self.mark.offsets.chars += 1;
+        self.mark.col += 1;
+        self.mark.offsets.bytes = self.input.byte_offset();
+    }
+
     /// Consume the next characters. It is assumed none of the next characters are blanks.
     #[inline]
     fn skip_n_non_blank(&mut self, count: usize) {
@@ -970,7 +1112,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.leading_whitespace = true;
     }
 
-    /// Consume a linebreak (either CR, LF or CRLF), if any. Do nothing if there's none.
+    /// Consume a line break (either CR, LF, or CRLF), if any. Do nothing if there is none.
     #[inline]
     fn skip_linebreak(&mut self) {
         if self.input.next_2_are('\r', '\n') {
@@ -981,6 +1123,71 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else if self.input.next_is_break() {
             self.skip_nl();
         }
+    }
+
+    fn scan_comment_token(&mut self) -> Result<Token<'input>, ScanError> {
+        let start_mark = self.mark;
+        debug_assert_eq!(self.input.peek(), '#');
+        let placement = if self.leading_whitespace {
+            Placement::Free
+        } else {
+            Placement::Right
+        };
+
+        self.skip_comment_char();
+
+        let text = if let Some(start) = self.input.byte_offset() {
+            // Stable byte offsets are available; slice the payload once at the end.
+            let n = self.input.skip_while_non_breakz();
+            self.mark.offsets.chars += n;
+            self.mark.col += n;
+            let byte_offset = self.input.byte_offset();
+            self.mark.offsets.bytes = byte_offset;
+            let end = byte_offset.expect("byte_offset must remain available once enabled");
+
+            if let Some(slice) = self.try_borrow_slice(start, end) {
+                Cow::Borrowed(slice)
+            } else if let Some(slice) = self.input.slice_bytes(start, end) {
+                // Defensive fallback for third-party inputs that expose offsets but cannot borrow.
+                Cow::Owned(slice.to_owned())
+            } else {
+                return Err(ScanError::new_str(
+                    start_mark,
+                    "internal error: input advertised offsets but did not provide a slice",
+                ));
+            }
+        } else {
+            // Streaming input without stable offsets; collect into an owned string.
+            let mut owned = String::new();
+            while !is_breakz(self.input.look_ch()) {
+                owned.push(self.input.peek());
+                self.skip_comment_char();
+            }
+            Cow::Owned(owned)
+        };
+
+        let end_mark = self.mark;
+        let span = Span::new(start_mark, end_mark);
+        Ok(Token(
+            span,
+            TokenType::Comment(Comment::new(span, text).with_placement(placement)),
+        ))
+    }
+
+    fn push_comment_token(&mut self) -> ScanResult {
+        let token = self.scan_comment_token()?;
+        self.tokens.push_back(token);
+        Ok(())
+    }
+
+    fn skip_comment(&mut self) {
+        debug_assert_eq!(self.input.peek(), '#');
+
+        self.skip_comment_char();
+        let n = self.input.skip_while_non_breakz();
+        self.mark.offsets.chars += n;
+        self.mark.col += n;
+        self.mark.offsets.bytes = self.input.byte_offset();
     }
 
     /// Return whether the [`TokenType::StreamStart`] event has been emitted.
@@ -995,7 +1202,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.stream_end_produced
     }
 
-    /// Get the current position in the input stream.
+    /// Return the current position in the input stream.
     #[inline]
     pub fn mark(&self) -> Marker {
         self.mark
@@ -1045,7 +1252,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.simple_key_allowed = false;
     }
 
-    /// Fetch the next token in the stream.
+    /// Scan enough input to append one next token to the internal token queue.
     ///
     /// # Errors
     /// Returns `ScanError` when the scanner does not find the next expected token.
@@ -1094,6 +1301,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
+        if self.document_prefix_allowed {
+            self.document_prefix_allowed = false;
+        }
+
         if (self.mark.col as isize) < self.indent {
             self.input.lookahead(1);
             let c = self.input.peek();
@@ -1134,6 +1345,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ':' | '?' if !is_blank_or_breakz(nc) && self.flow_level == 0 => {
                 self.fetch_plain_scalar()
             }
+            c if is_bom(c) => Err(ScanError::new_str(
+                self.mark,
+                "a BOM must not appear inside a document",
+            )),
             '%' | '@' | '`' => Err(ScanError::new(
                 self.mark,
                 format!("unexpected character: `{c}'"),
@@ -1142,16 +1357,38 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
-    /// Return the next token in the stream.
+    /// Return the next queued token, scanning more input when needed.
+    ///
     /// # Errors
     /// Returns `ScanError` when scanning fails to find an expected next token.
     pub fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
+        if self.deferred_error.is_some() {
+            if !matches!(
+                self.tokens.front().map(|token| &token.1),
+                Some(TokenType::Comment(_))
+            ) {
+                if let Some(error) = self.deferred_error.take() {
+                    return error.into_result();
+                }
+            }
+            self.token_available = true;
+        }
+
         if self.stream_end_produced {
             return Ok(None);
         }
 
         if !self.token_available {
-            self.fetch_more_tokens()?;
+            if let Err(error) = self.fetch_more_tokens() {
+                if matches!(
+                    self.tokens.front().map(|token| &token.1),
+                    Some(TokenType::Comment(_))
+                ) {
+                    self.deferred_error = Some(error);
+                } else {
+                    return Err(error);
+                }
+            }
         }
         let Some(t) = self.tokens.pop_front() else {
             return Err(ScanError::new_str(
@@ -1168,9 +1405,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(Some(t))
     }
 
-    /// Fetch tokens from the token stream.
+    /// Scan more input until a token is ready to be returned.
+    ///
     /// # Errors
-    /// Returns `ScanError` when loading fails.
+    /// Returns `ScanError` when scanning fails.
     pub fn fetch_more_tokens(&mut self) -> ScanResult {
         let mut need_more;
         loop {
@@ -1213,7 +1451,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// know will not be keys.
     ///
     /// # Errors
-    /// This function returns an error if one of the key we would stale was required to be a key.
+    /// This function returns an error if one of the keys becoming impossible was required to be a
+    /// key.
     fn stale_simple_keys(&mut self) -> ScanResult {
         for sk in &mut self.simple_keys {
             let is_line_stale = self.flow_level == 0 && sk.mark.line < self.mark.line;
@@ -1232,13 +1471,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(())
     }
 
-    /// Skip over all whitespace (`\t`, ` `, `\n`, `\r`) and comments until the next token.
+    /// Skip over whitespace (`\t`, ` `, `\n`, `\r`) until the next non-comment token.
+    ///
+    /// Comments encountered while skipping are queued as [`TokenType::Comment`] tokens so the
+    /// parser can emit them as presentation events.
     ///
     /// # Errors
-    /// This function returns an error if a tabulation is encountered where there should not be
+    /// This function returns an error if a tab is encountered where there should not be
     /// one.
     fn skip_to_next_token(&mut self) -> ScanResult {
-        // Hot-path helper: consume a single logical linebreak and apply simple-key rules.
+        // Hot-path helper: consume a single logical line break and apply simple-key rules.
         // (Kept local to ensure the compiler can inline it easily.)
         let consume_linebreak = |this: &mut Self| {
             this.input.lookahead(2);
@@ -1266,7 +1508,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                             ));
                         }
 
-                        // Micro-opt: if we stopped on a linebreak, consume it now (avoids another loop trip).
+                        // Micro-opt: if we stopped on a line break, consume it now (avoids another loop trip).
                         if matches!(self.input.look_ch(), '\n' | '\r') {
                             consume_linebreak(self);
                         }
@@ -1280,14 +1522,18 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
                 '\n' | '\r' => consume_linebreak(self),
 
-                '#' => {
-                    // Skip the whole comment payload in one go.
-                    let n = self.input.skip_while_non_breakz();
-                    self.mark.offsets.chars += n;
-                    self.mark.col += n;
-                    self.mark.offsets.bytes = self.input.byte_offset();
+                c if is_bom(c)
+                    && self.document_prefix_allowed
+                    && self.flow_level == 0
+                    && self.mark.col == 0 =>
+                {
+                    self.skip_bom();
+                }
 
-                    // Micro-opt: comment-only lines are common; consume the following linebreak here.
+                '#' => {
+                    self.push_comment_token()?;
+
+                    // Micro-opt: comment-only lines are common; consume the following line break here.
                     if matches!(self.input.look_ch(), '\n' | '\r') {
                         consume_linebreak(self);
                     }
@@ -1352,10 +1598,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     need_whitespace = false;
                 }
                 '#' => {
-                    let comment_length = self.input.skip_while_non_breakz();
-                    self.mark.offsets.chars += comment_length;
-                    self.mark.col += comment_length;
-                    self.mark.offsets.bytes = self.input.byte_offset();
+                    if need_whitespace {
+                        self.skip_comment();
+                    } else {
+                        self.push_comment_token()?;
+                    }
                 }
                 _ => break,
             }
@@ -1369,11 +1616,33 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
-        let (n_bytes, result) = self.input.skip_ws_to_eol(skip_tabs);
-        self.mark.col += n_bytes;
-        self.mark.offsets.chars += n_bytes;
-        self.mark.offsets.bytes = self.input.byte_offset();
-        result.map_err(|msg| ScanError::new_str(self.mark, msg))
+        debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
+
+        let mut encountered_tab = false;
+        let mut has_yaml_ws = false;
+
+        loop {
+            match self.input.look_ch() {
+                ' ' => {
+                    has_yaml_ws = true;
+                    self.skip_blank();
+                }
+                '\t' if skip_tabs != SkipTabs::No => {
+                    encountered_tab = true;
+                    self.skip_blank();
+                }
+                '#' if !encountered_tab && !has_yaml_ws => {
+                    return Err(ScanError::new_str(
+                        self.mark,
+                        "comments must be separated from other tokens by whitespace",
+                    ));
+                }
+                '#' => self.push_comment_token()?,
+                _ => break,
+            }
+        }
+
+        Ok(SkipTabs::Result(encountered_tab, has_yaml_ws))
     }
 
     fn fetch_stream_start(&mut self) {
@@ -1423,8 +1692,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.disallow_simple_key();
 
+        let token_index = self.tokens.len();
         let tok = self.scan_directive()?;
-        self.tokens.push_back(tok);
+        self.insert_token(token_index, tok);
 
         Ok(())
     }
@@ -1654,7 +1924,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if is_blank_or_breakz(self.input.look_ch())
             || (self.flow_level > 0 && matches!(self.input.peek(), ',' | ']' | '}'))
         {
-            // XXX: ex 7.2, an empty scalar can follow a secondary tag
+            // YAML example 7.2 allows a tag to annotate an empty scalar when a separator or flow
+            // delimiter follows.
             Ok(Token(
                 Span::new(start_mark, self.mark),
                 TokenType::Tag(handle, suffix),
@@ -1698,7 +1969,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if is_blank_or_breakz(self.input.look_ch())
             || (self.flow_level > 0 && matches!(self.input.peek(), ',' | ']' | '}'))
         {
-            // XXX: ex 7.2, an empty scalar can follow a secondary tag
+            // YAML example 7.2 allows a tag to annotate an empty scalar when a separator or flow
+            // delimiter follows.
             Ok(Token(
                 Span::new(*start_mark, self.mark),
                 TokenType::Tag(handle.into(), suffix.into()),
@@ -2132,10 +2404,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 .push(ImplicitMappingState::Possible);
         }
 
+        let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
-        self.tokens
-            .push_back(Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
         Ok(())
     }
 
@@ -2179,6 +2451,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         // A flow collection within a flow mapping can be a key. In that case, the value may be
@@ -2190,8 +2463,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.adjacent_value_allowed_at = self.mark.index();
         }
 
-        self.tokens
-            .push_back(Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
         Ok(())
     }
 
@@ -2207,12 +2479,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
-        self.tokens.push_back(Token(
-            Span::new(start_mark, self.mark),
-            TokenType::FlowEntry,
-        ));
+        self.insert_token(
+            token_index,
+            Token(Span::new(start_mark, self.mark), TokenType::FlowEntry),
+        );
         Ok(())
     }
 
@@ -2269,6 +2542,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // generate BLOCK-SEQUENCE-START if indented
         self.roll_indent(mark.col, None, TokenType::BlockSequenceStart, mark);
+        let token_index = self.tokens.len();
         let found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
         self.input.lookahead(2);
         if found_tabs && self.input.next_char_is('-') && is_blank_or_breakz(self.input.peek_nth(1))
@@ -2288,8 +2562,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.remove_simple_key()?;
         self.allow_simple_key();
 
-        self.tokens
-            .push_back(Token(Span::empty(self.mark), TokenType::BlockEntry));
+        self.insert_token(
+            token_index,
+            Token(Span::empty(self.mark), TokenType::BlockEntry),
+        );
 
         Ok(())
     }
@@ -2310,6 +2586,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.skip_n_non_blank(3);
 
+        self.document_prefix_allowed = matches!(t, TokenType::DocumentEnd);
         self.tokens.push_back(Token(Span::new(mark, self.mark), t));
         Ok(())
     }
@@ -2429,7 +2706,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // ```
         if self.input.next_is_z() {
             let contents = match chomping {
-                // We strip trailing linebreaks. Nothing remain.
+                // We strip trailing line breaks. Nothing remains.
                 Chomping::Strip => String::new(),
                 // There was no newline after the chomping indicator.
                 _ if self.mark.line == start_mark.line() => String::new(),
@@ -2541,7 +2818,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// necessary. `line_buffer` is assumed to be empty upon calling this function. It will be
     /// `clear`ed before the end of the function.
     ///
-    /// This function assumed the first character to read is the first content character in the
+    /// This function assumes the first character to read is the first content character in the
     /// line. This function does not consume the line break character(s) after the line.
     fn scan_block_scalar_content_line(&mut self, string: &mut String, line_buffer: &mut String) {
         // Start by evaluating characters in the buffer.
@@ -2549,7 +2826,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             string.push(self.input.peek());
             // We may technically skip non-blank characters. However, the only distinction is
             // to determine what is leading whitespace and what is not. Here, we read the
-            // contents of the line until either eof or a linebreak. We know we will not read
+            // contents of the line until either EOF or a line break. We know we will not read
             // `self.leading_whitespace` until the end of the line, where it will be reset.
             // This allows us to call a slightly less expensive function.
             self.skip_blank();
@@ -2560,7 +2837,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.buf_is_empty() {
             // We will read all consecutive non-breakz characters. We push them into a
             // temporary buffer. The main difference with going through `self.buffer` is that
-            // characters are appended here as their real size (1B for ascii, or up to 4 bytes for
+            // characters are appended here as their real size (1B for ASCII, or up to 4 bytes for
             // UTF-8). We can then use the internal `line_buffer` `Vec` to push data into `string`
             // (using `String::push_str`).
 
@@ -2627,7 +2904,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Determine the indentation level for a block scalar from the first line of its contents.
     ///
-    /// The function skips over whitespace-only lines and sets `indent` to the the longest
+    /// The function skips over whitespace-only lines and sets `indent` to the longest
     /// whitespace line that was encountered.
     fn skip_block_scalar_first_line_indent(&mut self, indent: &mut usize, breaks: &mut String) {
         let mut max_indent = 0;
@@ -2651,7 +2928,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        // In case a yaml looks like:
+        // In case a YAML document looks like:
         // ```yaml
         // |
         // foo
@@ -2669,6 +2946,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.save_simple_key();
         self.disallow_simple_key();
 
+        let token_index = self.tokens.len();
         let tok = self.scan_flow_scalar(single)?;
 
         // From spec: To ensure JSON compatibility, if a key inside a flow mapping is JSON-like,
@@ -2676,7 +2954,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_to_next_token()?;
         self.adjacent_value_allowed_at = self.mark.index();
 
-        self.tokens.push_back(tok);
+        self.insert_token(token_index, tok);
         Ok(())
     }
 
@@ -2731,7 +3009,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // --- Faster whitespace / line break handling (no temporary Strings) ---
             //
             // Instead of:
-            //   - collecting blanks into `whitespaces` and then copying
+            //   - collecting blanks into `whitespaces` and then copying them
             //   - collecting breaks into `leading_break` / `trailing_breaks` and then copying
             //
             // We do:
@@ -2740,7 +3018,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             //   - for line breaks: consume the first break into a scratch (discarded),
             //     append subsequent breaks directly to `string`.
             //
-            // These flags mirror the old "is_empty()" checks:
+            // These flags replace temporary-string emptiness checks:
             //   has_leading_break  <=> !leading_break.is_empty()
             //   has_trailing_breaks <=> !trailing_breaks.is_empty()
             let mut trailing_ws_start: Option<usize> = None;
@@ -2845,12 +3123,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 }
             }
 
-            // Join the whitespaces or fold line breaks.
+            // Join the whitespace or fold line breaks.
             if leading_blanks {
-                // Old logic:
-                //   if leading_break empty => emit trailing_breaks (already emitted now)
-                //   else if trailing_breaks empty => emit ' '
-                //   else emit trailing_breaks (already emitted now)
+                // Folding rule:
+                //   if there was no leading break, preserve the pending whitespace already emitted
+                //   if there was a leading break but no trailing breaks, fold to one space
+                //   otherwise, preserve the trailing breaks already emitted
                 if has_leading_break && !has_trailing_breaks {
                     match buf {
                         FlowScalarBuf::Owned(ref mut string) => string.push(' '),
@@ -3126,9 +3404,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.save_simple_key();
         self.disallow_simple_key();
 
+        let token_index = self.tokens.len();
         let tok = self.scan_plain_scalar()?;
 
-        self.tokens.push_back(tok);
+        self.insert_token(token_index, tok);
         Ok(())
     }
 
@@ -3340,6 +3619,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         self.skip_non_blank();
+        let token_index = self.tokens.len();
         self.skip_yaml_whitespace()?;
         if self.input.peek() == '\t' {
             return Err(ScanError::new_str(
@@ -3347,8 +3627,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 "tabs disallowed in this context",
             ));
         }
-        self.tokens
-            .push_back(Token(Span::new(start_mark, self.mark), TokenType::Key));
+        self.insert_token(
+            token_index,
+            Token(Span::new(start_mark, self.mark), TokenType::Key),
+        );
         Ok(())
     }
 
@@ -3403,14 +3685,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // rejecting valid YAML like `key:\t|` (block scalar) or `key:\t"quoted"`.
         // Note: This heuristic won't catch Unicode value starters like `key:\täöü`, but such
         // cases will still fail to parse correctly (just with a less specific error message).
-        if self.input.look_ch() == '\t'
-            && !self.skip_ws_to_eol(SkipTabs::Yes)?.has_valid_yaml_ws()
-            && (self.input.peek() == '-' || self.input.next_is_alpha())
-        {
-            return Err(ScanError::new_str(
-                self.mark,
-                "':' must be followed by a valid YAML whitespace",
-            ));
+        let mut trailing_tokens = VecDeque::new();
+        if self.input.look_ch() == '\t' {
+            let trailing_token_index = self.tokens.len();
+            let whitespace = self.skip_ws_to_eol(SkipTabs::Yes)?;
+            trailing_tokens = self.tokens.split_off(trailing_token_index);
+
+            if !whitespace.has_valid_yaml_ws()
+                && (self.input.peek() == '-' || self.input.next_is_alpha())
+            {
+                return Err(ScanError::new_str(
+                    self.mark,
+                    "':' must be followed by a valid YAML whitespace",
+                ));
+            }
         }
 
         if sk.possible {
@@ -3472,6 +3760,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
         self.tokens
             .push_back(Token(Span::empty(start_mark), TokenType::Value));
+        self.tokens.append(&mut trailing_tokens);
 
         Ok(())
     }
@@ -3655,7 +3944,7 @@ mod test {
     use core::cell::Cell;
 
     use crate::{
-        input::{str::StrInput, BufferedInput},
+        input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{Scanner, Token, TokenType},
     };
 
@@ -3673,6 +3962,76 @@ mod test {
                 self.read.set(self.read.get() + 1);
             }
             next
+        }
+    }
+
+    struct SlicingOnlyInput<'input> {
+        inner: StrInput<'input>,
+        expose_slice: bool,
+    }
+
+    impl<'input> SlicingOnlyInput<'input> {
+        fn new(source: &'input str, expose_slice: bool) -> Self {
+            Self {
+                inner: StrInput::new(source),
+                expose_slice,
+            }
+        }
+    }
+
+    impl Input for SlicingOnlyInput<'_> {
+        fn lookahead(&mut self, count: usize) {
+            self.inner.lookahead(count);
+        }
+
+        fn buflen(&self) -> usize {
+            self.inner.buflen()
+        }
+
+        fn bufmaxlen(&self) -> usize {
+            self.inner.bufmaxlen()
+        }
+
+        fn raw_read_ch(&mut self) -> char {
+            self.inner.raw_read_ch()
+        }
+
+        fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+            self.inner.raw_read_non_breakz_ch()
+        }
+
+        fn skip(&mut self) {
+            self.inner.skip();
+        }
+
+        fn skip_n(&mut self, count: usize) {
+            self.inner.skip_n(count);
+        }
+
+        fn peek(&self) -> char {
+            self.inner.peek()
+        }
+
+        fn peek_nth(&self, n: usize) -> char {
+            self.inner.peek_nth(n)
+        }
+
+        fn byte_offset(&self) -> Option<usize> {
+            self.inner.byte_offset()
+        }
+
+        fn slice_bytes(&self, start: usize, end: usize) -> Option<&str> {
+            if self.expose_slice {
+                self.inner.slice_bytes(start, end)
+            } else {
+                None
+            }
+        }
+    }
+
+    impl<'input> BorrowedInput<'input> for SlicingOnlyInput<'input> {
+        fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
+            None
         }
     }
 
@@ -3718,6 +4077,81 @@ mod test {
             "scanner read {} chars before yielding the first flow scalar",
             read.get()
         );
+    }
+
+    #[test]
+    fn comment_capture_does_not_change_leading_whitespace() {
+        let mut scanner = Scanner::new(StrInput::new("# comment\n"));
+
+        let token = scanner.scan_comment_token().unwrap();
+
+        assert!(scanner.leading_whitespace);
+        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " comment"));
+
+        let mut scanner = Scanner::new(BufferedInput::new("# streaming\n".chars()));
+        scanner.input.lookahead(1);
+
+        let token = scanner.scan_comment_token().unwrap();
+
+        assert!(scanner.leading_whitespace);
+        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " streaming"));
+    }
+
+    #[test]
+    fn comment_capture_falls_back_to_owned_slice_when_borrow_unavailable() {
+        let mut scanner = Scanner::new(SlicingOnlyInput::new("# sliced\n", true));
+        scanner.input.lookahead(2);
+        assert_eq!(scanner.input.peek_nth(1), ' ');
+
+        let token = scanner.scan_comment_token().unwrap();
+
+        assert!(matches!(token.1, TokenType::Comment(ref comment)
+            if matches!(comment.text, Cow::Owned(ref text) if text == " sliced")));
+    }
+
+    #[test]
+    fn comment_capture_errors_when_offsets_have_no_slice() {
+        let mut scanner = Scanner::new(SlicingOnlyInput::new("# broken\n", false));
+
+        let error = scanner.scan_comment_token().unwrap_err();
+
+        assert_eq!(
+            error.info(),
+            "internal error: input advertised offsets but did not provide a slice"
+        );
+    }
+
+    #[test]
+    fn comment_skipping_path_consumes_comment_without_tokenizing_it() {
+        let mut scanner = Scanner::new(StrInput::new("# skipped\nnext: value\n"));
+
+        scanner.skip_yaml_whitespace().unwrap();
+
+        assert!(scanner.tokens.is_empty());
+        assert_eq!(scanner.mark.line(), 2);
+        assert_eq!(scanner.mark.col(), 0);
+    }
+
+    #[test]
+    fn deferred_error_waits_for_all_comment_tokens() {
+        let mut scanner = Scanner::new(StrInput::new("# first\n# second\n@\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " first"
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " second"
+        ));
+
+        let error = scanner.next_token().unwrap_err();
+
+        assert!(error.info().contains("unexpected character"));
     }
 
     /// Ensure anchors scanned from `StrInput` are returned as `Cow::Borrowed`.

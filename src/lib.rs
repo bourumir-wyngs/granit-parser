@@ -6,6 +6,8 @@
 //!
 //! `granit-parser` is a low-level event parser. It reads YAML input and yields a stream of
 //! [`Event`] values paired with their source [`Span`].
+//! Comments are emitted as [`Event::Comment`]. They are presentation metadata, not YAML data
+//! nodes, so consumers building YAML value trees should ignore them.
 //!
 //! Add it to your project:
 //!
@@ -16,20 +18,41 @@
 //! # Usage
 //!
 //! ```rust
-//! use granit_parser::{Event, Parser};
+//! use granit_parser::{Event, Parser, Placement};
 //!
 //! # fn main() -> Result<(), granit_parser::ScanError> {
-//! let yaml = "items:\n  - milk\n  - bread\n";
+//! let yaml = r#"# header
+//! items: # inline
+//!   - milk
+//!   - bread
+//! "#;
+//! let mut comments = Vec::new();
 //!
 //! for next in Parser::new_from_str(yaml) {
-//!     let (event, _span) = next?;
-//!     if let Event::Scalar(value, ..) = event {
-//!         println!("{value}");
+//!     let (event, span) = next?;
+//!     if let Event::Comment(text, placement) = event {
+//!         comments.push((
+//!             text.into_owned(),
+//!             placement,
+//!             span.slice(yaml).unwrap().to_owned(),
+//!         ));
 //!     }
 //! }
+//!
+//! assert_eq!(
+//!     comments,
+//!     [
+//!         (" header".to_owned(), Placement::Above, "# header".to_owned()),
+//!         (" inline".to_owned(), Placement::Right, "# inline".to_owned()),
+//!     ]
+//! );
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! For comment events, the companion [`Span`] covers the whole source comment, including `#` and
+//! excluding the line break. With [`Parser::new_from_str`], [`Span::slice`] returns that source
+//! comment text.
 //!
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
@@ -65,7 +88,9 @@ mod scanner;
 
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
 pub use crate::parser::{
-    Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, Tag, TryEventReceiver,
-    TryLoadError, TrySpannedEventReceiver,
+    Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,
+    TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
 };
-pub use crate::scanner::{Marker, ScalarStyle, ScanError, Scanner, Span, Token, TokenType};
+pub use crate::scanner::{
+    Comment, Marker, Placement, ScalarStyle, ScanError, Scanner, Span, Token, TokenType,
+};

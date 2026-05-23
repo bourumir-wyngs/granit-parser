@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScalarStyle, ScanError};
+use granit_parser::{Event, Parser, ScalarStyle, ScanError, StructureStyle};
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     Parser::new_from_str(input)
@@ -37,7 +37,7 @@ fn explicit_block_mapping_empty_key_is_null() {
         vec![
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,

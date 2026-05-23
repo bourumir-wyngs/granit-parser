@@ -1,6 +1,6 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser::{Event, Parser, ScalarStyle, ScanError};
+use granit_parser::{Event, Parser, Placement, ScalarStyle, ScanError, StructureStyle};
 
 /// Run the parser through the string.
 ///
@@ -50,6 +50,18 @@ fn run_parser(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     }
 }
 
+fn collection_styles(input: &str) -> Vec<(&'static str, StructureStyle)> {
+    run_parser(input)
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::SequenceStart(style, ..) => Some(("sequence", style)),
+            Event::MappingStart(style, ..) => Some(("mapping", style)),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn test_fail() {
     let s = "
@@ -66,6 +78,45 @@ key1:a2
     assert_eq!(
         error.to_string(),
         "mapping values are not allowed in this context at char 26 line 4 column 4"
+    );
+}
+
+#[test]
+fn test_sequence_structure_styles() {
+    assert_eq!(
+        collection_styles("- block\n- [flow]\n"),
+        vec![
+            ("sequence", StructureStyle::Block),
+            ("sequence", StructureStyle::Flow),
+        ]
+    );
+
+    assert_eq!(
+        collection_styles("[flow, [nested]]\n"),
+        vec![
+            ("sequence", StructureStyle::Flow),
+            ("sequence", StructureStyle::Flow),
+        ]
+    );
+}
+
+#[test]
+fn test_mapping_structure_styles() {
+    assert_eq!(
+        collection_styles("block:\n  child: value\nflow: {child: value}\n"),
+        vec![
+            ("mapping", StructureStyle::Block),
+            ("mapping", StructureStyle::Block),
+            ("mapping", StructureStyle::Flow),
+        ]
+    );
+
+    assert_eq!(
+        collection_styles("[implicit: flow]\n"),
+        vec![
+            ("sequence", StructureStyle::Flow),
+            ("mapping", StructureStyle::Flow),
+        ]
     );
 }
 
@@ -95,7 +146,7 @@ fn test_utf() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("\u{4F60}\u{5273}".into(), ScalarStyle::Plain, 0, None),
             Event::MappingEnd,
@@ -118,10 +169,14 @@ a: b # This is another comment
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
+            Event::Comment(" This is a comment".into(), Placement::Above),
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+            Event::Comment(" This is another comment".into(), Placement::Right),
+            Event::Comment("#".into(), Placement::Above),
+            Event::Comment("".into(), Placement::Above),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -142,7 +197,7 @@ fn test_quoting() {
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::SequenceStart(0, None),
+            Event::SequenceStart(StructureStyle::Block, 0, None),
             Event::Scalar("plain".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("squote".into(), ScalarStyle::SingleQuoted, 0, None),
             Event::Scalar("dquote".into(), ScalarStyle::DoubleQuoted, 0, None),
@@ -229,7 +284,9 @@ foobar";
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
+            Event::Comment(" This is a comment".into(), Placement::Above),
             Event::DocumentStart(true),
+            Event::Comment("-------".into(), Placement::Right),
             Event::Scalar("foobar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -254,7 +311,7 @@ a: |-
         [
             Event::StreamStart,
             Event::DocumentStart(false),
-            Event::MappingStart(0, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("a\n    b".into(), ScalarStyle::Literal, 0, None),
             Event::MappingEnd,
@@ -283,6 +340,7 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::DocumentStart(true),
+            Event::Comment("comment".into(), Placement::Right),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -295,6 +353,7 @@ fn test_bad_docstart() {
             Event::StreamStart,
             Event::DocumentStart(false),
             Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
+            Event::Comment("comment".into(), Placement::Right),
             Event::DocumentEnd,
             Event::StreamEnd,
         ]

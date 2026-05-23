@@ -4,7 +4,7 @@ use crate::{
 };
 use alloc::string::String;
 
-/// A parser input that uses a `&str` as source.
+/// A parser input backed by a `&str`.
 #[allow(clippy::module_name_repetitions)]
 pub struct StrInput<'a> {
     /// The full, original input string.
@@ -12,20 +12,20 @@ pub struct StrInput<'a> {
     /// This is kept to support O(1) byte-offset capture and zero-copy slicing via the optional
     /// [`Input::byte_offset`] / [`Input::slice_bytes`] APIs.
     original: &'a str,
-    /// The input str buffer.
+    /// The remaining input slice.
     ///
     /// This is a moving window into [`Self::original`]. All consuming operations advance this
     /// slice.
     buffer: &'a str,
     /// The number of characters we have looked ahead.
     ///
-    /// We must however keep track of how many characters the parser asked us to look ahead for so
-    /// that we can return the correct value in [`Self::buflen`].
+    /// This tracks how many characters the parser asked us to look ahead for so we can return the
+    /// correct value in [`Self::buflen`].
     lookahead: usize,
 }
 
 impl<'a> StrInput<'a> {
-    /// Create a new [`StrInput`] with the given str.
+    /// Create a new [`StrInput`] over the given string slice.
     #[must_use]
     pub fn new(input: &'a str) -> Self {
         Self {
@@ -50,8 +50,8 @@ impl Input for StrInput<'_> {
     #[inline]
     fn lookahead(&mut self, x: usize) {
         // We already have all characters that we need.
-        // We cannot add '\0's to the buffer should we prematurely reach EOF.
-        // Returning '\0's befalls the character-retrieving functions.
+        // We cannot add '\0's to the buffer when we reach EOF.
+        // Character-retrieving functions return '\0' when they read past EOF.
         self.lookahead = self.lookahead.max(x);
     }
 
@@ -195,7 +195,7 @@ impl Input for StrInput<'_> {
         if self.buffer.len() < 3 {
             false
         } else {
-            // Since all characters we look for are ascii, we can directly use the byte API of str.
+            // Since all characters we look for are ASCII, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
             (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && (bytes[0] == b'.' || bytes[0] == b'-')
@@ -209,7 +209,7 @@ impl Input for StrInput<'_> {
         if self.buffer.len() < 3 {
             false
         } else {
-            // Since all characters we look for are ascii, we can directly use the byte API of str.
+            // Since all characters we look for are ASCII, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
             (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && bytes[0] == b'-'
@@ -223,7 +223,7 @@ impl Input for StrInput<'_> {
         if self.buffer.len() < 3 {
             false
         } else {
-            // Since all characters we look for are ascii, we can directly use the byte API of str.
+            // Since all characters we look for are ASCII, we can directly use the byte API of str.
             let bytes = self.buffer.as_bytes();
             (bytes.len() == 3 || matches!(bytes[3], b' ' | b'\t' | 0 | b'\n' | b'\r'))
                 && bytes[0] == b'.'
@@ -239,8 +239,7 @@ impl Input for StrInput<'_> {
         let mut has_yaml_ws = false;
         let mut encountered_tab = false;
 
-        // This ugly pair of loops is the fastest way of trimming spaces (and maybe tabs) I found
-        // while keeping track of whether we encountered spaces and/or tabs.
+        // Separate loops keep the fast space-only path while still tracking whether tabs were seen.
         if skip_tabs == SkipTabs::Yes {
             loop {
                 if let Some(sub_str) = new_str.strip_prefix(' ') {
@@ -260,7 +259,7 @@ impl Input for StrInput<'_> {
             }
         }
 
-        // All characters consumed were ascii. We can use the byte length difference to count the
+        // All characters consumed were ASCII. We can use the byte length difference to count the
         // number of whitespace ignored.
         let mut chars_consumed = self.buffer.len() - new_str.len();
 
@@ -510,9 +509,9 @@ impl<'a> BorrowedInput<'a> for StrInput<'a> {
 
 /// The buffer size we return to the scanner.
 ///
-/// This does not correspond to any allocated buffer size. In practice, the scanner can withdraw
-/// any character they want. If it's within the input buffer, the given character is returned,
-/// otherwise `\0` is returned.
+/// This does not correspond to any allocated buffer size. In practice, the scanner may request any
+/// character in the virtual buffer: characters inside the input are returned as-is, and positions
+/// past EOF return `\0`.
 ///
 /// The number of characters we are asked to retrieve in [`lookahead`] depends on the buffer size
 /// of the input. Our buffer here is virtually unlimited, but the scanner cannot work with that. It
@@ -521,8 +520,8 @@ impl<'a> BorrowedInput<'a> for StrInput<'a> {
 /// expects [`buflen`] to return the same value that was given to [`lookahead`] right after its
 /// call.
 ///
-/// This create a complex situation where [`bufmaxlen`] influences what value [`lookahead`] is
-/// called with, which in turns dictates what [`buflen`] returns. In order to avoid breaking any
+/// This creates a complex situation where [`bufmaxlen`] influences what value [`lookahead`] is
+/// called with, which in turn dictates what [`buflen`] returns. In order to avoid breaking any
 /// function, we return this constant in [`bufmaxlen`] which, since the input is processed one line
 /// at a time, should fit what we expect to be a good balance between memory consumption and what
 /// we expect the maximum line length to be.
