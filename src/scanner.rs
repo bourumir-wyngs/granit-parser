@@ -1589,9 +1589,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Skip over YAML whitespace (` `, `\n`, `\r`).
     ///
+    /// If `stop_after_comment` is true, the function returns after queuing one comment so callers
+    /// can emit it before scanning later comments.
+    ///
     /// # Errors
     /// This function returns an error if no whitespace was found.
-    fn skip_yaml_whitespace(&mut self) -> ScanResult {
+    fn skip_yaml_whitespace(&mut self, stop_after_comment: bool) -> Result<bool, ScanError> {
         let mut need_whitespace = true;
         loop {
             match self.input.look_ch() {
@@ -1613,6 +1616,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         self.skip_comment();
                     } else {
                         self.push_comment_token()?;
+                        if stop_after_comment {
+                            return Ok(true);
+                        }
                     }
                 }
                 _ => break,
@@ -1622,7 +1628,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if need_whitespace {
             Err(ScanError::new_str(self.mark(), "expected whitespace"))
         } else {
-            Ok(())
+            Ok(false)
         }
     }
 
@@ -3634,8 +3640,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.skip_non_blank();
         let token_index = self.tokens.len();
-        self.skip_yaml_whitespace()?;
-        if self.input.peek() == '\t' {
+        let stopped_after_comment = self.skip_yaml_whitespace(true)?;
+        if !stopped_after_comment && self.input.peek() == '\t' {
             return Err(ScanError::new_str(
                 self.mark(),
                 "tabs disallowed in this context",
@@ -4139,7 +4145,7 @@ mod test {
     fn comment_skipping_path_consumes_comment_without_tokenizing_it() {
         let mut scanner = Scanner::new(StrInput::new("# skipped\nnext: value\n"));
 
-        scanner.skip_yaml_whitespace().unwrap();
+        scanner.skip_yaml_whitespace(false).unwrap();
 
         assert!(scanner.tokens.is_empty());
         assert_eq!(scanner.mark.line(), 2);

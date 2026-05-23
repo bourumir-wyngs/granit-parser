@@ -55,10 +55,39 @@ fn chars_pulled_until_error(source: &str) -> (usize, String) {
     }
 }
 
+fn chars_pulled_before_first_comment(source: &str) -> usize {
+    let read = Rc::new(Cell::new(0));
+    let iter = CountingChars {
+        iter: source.chars(),
+        read: Rc::clone(&read),
+    };
+    let mut parser = Parser::new_from_iter(iter);
+
+    loop {
+        let (event, _) = parser
+            .next_event()
+            .expect("parser should emit an event before EOF")
+            .expect("parser should accept generated comment run");
+        if matches!(event, Event::Comment(..)) {
+            return read.get();
+        }
+    }
+}
+
 fn long_comment_run(start: usize, count: usize) -> String {
     let mut comments = String::new();
     for index in start..start + count {
         comments.push_str("# c");
+        comments.push_str(&index.to_string());
+        comments.push('\n');
+    }
+    comments
+}
+
+fn long_indented_comment_run(start: usize, count: usize) -> String {
+    let mut comments = String::new();
+    for index in start..start + count {
+        comments.push_str("  # c");
         comments.push_str(&index.to_string());
         comments.push('\n');
     }
@@ -789,6 +818,20 @@ fn max_buffered_empty_node_comment_runs_preserve_span_order() {
         let events = parser_events(&yaml).expect("parser should accept capped comment run");
         assert_monotonic_spans(&events);
     }
+}
+
+#[test]
+fn parser_streams_explicit_key_comment_runs_before_reading_tail() {
+    let trailing_comments = long_indented_comment_run(1, 128);
+    let yaml = format!("? # c0\n{trailing_comments}  key\n: value\n");
+
+    let total = yaml.chars().count();
+    let pulled = chars_pulled_before_first_comment(&yaml);
+
+    assert!(
+        pulled < total / 2,
+        "parser read {pulled} of {total} chars before first explicit-key comment event",
+    );
 }
 
 #[test]

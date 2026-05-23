@@ -54,6 +54,12 @@
 //! excluding the line break. With [`Parser::new_from_str`], [`Span::slice`] returns that source
 //! comment text.
 //!
+//! # Limits
+//!
+//! To keep streaming parsing memory bounded, syntactically ambiguous collection-entry positions
+//! that require comment lookahead accept at most 32 consecutive comments before the following node
+//! is resolved. Longer runs return a [`ScanError`] instead of being buffered without bound.
+//!
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
 //!
