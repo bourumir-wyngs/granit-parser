@@ -36,7 +36,7 @@ where
     }
 }
 
-fn chars_pulled_before_first_comment(source: &str) -> usize {
+fn chars_pulled_until_error(source: &str) -> (usize, String) {
     let read = Rc::new(Cell::new(0));
     let iter = CountingChars {
         iter: source.chars(),
@@ -45,12 +45,12 @@ fn chars_pulled_before_first_comment(source: &str) -> usize {
     let mut parser = Parser::new_from_iter(iter);
 
     loop {
-        let (event, _) = parser
+        match parser
             .next_event()
             .expect("parser should emit an event before EOF")
-            .expect("parser should accept generated comment run");
-        if matches!(event, Event::Comment(..)) {
-            return read.get();
+        {
+            Ok(_) => {}
+            Err(error) => return (read.get(), error.info().to_owned()),
         }
     }
 }
@@ -776,7 +776,23 @@ fn empty_flow_mapping_value_after_comment_preserves_span_order() {
 }
 
 #[test]
-fn parser_streams_large_comment_runs_before_reading_tail() {
+fn max_buffered_empty_node_comment_runs_preserve_span_order() {
+    let trailing_comments = long_comment_run(1, 31);
+    let cases = [
+        format!("key: # c0\n{trailing_comments}next: value\n"),
+        format!("- # c0\n{trailing_comments}- value\n"),
+        format!("key:\n- # c0\n{trailing_comments}next: value\n"),
+        format!("root: {{key: # c0\n{trailing_comments}}}\n"),
+    ];
+
+    for yaml in cases {
+        let events = parser_events(&yaml).expect("parser should accept capped comment run");
+        assert_monotonic_spans(&events);
+    }
+}
+
+#[test]
+fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
     let trailing_comments = long_comment_run(1, 128);
     let cases = [
         (
@@ -799,11 +815,15 @@ fn parser_streams_large_comment_runs_before_reading_tail() {
 
     for (name, yaml) in cases {
         let total = yaml.chars().count();
-        let pulled = chars_pulled_before_first_comment(&yaml);
+        let (pulled, info) = chars_pulled_until_error(&yaml);
 
+        assert_eq!(
+            info, "too many consecutive comments before resolving collection entry",
+            "{name}: unexpected parser error",
+        );
         assert!(
             pulled < total / 2,
-            "{name}: parser read {pulled} of {total} chars before first comment event",
+            "{name}: parser read {pulled} of {total} chars before rejecting",
         );
     }
 }
