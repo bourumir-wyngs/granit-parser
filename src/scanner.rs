@@ -688,6 +688,11 @@ pub struct Scanner<'input, T> {
     /// If a plain scalar was terminated by a `#` comment on its line, we set this
     /// to detect an illegal multiline continuation on the following line.
     interrupted_plain_by_comment: Option<Marker>,
+    /// Whether the scanner is still validating whitespace after an explicit `?` key indicator.
+    ///
+    /// This stays set across streamed comment tokens so a tab after the comment run is rejected the
+    /// same way it was when that whitespace was scanned in one pass.
+    explicit_key_tab_check_pending: bool,
     /// A stack of markers for opening brackets `[` and `{`.
     flow_markers: smallvec::SmallVec<[(Marker, char); 8]>,
     buf_leading_break: String,
@@ -1009,6 +1014,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             implicit_flow_mapping_states: smallvec::SmallVec::new(),
             flow_markers: smallvec::SmallVec::new(),
             interrupted_plain_by_comment: None,
+            explicit_key_tab_check_pending: false,
 
             buf_leading_break: String::with_capacity(128),
             buf_trailing_breaks: String::with_capacity(128),
@@ -1499,7 +1505,21 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         loop {
-            match self.input.look_ch() {
+            let ch = self.input.look_ch();
+            if self.explicit_key_tab_check_pending {
+                match ch {
+                    '\t' => {
+                        return Err(ScanError::new_str(
+                            self.mark(),
+                            "tabs disallowed in this context",
+                        ));
+                    }
+                    ' ' | '\n' | '\r' | '#' => {}
+                    _ => self.explicit_key_tab_check_pending = false,
+                }
+            }
+
+            match ch {
                 // Tabs may not be used as indentation (block context only).
                 '\t' => {
                     if self.is_within_block()
@@ -3640,13 +3660,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.skip_non_blank();
         let token_index = self.tokens.len();
+        self.explicit_key_tab_check_pending = false;
         let stopped_after_comment = self.skip_yaml_whitespace(true)?;
-        if !stopped_after_comment && self.input.peek() == '\t' {
+        if self.input.peek() == '\t' {
             return Err(ScanError::new_str(
                 self.mark(),
                 "tabs disallowed in this context",
             ));
         }
+        self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
             token_index,
             Token(Span::new(start_mark, self.mark), TokenType::Key),
@@ -4156,7 +4178,7 @@ mod test {
     fn yaml_whitespace_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new(" # queued\n# later\n"));
 
-        assert_eq!(scanner.skip_yaml_whitespace(true).unwrap(), true);
+        assert!(scanner.skip_yaml_whitespace(true).unwrap());
 
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
@@ -4171,7 +4193,7 @@ mod test {
     fn token_skip_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\n"));
 
-        assert_eq!(scanner.skip_to_next_token(true).unwrap(), true);
+        assert!(scanner.skip_to_next_token(true).unwrap());
 
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(

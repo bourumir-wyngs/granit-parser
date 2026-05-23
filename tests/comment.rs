@@ -835,6 +835,17 @@ fn parser_streams_explicit_key_comment_runs_before_reading_tail() {
 }
 
 #[test]
+fn explicit_key_comment_does_not_hide_tab_indentation_error() {
+    let yaml = "? # c\n\tkey\n: value\n";
+
+    let err = Parser::new_from_str(yaml)
+        .find_map(Result::err)
+        .expect("parser should reject tab indentation after explicit key comment");
+
+    assert_eq!(err.info(), "tabs disallowed in this context");
+}
+
+#[test]
 fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
     let trailing_comments = long_comment_run(1, 128);
     let cases = [
