@@ -3965,7 +3965,7 @@ mod test {
 
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
-        scanner::{Scanner, Token, TokenType},
+        scanner::{ScalarStyle, Scanner, Token, TokenType},
     };
 
     struct CountingChars {
@@ -4150,6 +4150,90 @@ mod test {
         assert!(scanner.tokens.is_empty());
         assert_eq!(scanner.mark.line(), 2);
         assert_eq!(scanner.mark.col(), 0);
+    }
+
+    #[test]
+    fn yaml_whitespace_can_stop_after_queued_comment() {
+        let mut scanner = Scanner::new(StrInput::new(" # queued\n# later\n"));
+
+        assert_eq!(scanner.skip_yaml_whitespace(true).unwrap(), true);
+
+        assert_eq!(scanner.tokens.len(), 1);
+        assert!(matches!(
+            scanner.tokens.front().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " queued"
+        ));
+        assert_eq!(scanner.mark.line(), 1);
+        assert_eq!(scanner.mark.col(), 9);
+    }
+
+    #[test]
+    fn token_skip_can_stop_after_queued_comment() {
+        let mut scanner = Scanner::new(StrInput::new("# first\n# second\n"));
+
+        assert_eq!(scanner.skip_to_next_token(true).unwrap(), true);
+
+        assert_eq!(scanner.tokens.len(), 1);
+        assert!(matches!(
+            scanner.tokens.front().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " first"
+        ));
+        assert_eq!(scanner.mark.line(), 2);
+        assert_eq!(scanner.mark.col(), 0);
+    }
+
+    #[test]
+    fn scanner_emits_first_leading_comment_before_scanning_next_comment() {
+        let mut scanner = Scanner::new(StrInput::new("# first\n# second\nkey: value\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " first"
+        ));
+        assert!(scanner.tokens.is_empty());
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " second"
+        ));
+    }
+
+    #[test]
+    fn scanner_emits_quoted_scalar_comment_before_scanning_following_value() {
+        let mut scanner = Scanner::new(StrInput::new("\"key\" # quoted\n: value\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Comment(ref comment) if comment.text == " quoted"
+        ));
+    }
+
+    #[test]
+    fn flow_scalar_comment_disables_adjacent_value_lookahead() {
+        let mut scanner = Scanner::new(StrInput::new("\"key\"\n# quoted\n: value\n"));
+
+        scanner.fetch_flow_scalar(false).unwrap();
+
+        assert_eq!(scanner.adjacent_value_allowed_at, usize::MAX);
+        assert!(matches!(
+            scanner.tokens.front().unwrap().1,
+            TokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
+        ));
+        assert!(scanner.tokens.iter().any(|Token(_, token)| matches!(
+            token,
+            TokenType::Comment(comment) if comment.text == " quoted"
+        )));
     }
 
     #[test]

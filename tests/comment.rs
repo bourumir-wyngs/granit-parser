@@ -930,6 +930,34 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
 }
 
 #[test]
+fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
+    let yaml = "key:\n- # value\n  first\nnext: value\n";
+    let events = parser_events(yaml).expect("indentless sequence should parse");
+
+    let names: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
+            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "Scalar(key)",
+            "Comment( value)",
+            "Scalar(first)",
+            "SequenceEnd",
+            "Scalar(next)",
+            "Scalar(value)",
+        ]
+    );
+}
+
+#[test]
 fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
     let yaml = "{? # key\n  key\n: value, # comma\nnext: value}\n";
     let events = parser_events(yaml).expect("flow mapping should parse");
