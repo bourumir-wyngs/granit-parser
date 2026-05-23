@@ -1263,7 +1263,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.fetch_stream_start();
             return Ok(());
         }
-        self.skip_to_next_token()?;
+        if self.skip_to_next_token(true)? {
+            return Ok(());
+        }
 
         debug_print!(
             "  \x1B[38;5;244m\u{2192} fetch_next_token after whitespace {:?} {:?}\x1B[m",
@@ -1418,11 +1420,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 need_more = false;
                 // Stale potential keys that we know won't be keys.
                 self.stale_simple_keys()?;
-                // If our next token to be emitted may be a key, fetch more context.
-                for sk in &self.simple_keys {
-                    if sk.possible && sk.token_number == self.tokens_parsed {
-                        need_more = true;
-                        break;
+                if !matches!(
+                    self.tokens.front().map(|token| &token.1),
+                    Some(TokenType::Comment(_))
+                ) {
+                    // If our next token to be emitted may be a key, fetch more context.
+                    for sk in &self.simple_keys {
+                        if sk.possible && sk.token_number == self.tokens_parsed {
+                            need_more = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -1474,12 +1481,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Skip over whitespace (`\t`, ` `, `\n`, `\r`) until the next non-comment token.
     ///
     /// Comments encountered while skipping are queued as [`TokenType::Comment`] tokens so the
-    /// parser can emit them as presentation events.
+    /// parser can emit them as presentation events. If `stop_after_comment` is true, the function
+    /// returns after queuing one comment so callers can emit it before scanning later comments.
     ///
     /// # Errors
     /// This function returns an error if a tab is encountered where there should not be
     /// one.
-    fn skip_to_next_token(&mut self) -> ScanResult {
+    fn skip_to_next_token(&mut self, stop_after_comment: bool) -> Result<bool, ScanError> {
         // Hot-path helper: consume a single logical line break and apply simple-key rules.
         // (Kept local to ensure the compiler can inline it easily.)
         let consume_linebreak = |this: &mut Self| {
@@ -1537,6 +1545,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     if matches!(self.input.look_ch(), '\n' | '\r') {
                         consume_linebreak(self);
                     }
+                    if stop_after_comment {
+                        return Ok(true);
+                    }
                 }
 
                 _ => break,
@@ -1573,7 +1584,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     /// Skip over YAML whitespace (` `, `\n`, `\r`).
@@ -2951,8 +2962,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // From spec: To ensure JSON compatibility, if a key inside a flow mapping is JSON-like,
         // YAML allows the following value to be specified adjacent to the “:”.
-        self.skip_to_next_token()?;
-        self.adjacent_value_allowed_at = self.mark.index();
+        if self.skip_to_next_token(true)? {
+            self.adjacent_value_allowed_at = usize::MAX;
+        } else {
+            self.adjacent_value_allowed_at = self.mark.index();
+        }
 
         self.insert_token(token_index, tok);
         Ok(())

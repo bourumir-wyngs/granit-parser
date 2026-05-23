@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
     BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Parser, Placement,
@@ -7,6 +7,62 @@ use granit_parser::{
 
 fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
     Parser::new_from_str(source).collect()
+}
+
+/// Iterator wrapper that records how many characters the parser pulls from streaming input.
+struct CountingChars<I> {
+    /// Wrapped character iterator consumed by `Parser::new_from_iter`.
+    iter: I,
+    /// Shared count of successfully yielded characters.
+    ///
+    /// `Rc` lets the test keep a readable handle after this iterator is moved into the parser.
+    /// `Cell` gives that shared handle single-threaded interior mutability, so `next` can update
+    /// the count while the test can still read it later.
+    read: Rc<Cell<usize>>,
+}
+
+impl<I> Iterator for CountingChars<I>
+where
+    I: Iterator<Item = char>,
+{
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.iter.next();
+        if next.is_some() {
+            self.read.set(self.read.get() + 1);
+        }
+        next
+    }
+}
+
+fn chars_pulled_before_first_comment(source: &str) -> usize {
+    let read = Rc::new(Cell::new(0));
+    let iter = CountingChars {
+        iter: source.chars(),
+        read: Rc::clone(&read),
+    };
+    let mut parser = Parser::new_from_iter(iter);
+
+    loop {
+        let (event, _) = parser
+            .next_event()
+            .expect("parser should emit an event before EOF")
+            .expect("parser should accept generated comment run");
+        if matches!(event, Event::Comment(..)) {
+            return read.get();
+        }
+    }
+}
+
+fn long_comment_run(start: usize, count: usize) -> String {
+    let mut comments = String::new();
+    for index in start..start + count {
+        comments.push_str("# c");
+        comments.push_str(&index.to_string());
+        comments.push('\n');
+    }
+    comments
 }
 
 fn first_empty_scalar_span(events: &[(Event<'_>, Span)]) -> Span {
@@ -717,6 +773,39 @@ fn empty_flow_mapping_value_after_comment_preserves_span_order() {
     let events = parser_events(yaml).expect("flow mapping should parse");
 
     assert_monotonic_spans(&events);
+}
+
+#[test]
+fn parser_streams_large_comment_runs_before_reading_tail() {
+    let trailing_comments = long_comment_run(1, 128);
+    let cases = [
+        (
+            "block mapping value",
+            format!("key: # c0\n{trailing_comments}next: value\n"),
+        ),
+        (
+            "block sequence entry",
+            format!("- # c0\n{trailing_comments}- value\n"),
+        ),
+        (
+            "indentless sequence entry",
+            format!("key:\n- # c0\n{trailing_comments}next: value\n"),
+        ),
+        (
+            "flow mapping value",
+            format!("root: {{key: # c0\n{trailing_comments}}}\n"),
+        ),
+    ];
+
+    for (name, yaml) in cases {
+        let total = yaml.chars().count();
+        let pulled = chars_pulled_before_first_comment(&yaml);
+
+        assert!(
+            pulled < total / 2,
+            "{name}: parser read {pulled} of {total} chars before first comment event",
+        );
+    }
 }
 
 #[test]
