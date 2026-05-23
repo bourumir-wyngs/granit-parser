@@ -52,7 +52,19 @@ const EX2_17 : &str =
 const EX2_18 : &str =
     "plain:\n  This unquoted scalar\n  spans many lines.\n\nquoted: \"So does this\n  quoted scalar.\\n\"";
 
-// TODO: 2.19 - 2.22 schema tags
+// These examples demonstrate YAML schema resolution in the spec. granit-parser is a low-level
+// event parser, so the tests only assert that the examples parse with the expected node shape.
+const EX2_19 : &str =
+    "canonical: 12345\ndecimal: +12345\noctal: 0o14\nhexadecimal: 0xC";
+
+const EX2_20 : &str =
+    "canonical: 1.23015e+3\nexponential: 12.3015e+02\nfixed: 1230.15\nnegative infinity: -.inf\nnot a number: .nan";
+
+const EX2_21 : &str =
+    "null:\nbooleans: [ true, false ]\nstring: '012345'";
+
+const EX2_22 : &str =
+    "canonical: 2001-12-15T02:59:43.1Z\niso8601: 2001-12-14t21:59:43.10-05:00\nspaced: 2001-12-14 21:59:43.10 -5\ndate: 2002-12-14";
 
 const EX2_23 : &str =
     "---\nnot-date: !!str 2002-04-28\n\npicture: !!binary |\n R0lGODlhDAAMAIQAAP//9/X\n 17unp5WZmZgAAAOfn515eXv\n Pz7Y6OjuDg4J+fn5OTk6enp\n 56enmleECcgggoBADs=\n\napplication specific tag: !something |\n The semantics of the tag\n above may be different for\n different documents.";
@@ -72,7 +84,10 @@ const EX2_27 : &str =
 const EX2_28 : &str =
     "---\nTime: 2001-11-23 15:01:42 -5\nUser: ed\nWarning:\n  This is an error message\n  for the log file\n---\nTime: 2001-11-23 15:02:31 -5\nUser: ed\nWarning:\n  A slightly different error\n  message.\n---\nDate: 2001-11-23 15:03:17 -5\nUser: ed\nFatal:\n  Unknown variable \"bar\"\nStack:\n  - file: TopClass.py\n    line: 23\n    code: |\n      x = MoreObject(\"345\\n\")\n  - file: MoreClass.py\n    line: 58\n    code: |-\n      foo = bar";
 
-// TODO: 5.1 - 5.2 BOM
+const EX5_1 : &str = "\u{FEFF}# Comment only.";
+
+const EX5_2 : &str =
+    "- Invalid use of BOM\n\u{FEFF}\n- Inside a document.";
 
 const EX5_3 : &str =
     "sequence:\n- one\n- two\nmapping:\n  ? sky\n  : blue\n  sea : green";
@@ -91,8 +106,11 @@ const EX5_7 : &str =
 const EX5_8 : &str =
     "single: 'text'\ndouble: \"text\"";
 
-// TODO: 5.9 directive
-// TODO: 5.10 reserved indicator
+const EX5_9 : &str =
+    "%YAML 1.2\n--- text";
+
+const EX5_10 : &str =
+    "commercial-at: @text\ngrave-accent: `text";
 
 const EX5_11 : &str =
     "|\n  Line break (no glyph)\n  Line break (glyphed)\n";

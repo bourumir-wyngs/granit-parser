@@ -325,6 +325,77 @@ fn test_ex2_18_multi_line_flow_scalars() {
 }
 
 #[test]
+fn test_ex2_19_integers() {
+    let mut v = str_to_test_events(EX2_19).into_iter();
+    assert_next!(v, TestEvent::OnDocumentStart);
+    assert_next!(v, TestEvent::OnMapStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnMapEnd);
+    assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
+fn test_ex2_20_floating_point() {
+    let mut v = str_to_test_events(EX2_20).into_iter();
+    assert_next!(v, TestEvent::OnDocumentStart);
+    assert_next!(v, TestEvent::OnMapStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnMapEnd);
+    assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
+fn test_ex2_21_miscellaneous() {
+    let mut v = str_to_test_events(EX2_21).into_iter();
+    assert_next!(v, TestEvent::OnDocumentStart);
+    assert_next!(v, TestEvent::OnMapStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnNull);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnSequenceStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnSequenceEnd);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnMapEnd);
+    assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
+fn test_ex2_22_timestamps() {
+    let mut v = str_to_test_events(EX2_22).into_iter();
+    assert_next!(v, TestEvent::OnDocumentStart);
+    assert_next!(v, TestEvent::OnMapStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnMapEnd);
+    assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
 fn test_ex2_23_various_explicit_tags() {
     let mut v = str_to_test_events(EX2_23).into_iter();
     assert_next!(v, TestEvent::OnDocumentStart);
@@ -609,6 +680,35 @@ fn test_ex5_8_quoted_scalar_indicators() {
     assert_next!(v, TestEvent::OnScalar);
     assert_next!(v, TestEvent::OnMapEnd);
     assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
+fn test_ex5_1_byte_order_mark() {
+    assert!(str_to_test_events(EX5_1).is_empty());
+}
+
+#[test]
+fn test_ex5_2_invalid_byte_order_mark() {
+    assert_eq!(
+        str_to_test_error_info(EX5_2),
+        "a BOM must not appear inside a document"
+    );
+}
+
+#[test]
+fn test_ex5_9_directive_indicator() {
+    let mut v = str_to_test_events(EX5_9).into_iter();
+    assert_next!(v, TestEvent::OnDocumentStart);
+    assert_next!(v, TestEvent::OnScalar);
+    assert_next!(v, TestEvent::OnDocumentEnd);
+}
+
+#[test]
+fn test_ex5_10_invalid_use_of_reserved_indicators() {
+    assert_eq!(
+        str_to_test_error_info(EX5_10),
+        "unexpected character: `@'"
+    );
 }
 
 #[test]
@@ -1510,4 +1610,3 @@ fn test_ex8_22_block_collection_nodes() {
     assert_next!(v, TestEvent::OnMapEnd);
     assert_next!(v, TestEvent::OnDocumentEnd);
 }
-

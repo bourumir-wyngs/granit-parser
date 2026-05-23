@@ -76,9 +76,12 @@ pub enum Event<'input> {
     /// When the boolean is `false`, it is an implicit document start
     /// (without `---`).
     DocumentStart(bool),
-    /// The YAML end document directive (`...`).
+    /// The end of a YAML document.
+    ///
+    /// This event is emitted for both explicit document end markers (`...`) and implicit document
+    /// ends.
     DocumentEnd,
-    /// A YAML Alias.
+    /// A YAML alias.
     Alias(
         /// The anchor ID the alias refers to.
         usize,
@@ -95,20 +98,24 @@ pub enum Event<'input> {
         /// Best-effort placement relative to nearby YAML content.
         Placement,
     ),
-    /// Value, style, `anchor_id`, tag
+    /// A YAML scalar value.
     Scalar(
+        /// The scalar value after YAML escape processing.
         Cow<'input, str>,
+        /// The source notation used for the scalar.
         ScalarStyle,
+        /// The anchor ID defined on this scalar, or `0` if it has no anchor.
         usize,
+        /// The resolved tag attached to this scalar, if any.
         Option<Cow<'input, Tag>>,
     ),
     /// The start of a YAML sequence (array).
     SequenceStart(
         /// The notation style used for the sequence.
         StructureStyle,
-        /// The anchor ID of the start of the sequence.
+        /// The anchor ID defined on this sequence, or `0` if it has no anchor.
         usize,
-        /// An optional tag
+        /// The resolved tag attached to this sequence, if any.
         Option<Cow<'input, Tag>>,
     ),
     /// The end of a YAML sequence (array).
@@ -117,9 +124,9 @@ pub enum Event<'input> {
     MappingStart(
         /// The notation style used for the mapping (Flow or Block).
         StructureStyle,
-        /// The anchor ID of the start of the mapping.
+        /// The anchor ID defined on this mapping, or `0` if it has no anchor.
         usize,
-        /// An optional tag
+        /// The resolved tag attached to this mapping, if any.
         Option<Cow<'input, Tag>>,
     ),
     /// The end of a YAML mapping (object, hash).
@@ -156,9 +163,11 @@ pub enum StructureStyle {
 /// A YAML tag.
 #[derive(Clone, PartialEq, Debug, Eq, Ord, PartialOrd, Hash)]
 pub struct Tag {
-    /// Handle of the tag (`!` included).
+    /// Resolved tag handle or prefix.
+    ///
+    /// Examples include `tag:yaml.org,2002:` for core-schema tags and `!` for local tags.
     pub handle: String,
-    /// The suffix of the tag.
+    /// Tag suffix following the resolved handle or prefix.
     pub suffix: String,
 }
 
@@ -170,7 +179,7 @@ impl Tag {
     /// checks whether _the handle_ (but not the suffix) is the handle for the YAML Core Schema.
     ///
     /// # Return
-    /// Returns `true` if the handle is `tag:yaml.org,2002`, `false` otherwise.
+    /// Returns `true` if the handle is `tag:yaml.org,2002:`, `false` otherwise.
     #[must_use]
     pub fn is_yaml_core_schema(&self) -> bool {
         self.handle == "tag:yaml.org,2002:"
@@ -231,7 +240,7 @@ impl<'input> Event<'input> {
         }
     }
 
-    /// Return the target anchor ID if this event is an alias.
+    /// Return the target anchor ID referenced by this alias event, if this event is an alias.
     #[must_use]
     pub fn alias_id(&self) -> Option<usize> {
         match self {
@@ -240,7 +249,7 @@ impl<'input> Event<'input> {
         }
     }
 
-    /// Return the tag carried by this event, if any.
+    /// Return the resolved tag carried by this node event, if any.
     #[must_use]
     pub fn tag(&self) -> Option<&Tag> {
         match self {
@@ -369,10 +378,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 ///
 /// If a value is a sub-mapping or a sub-sequence, an [`Event::MappingStart`] or
 /// [`Event::SequenceStart`] event will be sent respectively. Following events until the associated
-/// [`Event::MappingStart`] or [`Event::SequenceEnd`] (beware of nested mappings or sequences) will
+/// [`Event::MappingEnd`] or [`Event::SequenceEnd`] (beware of nested mappings or sequences) will
 /// be part of the value and not another key-value pair or element in the sequence.
 ///
-/// For instance, the following yaml:
+/// For instance, the following YAML:
 /// ```yaml
 /// a: b
 /// c:
@@ -406,7 +415,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 ///     }
 /// }
 ///
-/// /// Load events from a yaml string.
+/// /// Load events from a YAML string.
 /// fn str_to_events(yaml: &str) -> Vec<Event<'_>> {
 ///     let mut sink = EventSink { events: Vec::new() };
 ///     let mut parser = Parser::new_from_str(yaml);
@@ -565,12 +574,12 @@ fn into_scan_result(result: Result<(), TryLoadError<Infallible>>) -> Result<(), 
     }
 }
 
-/// A convenience alias for a `Result` of a parser event.
+/// A convenience alias for a parser event result.
 pub type ParseResult<'input> = Result<(Event<'input>, Span), ScanError>;
 
 /// Trait extracted from `Parser` to support mocking and alternative implementations.
 pub trait ParserTrait<'input> {
-    /// Try to load the next event and return it, but do not consuming it from `self`.
+    /// Try to load the next event and return it without consuming it from `self`.
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>>;
 
     /// Try to load the next event and return it, consuming it from `self`.
@@ -627,7 +636,7 @@ pub trait ParserTrait<'input> {
 }
 
 impl<'input> Parser<'input, StrInput<'input>> {
-    /// Create a new instance of a parser from a &str.
+    /// Create a parser over a borrowed string slice.
     #[must_use]
     pub fn new_from_str(value: &'input str) -> Self {
         debug_print!("\x1B[;31m>>>>>>>>>> New parser from str\x1B[;0m");
@@ -639,7 +648,7 @@ impl<T> Parser<'static, BufferedInput<T>>
 where
     T: Iterator<Item = char>,
 {
-    /// Create a new instance of a parser from an iterator of `char`s.
+    /// Create a parser over an iterator of characters.
     #[must_use]
     pub fn new_from_iter(iter: T) -> Self {
         debug_print!("\x1B[;31m>>>>>>>>>> New parser from iter\x1B[;0m");
@@ -648,17 +657,17 @@ where
 }
 
 impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
-    /// Get the current anchor offset count.
+    /// Return the next anchor ID that will be assigned by this parser.
     pub fn get_anchor_offset(&self) -> usize {
         self.anchor_id_count
     }
 
-    /// Set the current anchor offset count.
+    /// Set the next anchor ID that will be assigned by this parser.
     pub fn set_anchor_offset(&mut self, offset: usize) {
         self.anchor_id_count = offset;
     }
 
-    /// Create a new instance of a parser from the given input of characters.
+    /// Create a parser over a custom input source.
     pub fn new(src: T) -> Self {
         Parser {
             scanner: Scanner::new(src),
@@ -682,11 +691,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
-    /// Whether to keep tags across multiple documents when parsing.
+    /// Configure whether tag directives remain active across document boundaries.
     ///
     /// This behavior is non-standard as per the YAML specification but can be encountered in the
-    /// wild. This boolean allows enabling this non-standard extension. This would result in the
-    /// parser accepting input from [test
+    /// wild. Passing `true` enables this non-standard extension and allows the parser to accept
+    /// input from [test
     /// QLJ7](https://github.com/yaml/yaml-test-suite/blob/ccfa74e56afb53da960847ff6e6976c0a0825709/src/QLJ7.yaml)
     /// of the yaml-test-suite:
     ///
@@ -710,7 +719,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self
     }
 
-    /// Try to load the next event and return it, but do not consuming it from `self`.
+    /// Try to load the next event and return it without consuming it from `self`.
     ///
     /// Any subsequent call to [`Parser::peek`] will return the same value, until a call to
     /// [`Iterator::next`] or [`Parser::load`].
@@ -1168,8 +1177,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        // let next_tok = self.peek_token().cloned()?;
-        // println!("cur_state {:?}, next tok: {:?}", self.state, next_tok);
         debug_print!("\n\x1B[;33mParser state: {:?} \x1B[;0m", self.state);
 
         match self.state {
@@ -1287,11 +1294,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         loop {
             match self.peek_token()? {
                 Token(span, TokenType::VersionDirective(_, _)) => {
-                    // XXX parsing with warning according to spec
-                    //if major != 1 || minor > 2 {
-                    //    return Err(ScanError::new_str(tok.0,
-                    //        "found incompatible YAML document"));
-                    //}
+                    // YAML version compatibility is non-fatal here. The scanner validates the
+                    // directive shape, and the parser rejects duplicates below, but it does not
+                    // expose a warning channel for unsupported versions.
                     if version_directive_received {
                         return Err(ScanError::new_str(
                             span.start,
@@ -1408,11 +1413,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     }
 
     fn register_anchor(&mut self, name: Cow<'input, str>, mark: &Span) -> Result<usize, ScanError> {
-        // anchors can be overridden/reused
-        // if self.anchors.contains_key(name) {
-        //     return Err(ScanError::new_str(*mark,
-        //         "while parsing anchor, found duplicated anchor"));
-        // }
+        // YAML permits anchor names to be reused. Aliases resolve to the most recent definition.
         let new_id = self.anchor_id_count;
         self.anchor_id_count = self.anchor_id_count.checked_add(1).ok_or_else(|| {
             ScanError::new_str(
@@ -1602,7 +1603,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.block_mapping_key_node()
                 }
             }
-            // XXX(chenyh): libyaml failed to parse spec 1.2, ex8.18
+            // A missing block-mapping key before `:` is represented as an empty scalar.
             Token(mark, TokenType::Value) => {
                 self.state = State::BlockMappingValue;
                 Ok((Event::empty_scalar(), mark))
@@ -2169,7 +2170,8 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         }
 
         if self.scanner.stream_ended() {
-            // XXX has parsed?
+            // The scanner has already reached EOF before the document loop, so emit the terminal
+            // event and stop.
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
             return Ok(());
         }

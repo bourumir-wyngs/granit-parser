@@ -20,18 +20,18 @@ const BUFFER_LEN: usize = 16;
 /// The YAML scanner often needs some lookahead. With fully allocated buffers such as `String` or
 /// `&str`, this is not an issue. However, with streams, we need to have a way of peeking multiple
 /// characters at a time and sometimes pushing some back into the stream.
-/// There is no "easy" way of doing this without itertools. In order to avoid pulling the entierty
-/// of itertools for one method, we use this structure.
+/// Doing this directly with iterator adapters would require pulling in all of `itertools` for one
+/// method, so this structure keeps the buffering local.
 #[allow(clippy::module_name_repetitions)]
 pub struct BufferedInput<T: Iterator<Item = char>> {
-    /// The iterator source,
+    /// The iterator source.
     input: T,
     /// Buffer for the next characters to consume.
     buffer: ArrayDeque<char, BUFFER_LEN>,
 }
 
 impl<T: Iterator<Item = char>> BufferedInput<T> {
-    /// Create a new [`BufferedInput`] with the given input.
+    /// Create a new [`BufferedInput`] over the given character iterator.
     pub fn new(input: T) -> Self {
         Self {
             input,

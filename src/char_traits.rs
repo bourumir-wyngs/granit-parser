@@ -28,7 +28,7 @@ pub fn is_blank(c: char) -> bool {
     c == ' ' || c == '\t'
 }
 
-/// Check whether the character is nil, a linebreak or a whitespace.
+/// Check whether the character is nil, a line break, or whitespace.
 ///
 /// `\0`, ` `, `\t`, `\n`, `\r`
 #[inline]
@@ -37,7 +37,7 @@ pub fn is_blank_or_breakz(c: char) -> bool {
     is_blank(c) || is_breakz(c)
 }
 
-/// Check whether the character is an ascii digit.
+/// Check whether the character is an ASCII digit.
 #[inline]
 #[must_use]
 pub fn is_digit(c: char) -> bool {

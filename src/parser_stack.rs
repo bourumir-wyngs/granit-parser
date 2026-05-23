@@ -14,7 +14,7 @@ pub struct ReplayParser<'input> {
 }
 
 impl<'input> ReplayParser<'input> {
-    /// Creates a new `ReplayParser`.
+    /// Create a parser that replays `events` and starts anchor allocation at `anchor_offset`.
     #[must_use]
     pub fn new(events: Vec<(Event<'input>, Span)>, anchor_offset: usize) -> Self {
         Self {
@@ -25,13 +25,13 @@ impl<'input> ReplayParser<'input> {
         }
     }
 
-    /// Get the current anchor offset count.
+    /// Return the next anchor ID that should be assigned after replayed events.
     #[must_use]
     pub fn get_anchor_offset(&self) -> usize {
         self.anchor_offset
     }
 
-    /// Set the current anchor offset count.
+    /// Set the next anchor ID that should be assigned after replayed events.
     pub fn set_anchor_offset(&mut self, offset: usize) {
         self.anchor_offset = offset;
     }
@@ -97,32 +97,32 @@ where
     I: Iterator<Item = char>,
     T: BorrowedInput<'input>,
 {
-    /// A parser over a string input.
+    /// A parser over borrowed string input.
     String {
-        /// The parser itself.
+        /// Parser currently producing events for this stack entry.
         parser: Parser<'input, StrInput<'input>>,
-        /// The name of the parser.
+        /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
     },
-    /// A parser over an iterator input.
+    /// A parser over an iterator of characters.
     Iter {
-        /// The parser itself.
+        /// Parser currently producing events for this stack entry.
         parser: Parser<'static, BufferedInput<I>>,
-        /// The name of the parser.
+        /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
     },
     /// A parser over a custom input.
     Custom {
-        /// The parser itself.
+        /// Parser currently producing events for this stack entry.
         parser: Parser<'input, T>,
-        /// The name of the parser.
+        /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
     },
     /// A parser over a replayed event stream.
     Replay {
-        /// The replay parser itself.
+        /// Replay parser currently producing pre-collected events for this stack entry.
         parser: ReplayParser<'input>,
-        /// The name of the parser.
+        /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
     },
 }
@@ -151,7 +151,7 @@ where
     }
 }
 
-/// A parser implementation that utilizes a stack for parsing.
+/// A parser implementation that uses a stack for include-style parsing.
 ///
 /// Note: `ParserStack` deliberately suppresses nested [`Event::StreamStart`] /
 /// [`Event::DocumentStart`] events when more than one parser is stacked, and the tests assert
@@ -192,7 +192,9 @@ where
         }
     }
 
-    /// Sets the include resolver for this stack.
+    /// Set the resolver used by [`Self::resolve`] and [`Self::push_include`].
+    ///
+    /// The resolver receives the include name and returns the included YAML source text.
     pub fn set_resolver(
         &mut self,
         resolver: impl FnMut(&str) -> Result<String, ScanError> + 'input,
@@ -247,7 +249,10 @@ where
         self.resolve(include_name)
     }
 
-    /// Pushes a string parser onto the stack.
+    /// Push a string parser onto the stack.
+    ///
+    /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
+    /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_str_parser(&mut self, mut parser: Parser<'input, StrInput<'input>>, name: String) {
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
@@ -255,7 +260,10 @@ where
         self.parsers.push(AnyParser::String { parser, name });
     }
 
-    /// Pushes an iterator parser onto the stack.
+    /// Push an iterator-backed parser onto the stack.
+    ///
+    /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
+    /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_iter_parser(
         &mut self,
         mut parser: Parser<'static, BufferedInput<I>>,
@@ -267,7 +275,10 @@ where
         self.parsers.push(AnyParser::Iter { parser, name });
     }
 
-    /// Pushes a custom parser onto the stack.
+    /// Push a custom-input parser onto the stack.
+    ///
+    /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
+    /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_custom_parser(&mut self, mut parser: Parser<'input, T>, name: String) {
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
@@ -275,7 +286,10 @@ where
         self.parsers.push(AnyParser::Custom { parser, name });
     }
 
-    /// Pushes a replay parser onto the stack.
+    /// Push a replay parser onto the stack.
+    ///
+    /// Replay parsers are used for included content that has already been parsed into events.
+    /// `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_replay_parser(&mut self, mut parser: ReplayParser<'input>, name: String) {
         if let Some(parent) = self.parsers.last() {
             let inherited = parent.get_anchor_offset();
@@ -285,7 +299,10 @@ where
         self.parsers.push(AnyParser::Replay { parser, name });
     }
 
-    /// Pushes a custom parser onto the stack and primes the next event to be returned from it.
+    /// Push a custom parser and set the first event that should be returned from it.
+    ///
+    /// This is used when the caller has already consumed the parser's first event before deciding
+    /// to place it on the stack.
     pub fn push_custom_parser_with_current(
         &mut self,
         mut parser: Parser<'input, T>,
@@ -299,13 +316,13 @@ where
         self.current = Some(current);
     }
 
-    /// Returns the anchor offset that a newly pushed parser should inherit.
+    /// Return the anchor offset that a newly pushed parser should inherit.
     #[must_use]
     pub fn current_anchor_offset(&self) -> usize {
         self.parsers.last().map_or(0, AnyParser::get_anchor_offset)
     }
 
-    /// Returns the names of the parsers currently in the stack.
+    /// Return the names of the parsers currently in the stack, from bottom to top.
     #[must_use]
     pub fn stack(&self) -> Vec<String> {
         self.parsers
@@ -372,7 +389,7 @@ where
                         return Ok((Event::DocumentEnd, span));
                     }
 
-                    // Check if it has more documents
+                    // Continue the parent parser if it has more documents.
                     let peek_res = match self.parsers.last_mut().unwrap() {
                         AnyParser::String { parser, .. } => parser.peek(),
                         AnyParser::Iter { parser, .. } => parser.peek(),
@@ -465,10 +482,10 @@ where
         multi: bool,
     ) -> Result<(), ScanError> {
         while let Some(res) = self.next_event() {
-            // Fetch the next event, which is properly synced across the stack
+            // Fetch the next event from the active stack entry.
             let (ev, span) = res?;
 
-            // Track if we need to stop based on `multi`
+            // Track whether to stop based on `multi`.
             let is_doc_end = matches!(ev, Event::DocumentEnd);
             let is_stream_end = matches!(ev, Event::StreamEnd);
 
@@ -478,7 +495,7 @@ where
                 break;
             }
 
-            // If we only want a single document and we just reached the end of one, stop
+            // Stop after one document when multi-document parsing is disabled.
             if !multi && is_doc_end {
                 break;
             }

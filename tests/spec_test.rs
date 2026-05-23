@@ -91,6 +91,31 @@ fn str_to_test_events(docs: &str) -> Vec<TestEvent> {
     p.evs
 }
 
+fn str_to_test_error_info(docs: &str) -> String {
+    let mut str_error = None;
+    let mut iter_error = None;
+
+    for x in Parser::new_from_str(docs) {
+        if let Err(e) = x {
+            str_error = Some(e);
+            break;
+        }
+    }
+    for x in Parser::new_from_iter(docs.chars()) {
+        if let Err(e) = x {
+            iter_error = Some(e);
+            break;
+        }
+    }
+
+    let str_error = str_error.expect("expected Parser::new_from_str to fail");
+    let iter_error = iter_error.expect("expected Parser::new_from_iter to fail");
+    assert_eq!(str_error.info(), iter_error.info());
+    assert_eq!(str_error.marker(), iter_error.marker());
+
+    str_error.info().to_owned()
+}
+
 macro_rules! assert_next {
     ($v:expr, $p:pat) => {
         match $v.next().unwrap() {
