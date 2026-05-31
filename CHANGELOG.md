@@ -1,4 +1,7 @@
 # Changelog
+## v0.0.4
+- Performance improvements on comment parsing
+
 
 ## v0.0.3
 
