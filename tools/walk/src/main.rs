@@ -69,7 +69,7 @@ fn load_first_document(contents: &str) -> Result<WalkNode> {
     while let Some(event) = parser.next() {
         let (event, span) = event.map_err(|err| miette!("{err}"))?;
         match event {
-            Event::StreamStart => {}
+            Event::StreamStart | Event::Comment(..) => {}
             Event::DocumentStart(_) => return load_document_node(&mut parser, span),
             Event::StreamEnd => bail!("No YAML document found"),
             event => return build_node(&event, span, &mut parser),
@@ -92,7 +92,7 @@ fn load_document_node<'input>(
                     data: WalkData::Scalar,
                 });
             }
-            Event::StreamStart | Event::DocumentStart(_) => {}
+            Event::StreamStart | Event::DocumentStart(_) | Event::Comment(..) => {}
             event => return build_node(&event, span, parser),
         }
     }
@@ -113,6 +113,7 @@ fn build_node<'input>(
         Event::SequenceStart(..) => build_sequence(span, parser),
         Event::MappingStart(..) => build_mapping(span, parser),
         Event::Nothing => bail!("Unexpected internal parser event"),
+        Event::Comment(..) => bail!("Unexpected comment while building node"),
         Event::StreamStart
         | Event::StreamEnd
         | Event::DocumentStart(_)
@@ -129,7 +130,7 @@ fn build_sequence<'input>(
     let mut items = Vec::new();
 
     loop {
-        let (event, span) = next_event(parser)?;
+        let (event, span) = next_data_event(parser)?;
         if matches!(event, Event::SequenceEnd) {
             return Ok(WalkNode {
                 span: span_from_bounds(start_span, span),
@@ -150,7 +151,7 @@ fn build_mapping<'input>(
     let mut items = Vec::new();
 
     loop {
-        let (event, span) = next_event(parser)?;
+        let (event, span) = next_data_event(parser)?;
         if matches!(event, Event::MappingEnd) {
             return Ok(WalkNode {
                 span: span_from_bounds(start_span, span),
@@ -162,7 +163,7 @@ fn build_mapping<'input>(
         }
 
         let key = build_node(&event, span, parser)?;
-        let (event, span) = next_event(parser)?;
+        let (event, span) = next_data_event(parser)?;
         if matches!(
             event,
             Event::MappingEnd | Event::DocumentEnd | Event::StreamEnd
@@ -171,6 +172,18 @@ fn build_mapping<'input>(
         }
         let value = build_node(&event, span, parser)?;
         items.push((key, value));
+    }
+}
+
+fn next_data_event<'input>(
+    parser: &mut impl Iterator<Item = std::result::Result<(Event<'input>, Span), ScanError>>,
+) -> Result<(Event<'input>, Span)> {
+    loop {
+        let (event, span) = next_event(parser)?;
+        if matches!(event, Event::Comment(..)) {
+            continue;
+        }
+        return Ok((event, span));
     }
 }
 

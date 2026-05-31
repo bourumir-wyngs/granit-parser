@@ -9,7 +9,7 @@ fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
     Parser::new_from_str(source).collect()
 }
 
-fn scanner_tokens<'input>(source: &'input str) -> Result<Vec<Token<'input>>, ScanError> {
+fn scanner_tokens(source: &str) -> Result<Vec<Token<'_>>, ScanError> {
     let mut scanner = Scanner::new(StrInput::new(source));
     let mut tokens = Vec::new();
 
