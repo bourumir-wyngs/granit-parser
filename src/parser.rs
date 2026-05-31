@@ -6,7 +6,7 @@
 
 use crate::{
     input::{str::StrInput, BorrowedInput},
-    scanner::{Comment, Placement, ScalarStyle, ScanError, Scanner, Span, Token, TokenType},
+    scanner::{Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError, Scanner, Span},
     BufferedInput,
 };
 
@@ -311,7 +311,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The state in which we currently are.
     state: State,
     /// The next token from the scanner.
-    token: Option<Token<'input>>,
+    token: Option<QueuedToken<'input>>,
     /// The next YAML event to emit.
     current: Option<(Event<'input>, Span)>,
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
@@ -755,7 +755,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
-                } else if let Some(comment) = self.next_comment_event()? {
+                } else if let Some(comment) = self.maybe_next_comment_event()? {
                     Ok(comment)
                 } else {
                     self.parse()
@@ -776,7 +776,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     }
 
     /// Peek at the next token from the scanner.
-    fn peek_token(&mut self) -> Result<&Token<'_>, ScanError> {
+    fn peek_token(&mut self) -> Result<&QueuedToken<'_>, ScanError> {
         match self.token {
             None => {
                 self.token = Some(self.scan_next_token()?);
@@ -789,13 +789,25 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Extract and return the next token from the scanner.
     ///
     /// This function does _not_ make use of `self.token`.
-    fn scan_next_token(&mut self) -> Result<Token<'input>, ScanError> {
-        match self.scanner.next() {
+    fn scan_next_token(&mut self) -> Result<QueuedToken<'input>, ScanError> {
+        match self.scanner.next_queued_token()? {
             None => match self.scanner.get_error() {
                 None => Err(self.unexpected_eof()),
                 Some(e) => e.into_result(),
             },
             Some(tok) => Ok(tok),
+        }
+    }
+
+    #[inline]
+    fn maybe_next_comment_event<'a>(&mut self) -> Result<Option<(Event<'a>, Span)>, ScanError>
+    where
+        'input: 'a,
+    {
+        if self.scanner.comments_possible() {
+            self.next_comment_event()
+        } else {
+            Ok(None)
         }
     }
 
@@ -805,17 +817,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let is_comment = {
             let token = self.peek_token()?;
-            matches!(token.1, TokenType::Comment(_))
+            matches!(token.1, QueuedTokenType::Comment(_))
         };
 
         if !is_comment {
             return Ok(None);
         }
 
-        let Token(span, token) = self.fetch_token();
+        let QueuedToken(span, token) = self.fetch_token();
         match token {
-            TokenType::Comment(mut comment) => {
-                comment.placement = self.refined_comment_placement(&comment);
+            QueuedTokenType::Comment(mut comment) => {
+                comment.placement = self.refined_comment_placement(span, comment.placement);
                 Ok(Some((
                     Event::Comment(comment.text, comment.placement),
                     span,
@@ -825,11 +837,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[inline]
     fn next_comment_events(&mut self) -> Result<Vec<(Event<'input>, Span)>, ScanError> {
+        if !self.scanner.comments_possible() {
+            return Ok(Vec::new());
+        }
+
         let mut events = Vec::new();
         loop {
             match self.peek_token() {
-                Ok(token) if matches!(token.1, TokenType::Comment(_)) => {}
+                Ok(token) if matches!(token.1, QueuedTokenType::Comment(_)) => {}
                 Err(error) if events.is_empty() => return Err(error),
                 Ok(_) | Err(_) => return Ok(events),
             }
@@ -918,19 +935,19 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.queue_tail_and_return_first(ordered)
     }
 
-    fn refined_comment_placement(&mut self, comment: &Comment<'_>) -> Placement {
-        if comment.placement == Placement::Right {
+    fn refined_comment_placement(&mut self, span: Span, placement: Placement) -> Placement {
+        if placement == Placement::Right {
             return Placement::Right;
         }
 
         let Ok(next) = self.peek_token() else {
-            return comment.placement;
+            return placement;
         };
-        if matches!(next.1, TokenType::StreamEnd) {
+        if matches!(next.1, QueuedTokenType::StreamEnd) {
             return Placement::Last;
         }
 
-        if next.0.start.line() == comment.span.end.line() + 1 {
+        if next.0.start.line() == span.end.line() + 1 {
             Placement::Above
         } else {
             Placement::Free
@@ -965,7 +982,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ScanError::new_str(self.scanner.mark(), info)
     }
 
-    fn fetch_token<'a>(&mut self) -> Token<'a>
+    fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
     where
         'input: 'a,
     {
@@ -999,7 +1016,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         self.push_state(return_state);
         self.state = node_state;
-        if let Some(comment) = self.next_comment_event()? {
+        if let Some(comment) = self.maybe_next_comment_event()? {
             Ok(comment)
         } else {
             self.parse_node(block, indentless_sequence)
@@ -1271,12 +1288,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(span, TokenType::StreamStart(_)) => {
+            QueuedToken(span, QueuedTokenType::StreamStart(_)) => {
                 self.state = State::ImplicitDocumentStart;
                 self.skip();
                 Ok((Event::StreamStart, span))
             }
-            Token(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new_str(
                 span.start,
                 "did not find expected <stream-start>",
             )),
@@ -1287,7 +1304,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        while let TokenType::DocumentEnd = self.peek_token()?.1 {
+        while let QueuedTokenType::DocumentEnd = self.peek_token()?.1 {
             self.skip();
         }
 
@@ -1295,22 +1312,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.anchors.clear();
 
         match *self.peek_token()? {
-            Token(span, TokenType::StreamEnd) => {
+            QueuedToken(span, QueuedTokenType::StreamEnd) => {
                 self.state = State::End;
                 self.skip();
                 Ok((Event::StreamEnd, span))
             }
-            Token(
+            QueuedToken(
                 _,
-                TokenType::VersionDirective(..)
-                | TokenType::TagDirective(..)
-                | TokenType::ReservedDirective(..)
-                | TokenType::DocumentStart,
+                QueuedTokenType::VersionDirective(..)
+                | QueuedTokenType::TagDirective(..)
+                | QueuedTokenType::ReservedDirective(..)
+                | QueuedTokenType::DocumentStart,
             ) => {
                 // explicit document
                 self.explicit_document_start()
             }
-            Token(span, _) if implicit => {
+            QueuedToken(span, _) if implicit => {
                 self.parser_process_directives()?;
                 self.push_state(State::DocumentEnd);
                 self.state = State::BlockNode;
@@ -1334,7 +1351,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         loop {
             match self.peek_token()? {
-                Token(span, TokenType::VersionDirective(_, _)) => {
+                QueuedToken(span, QueuedTokenType::VersionDirective(_, _)) => {
                     // YAML version compatibility is non-fatal here. The scanner validates the
                     // directive shape, and the parser rejects duplicates below, but it does not
                     // expose a warning channel for unsupported versions.
@@ -1346,13 +1363,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     }
                     version_directive_received = true;
                 }
-                Token(mark, TokenType::TagDirective(handle, prefix)) => {
+                QueuedToken(mark, QueuedTokenType::TagDirective(handle, prefix)) => {
                     if !document_tag_handles.insert(handle.to_string()) {
                         return Err(ScanError::new_str(mark.start, "the TAG directive must only be given at most once per handle in the same document"));
                     }
                     tags.insert(handle.to_string(), prefix.to_string());
                 }
-                Token(_, TokenType::ReservedDirective(_, _)) => {
+                QueuedToken(_, QueuedTokenType::ReservedDirective(_, _)) => {
                     // Reserved directives are ignored
                 }
                 _ => break,
@@ -1369,17 +1386,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         self.parser_process_directives()?;
-        if let Some(comment) = self.next_comment_event()? {
+        if let Some(comment) = self.maybe_next_comment_event()? {
             return Ok(comment);
         }
         match *self.peek_token()? {
-            Token(mark, TokenType::DocumentStart) => {
+            QueuedToken(mark, QueuedTokenType::DocumentStart) => {
                 self.push_state(State::DocumentEnd);
                 self.state = State::DocumentContent;
                 self.skip();
                 Ok((Event::DocumentStart(true), mark))
             }
-            Token(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new_str(
                 span.start,
                 "did not find expected <document start>",
             )),
@@ -1390,14 +1407,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(
+        if let QueuedToken(
             mark,
-            TokenType::VersionDirective(..)
-            | TokenType::TagDirective(..)
-            | TokenType::ReservedDirective(..)
-            | TokenType::DocumentStart
-            | TokenType::DocumentEnd
-            | TokenType::StreamEnd,
+            QueuedTokenType::VersionDirective(..)
+            | QueuedTokenType::TagDirective(..)
+            | QueuedTokenType::ReservedDirective(..)
+            | QueuedTokenType::DocumentStart
+            | QueuedTokenType::DocumentEnd
+            | QueuedTokenType::StreamEnd,
         ) = *self.peek_token()?
         {
             self.pop_state();
@@ -1415,12 +1432,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mut explicit_end = false;
         let span: Span = match *self.peek_token()? {
-            Token(span, TokenType::DocumentEnd) => {
+            QueuedToken(span, QueuedTokenType::DocumentEnd) => {
                 explicit_end = true;
                 self.skip();
                 span
             }
-            Token(span, _) => span,
+            QueuedToken(span, _) => span,
         };
 
         if self.keep_tags {
@@ -1435,11 +1452,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         if explicit_end {
             self.state = State::ImplicitDocumentStart;
         } else {
-            if let Token(
+            if let QueuedToken(
                 span,
-                TokenType::VersionDirective(..)
-                | TokenType::TagDirective(..)
-                | TokenType::ReservedDirective(..),
+                QueuedTokenType::VersionDirective(..)
+                | QueuedTokenType::TagDirective(..)
+                | QueuedTokenType::ReservedDirective(..),
             ) = *self.peek_token()?
             {
                 return Err(ScanError::new_str(
@@ -1476,16 +1493,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Some(comment) = self.next_comment_event()? {
+        if let Some(comment) = self.maybe_next_comment_event()? {
             return Ok(comment);
         }
 
         let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
         let mut tag = self.pending_node_tag.take();
         match *self.peek_token()? {
-            Token(_, TokenType::Alias(_)) => {
+            QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
-                if let Token(span, TokenType::Alias(name)) = self.fetch_token() {
+                if let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() {
                     match self.anchors.get(&*name) {
                         None => {
                             return Err(ScanError::new_str(
@@ -1498,17 +1515,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
                 unreachable!()
             }
-            Token(_, TokenType::Anchor(_)) => {
-                if let Token(span, TokenType::Anchor(name)) = self.fetch_token() {
+            QueuedToken(_, QueuedTokenType::Anchor(_)) => {
+                if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
                     anchor_id = self.register_anchor(name, &span)?;
-                    if let TokenType::Tag(..) = self.peek_token()?.1 {
-                        if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
+                    if let QueuedTokenType::Tag(..) = self.peek_token()?.1 {
+                        if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
                             tag = Some(self.resolve_tag(span, &handle, suffix)?);
                         } else {
                             unreachable!()
                         }
                     }
-                    if let Some(comment) = self.next_comment_event()? {
+                    if let Some(comment) = self.maybe_next_comment_event()? {
                         self.save_pending_node_properties(anchor_id, tag);
                         return Ok(comment);
                     }
@@ -1516,17 +1533,18 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     unreachable!()
                 }
             }
-            Token(mark, TokenType::Tag(..)) => {
-                if let TokenType::Tag(handle, suffix) = self.fetch_token().1 {
+            QueuedToken(mark, QueuedTokenType::Tag(..)) => {
+                if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                    if let TokenType::Anchor(_) = &self.peek_token()?.1 {
-                        if let Token(mark, TokenType::Anchor(name)) = self.fetch_token() {
+                    if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
+                        if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
+                        {
                             anchor_id = self.register_anchor(name, &mark)?;
                         } else {
                             unreachable!()
                         }
                     }
-                    if let Some(comment) = self.next_comment_event()? {
+                    if let Some(comment) = self.maybe_next_comment_event()? {
                         self.save_pending_node_properties(anchor_id, tag);
                         return Ok(comment);
                     }
@@ -1537,7 +1555,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             _ => {}
         }
         match *self.peek_token()? {
-            Token(mark, TokenType::BlockEntry) if indentless_sequence => {
+            QueuedToken(mark, QueuedTokenType::BlockEntry) if indentless_sequence => {
                 self.skip();
                 let comments = self.next_comment_events()?;
                 let start = (
@@ -1548,9 +1566,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::IndentlessSequenceEntryNode;
                     Ok(start)
-                } else if let Ok(Token(
+                } else if let Ok(QueuedToken(
                     _,
-                    TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                    QueuedTokenType::BlockEntry
+                    | QueuedTokenType::Key
+                    | QueuedTokenType::Value
+                    | QueuedTokenType::BlockEnd,
                 )) = self.peek_token()
                 {
                     self.state = State::IndentlessSequenceEntry;
@@ -1565,15 +1586,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_event_by_span(comments, start))
                 }
             }
-            Token(_, TokenType::Scalar(..)) => {
+            QueuedToken(_, QueuedTokenType::Scalar(..)) => {
                 self.pop_state();
-                if let Token(mark, TokenType::Scalar(style, v)) = self.fetch_token() {
+                if let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token() {
                     Ok((Event::Scalar(v, style, anchor_id, tag), mark))
                 } else {
                     unreachable!()
                 }
             }
-            Token(mark, TokenType::FlowSequenceStart) => {
+            QueuedToken(mark, QueuedTokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
                 self.skip();
                 Ok((
@@ -1581,7 +1602,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     mark,
                 ))
             }
-            Token(mark, TokenType::FlowMappingStart) => {
+            QueuedToken(mark, QueuedTokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
                 self.skip();
                 Ok((
@@ -1589,7 +1610,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     mark,
                 ))
             }
-            Token(mark, TokenType::BlockSequenceStart) if block => {
+            QueuedToken(mark, QueuedTokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
                 self.skip();
                 Ok((
@@ -1597,7 +1618,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     mark,
                 ))
             }
-            Token(mark, TokenType::BlockMappingStart) if block => {
+            QueuedToken(mark, QueuedTokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
                 self.skip();
                 Ok((
@@ -1606,11 +1627,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
-            Token(mark, _) if tag.is_some() || anchor_id > 0 => {
+            QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
                 self.pop_state();
                 Ok((Event::empty_scalar_with_anchor(anchor_id, tag), mark))
             }
-            Token(span, _) => {
+            QueuedToken(span, _) => {
                 let info = match self.state {
                     State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
                         "unexpected EOF while parsing a flow sequence"
@@ -1644,13 +1665,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(_, TokenType::Key) => {
+            QueuedToken(_, QueuedTokenType::Key) => {
                 // Indentation is only meaningful for block mapping keys.
-                if let Token(key_span, TokenType::Key) = *self.peek_token()? {
+                if let QueuedToken(key_span, QueuedTokenType::Key) = *self.peek_token()? {
                     self.pending_key_indent = Some(key_span.start.col());
                 }
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::BlockMappingKeyNode;
                     Ok(comment)
                 } else {
@@ -1658,16 +1679,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             // A missing block-mapping key before `:` is represented as an empty scalar.
-            Token(mark, TokenType::Value) => {
+            QueuedToken(mark, QueuedTokenType::Value) => {
                 self.state = State::BlockMappingValue;
                 Ok((Event::empty_scalar(), mark))
             }
-            Token(mark, TokenType::BlockEnd) => {
+            QueuedToken(mark, QueuedTokenType::BlockEnd) => {
                 self.pop_state();
                 self.skip();
                 Ok((Event::MappingEnd, mark))
             }
-            Token(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new_str(
                 span.start,
                 "while parsing a block mapping, did not find expected key",
             )),
@@ -1678,8 +1699,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(mark, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
-            *self.peek_token()?
+        if let QueuedToken(
+            mark,
+            QueuedTokenType::Key | QueuedTokenType::Value | QueuedTokenType::BlockEnd,
+        ) = *self.peek_token()?
         {
             self.state = State::BlockMappingValue;
             Ok((Event::empty_scalar(), mark))
@@ -1698,14 +1721,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(mark, TokenType::Value) => {
+            QueuedToken(mark, QueuedTokenType::Value) => {
                 self.skip();
                 let comments = self.next_comment_events()?;
                 if comments.is_empty() {
                     self.block_mapping_value_node_with_empty_span(mark)
-                } else if let Ok(Token(
+                } else if let Ok(QueuedToken(
                     _,
-                    TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                    QueuedTokenType::Key | QueuedTokenType::Value | QueuedTokenType::BlockEnd,
                 )) = self.peek_token()
                 {
                     self.state = State::BlockMappingKey;
@@ -1716,7 +1739,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_tail_and_return_first(comments))
                 }
             }
-            Token(mark, _) => {
+            QueuedToken(mark, _) => {
                 self.state = State::BlockMappingKey;
                 // empty scalar
                 Ok((Event::empty_scalar(), mark))
@@ -1739,8 +1762,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(_, TokenType::Key | TokenType::Value | TokenType::BlockEnd) =
-            *self.peek_token()?
+        if let QueuedToken(
+            _,
+            QueuedTokenType::Key | QueuedTokenType::Value | QueuedTokenType::BlockEnd,
+        ) = *self.peek_token()?
         {
             self.state = State::BlockMappingKey;
             Ok((Event::empty_scalar(), mark))
@@ -1758,53 +1783,54 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let span: Span = if let Token(mark, TokenType::FlowMappingEnd) = *self.peek_token()? {
-            mark
-        } else {
-            if !first {
-                match *self.peek_token()? {
-                    Token(_, TokenType::FlowEntry) => {
-                        self.skip();
-                        if let Some(comment) = self.next_comment_event()? {
-                            self.state = State::FlowMappingFirstKey;
-                            return Ok(comment);
+        let span: Span =
+            if let QueuedToken(mark, QueuedTokenType::FlowMappingEnd) = *self.peek_token()? {
+                mark
+            } else {
+                if !first {
+                    match *self.peek_token()? {
+                        QueuedToken(_, QueuedTokenType::FlowEntry) => {
+                            self.skip();
+                            if let Some(comment) = self.maybe_next_comment_event()? {
+                                self.state = State::FlowMappingFirstKey;
+                                return Ok(comment);
+                            }
+                        }
+                        QueuedToken(span, _) => {
+                            return Err(ScanError::new_str(
+                                span.start,
+                                "while parsing a flow mapping, did not find expected ',' or '}'",
+                            ))
                         }
                     }
-                    Token(span, _) => {
-                        return Err(ScanError::new_str(
-                            span.start,
-                            "while parsing a flow mapping, did not find expected ',' or '}'",
-                        ))
+                }
+
+                match *self.peek_token()? {
+                    QueuedToken(_, QueuedTokenType::Key) => {
+                        self.skip();
+                        if let Some(comment) = self.maybe_next_comment_event()? {
+                            self.state = State::FlowMappingKeyNode;
+                            return Ok(comment);
+                        }
+                        return self.flow_mapping_key_node();
+                    }
+                    QueuedToken(marker, QueuedTokenType::Value) => {
+                        self.state = State::FlowMappingValue;
+                        return Ok((Event::empty_scalar(), marker));
+                    }
+                    QueuedToken(_, QueuedTokenType::FlowMappingEnd) => (),
+                    _ => {
+                        return self.defer_parse_node(
+                            State::FlowNode,
+                            State::FlowMappingEmptyValue,
+                            false,
+                            false,
+                        );
                     }
                 }
-            }
 
-            match *self.peek_token()? {
-                Token(_, TokenType::Key) => {
-                    self.skip();
-                    if let Some(comment) = self.next_comment_event()? {
-                        self.state = State::FlowMappingKeyNode;
-                        return Ok(comment);
-                    }
-                    return self.flow_mapping_key_node();
-                }
-                Token(marker, TokenType::Value) => {
-                    self.state = State::FlowMappingValue;
-                    return Ok((Event::empty_scalar(), marker));
-                }
-                Token(_, TokenType::FlowMappingEnd) => (),
-                _ => {
-                    return self.defer_parse_node(
-                        State::FlowNode,
-                        State::FlowMappingEmptyValue,
-                        false,
-                        false,
-                    );
-                }
-            }
-
-            self.peek_token()?.0
-        };
+                self.peek_token()?.0
+            };
 
         self.pop_state();
         self.skip();
@@ -1815,8 +1841,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(mark, TokenType::Value | TokenType::FlowEntry | TokenType::FlowMappingEnd) =
-            *self.peek_token()?
+        if let QueuedToken(
+            mark,
+            QueuedTokenType::Value | QueuedTokenType::FlowEntry | QueuedTokenType::FlowMappingEnd,
+        ) = *self.peek_token()?
         {
             self.state = State::FlowMappingValue;
             Ok((Event::empty_scalar(), mark))
@@ -1831,19 +1859,21 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let span: Span = {
             if empty {
-                let Token(mark, _) = *self.peek_token()?;
+                let QueuedToken(mark, _) = *self.peek_token()?;
                 self.state = State::FlowMappingKey;
                 return Ok((Event::empty_scalar(), mark));
             }
             match *self.peek_token()? {
-                Token(span, TokenType::Value) => {
+                QueuedToken(span, QueuedTokenType::Value) => {
                     self.skip();
                     let comments = self.next_comment_events()?;
                     if comments.is_empty() {
                         return self.flow_mapping_value_node_with_empty_span(span);
                     }
-                    if let Ok(Token(_, TokenType::FlowEntry | TokenType::FlowMappingEnd)) =
-                        self.peek_token()
+                    if let Ok(QueuedToken(
+                        _,
+                        QueuedTokenType::FlowEntry | QueuedTokenType::FlowMappingEnd,
+                    )) = self.peek_token()
                     {
                         self.state = State::FlowMappingKey;
                         return Ok(
@@ -1855,7 +1885,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.state = State::FlowMappingValueNode;
                     return Ok(self.queue_tail_and_return_first(comments));
                 }
-                Token(marker, _) => marker,
+                QueuedToken(marker, _) => marker,
             }
         };
 
@@ -1879,7 +1909,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match self.peek_token()?.1 {
-            TokenType::FlowEntry | TokenType::FlowMappingEnd => {
+            QueuedTokenType::FlowEntry | QueuedTokenType::FlowMappingEnd => {
                 self.state = State::FlowMappingKey;
                 Ok((Event::empty_scalar(), mark))
             }
@@ -1892,19 +1922,19 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(mark, TokenType::FlowSequenceEnd) => {
+            QueuedToken(mark, QueuedTokenType::FlowSequenceEnd) => {
                 self.pop_state();
                 self.skip();
                 return Ok((Event::SequenceEnd, mark));
             }
-            Token(_, TokenType::FlowEntry) if !first => {
+            QueuedToken(_, QueuedTokenType::FlowEntry) if !first => {
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::FlowSequenceFirstEntry;
                     return Ok(comment);
                 }
             }
-            Token(span, _) if !first => {
+            QueuedToken(span, _) if !first => {
                 return Err(ScanError::new_str(
                     span.start,
                     "while parsing a flow sequence, expected ',' or ']'",
@@ -1913,12 +1943,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             _ => { /* next */ }
         }
         match *self.peek_token()? {
-            Token(mark, TokenType::FlowSequenceEnd) => {
+            QueuedToken(mark, QueuedTokenType::FlowSequenceEnd) => {
                 self.pop_state();
                 self.skip();
                 Ok((Event::SequenceEnd, mark))
             }
-            Token(mark, TokenType::Key) => {
+            QueuedToken(mark, QueuedTokenType::Key) => {
                 self.state = State::FlowSequenceEntryMappingKey;
                 self.skip();
                 Ok((Event::MappingStart(StructureStyle::Flow, 0, None), mark))
@@ -1932,14 +1962,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(mark, TokenType::BlockEntry) => {
+            QueuedToken(mark, QueuedTokenType::BlockEntry) => {
                 self.skip();
                 let comments = self.next_comment_events()?;
                 if comments.is_empty() {
                     self.indentless_sequence_entry_node_with_empty_span(mark)
-                } else if let Ok(Token(
+                } else if let Ok(QueuedToken(
                     _,
-                    TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+                    QueuedTokenType::BlockEntry
+                    | QueuedTokenType::Key
+                    | QueuedTokenType::Value
+                    | QueuedTokenType::BlockEnd,
                 )) = self.peek_token()
                 {
                     self.state = State::IndentlessSequenceEntry;
@@ -1950,7 +1983,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_tail_and_return_first(comments))
                 }
             }
-            Token(mark, _) => {
+            QueuedToken(mark, _) => {
                 self.pop_state();
                 Ok((Event::SequenceEnd, mark))
             }
@@ -1972,9 +2005,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(
+        if let QueuedToken(
             _,
-            TokenType::BlockEntry | TokenType::Key | TokenType::Value | TokenType::BlockEnd,
+            QueuedTokenType::BlockEntry
+            | QueuedTokenType::Key
+            | QueuedTokenType::Value
+            | QueuedTokenType::BlockEnd,
         ) = *self.peek_token()?
         {
             self.state = State::IndentlessSequenceEntry;
@@ -1994,18 +2030,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(mark, TokenType::BlockEnd) => {
+            QueuedToken(mark, QueuedTokenType::BlockEnd) => {
                 self.pop_state();
                 self.skip();
                 Ok((Event::SequenceEnd, mark))
             }
-            Token(mark, TokenType::BlockEntry) => {
+            QueuedToken(mark, QueuedTokenType::BlockEntry) => {
                 self.skip();
                 let comments = self.next_comment_events()?;
                 if comments.is_empty() {
                     self.block_sequence_entry_node_with_empty_span(mark)
-                } else if let Ok(Token(_, TokenType::BlockEntry | TokenType::BlockEnd)) =
-                    self.peek_token()
+                } else if let Ok(QueuedToken(
+                    _,
+                    QueuedTokenType::BlockEntry | QueuedTokenType::BlockEnd,
+                )) = self.peek_token()
                 {
                     self.state = State::BlockSequenceEntry;
                     Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
@@ -2015,7 +2053,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_tail_and_return_first(comments))
                 }
             }
-            Token(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new_str(
                 span.start,
                 "while parsing a block collection, did not find expected '-' indicator",
             )),
@@ -2037,7 +2075,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(_, TokenType::BlockEntry | TokenType::BlockEnd) = *self.peek_token()? {
+        if let QueuedToken(_, QueuedTokenType::BlockEntry | QueuedTokenType::BlockEnd) =
+            *self.peek_token()?
+        {
             self.state = State::BlockSequenceEntry;
             Ok((Event::empty_scalar(), mark))
         } else {
@@ -2049,7 +2089,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        if let Token(mark, TokenType::FlowEntry | TokenType::FlowSequenceEnd) =
+        if let QueuedToken(mark, QueuedTokenType::FlowEntry | QueuedTokenType::FlowSequenceEnd) =
             *self.peek_token()?
         {
             self.state = State::FlowSequenceEntryMappingValue;
@@ -2069,16 +2109,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         match *self.peek_token()? {
-            Token(_, TokenType::Value) => {
+            QueuedToken(_, QueuedTokenType::Value) => {
                 self.skip();
-                if let Some(comment) = self.next_comment_event()? {
+                if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::FlowSequenceEntryMappingValueNode;
                     Ok(comment)
                 } else {
                     self.flow_sequence_entry_mapping_value_node()
                 }
             }
-            Token(mark, _) => {
+            QueuedToken(mark, _) => {
                 self.state = State::FlowSequenceEntryMappingEnd;
                 Ok((Event::empty_scalar(), mark))
             }
@@ -2089,8 +2129,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let Token(span, ref tok) = *self.peek_token()?;
-        if matches!(tok, TokenType::FlowEntry | TokenType::FlowSequenceEnd) {
+        let QueuedToken(span, ref tok) = *self.peek_token()?;
+        if matches!(
+            tok,
+            QueuedTokenType::FlowEntry | QueuedTokenType::FlowSequenceEnd
+        ) {
             self.state = State::FlowSequenceEntryMappingEnd;
             Ok((Event::empty_scalar(), Span::empty(span.start)))
         } else {
@@ -2109,7 +2152,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         self.state = State::FlowSequenceEntry;
-        let Token(span, _) = *self.peek_token()?;
+        let QueuedToken(span, _) = *self.peek_token()?;
         Ok((Event::MappingEnd, Span::empty(span.start)))
     }
 

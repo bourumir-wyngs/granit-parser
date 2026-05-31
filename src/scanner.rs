@@ -460,6 +460,138 @@ pub struct Token<'input>(
     pub TokenType<'input>,
 );
 
+/// Compact comment metadata used only inside the scanner queue.
+///
+/// The queued token already stores the source span, so storing a full public [`Comment`] there
+/// duplicates a large [`Span`] and inflates every queued token.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub(crate) struct QueuedComment<'input> {
+    pub(crate) text: Cow<'input, str>,
+    pub(crate) placement: Placement,
+}
+
+impl<'input> QueuedComment<'input> {
+    fn into_public(self, span: Span) -> Comment<'input> {
+        Comment::new(span, self.text).with_placement(self.placement)
+    }
+}
+
+impl<'input> From<Comment<'input>> for QueuedComment<'input> {
+    fn from(comment: Comment<'input>) -> Self {
+        Self {
+            text: comment.text,
+            placement: comment.placement,
+        }
+    }
+}
+
+/// Token payload used in the scanner's internal queue.
+///
+/// This mirrors [`TokenType`] but stores comments without their span. Public [`Token`] values are
+/// reconstructed when the scanner emits them.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub(crate) enum QueuedTokenType<'input> {
+    StreamStart(TEncoding),
+    StreamEnd,
+    VersionDirective(u32, u32),
+    TagDirective(Cow<'input, str>, Cow<'input, str>),
+    DocumentStart,
+    DocumentEnd,
+    BlockSequenceStart,
+    BlockMappingStart,
+    BlockEnd,
+    FlowSequenceStart,
+    FlowSequenceEnd,
+    FlowMappingStart,
+    FlowMappingEnd,
+    BlockEntry,
+    FlowEntry,
+    Key,
+    Value,
+    Alias(Cow<'input, str>),
+    Anchor(Cow<'input, str>),
+    Tag(Cow<'input, str>, Cow<'input, str>),
+    Scalar(ScalarStyle, Cow<'input, str>),
+    Comment(QueuedComment<'input>),
+    ReservedDirective(String, Vec<String>),
+}
+
+impl<'input> QueuedTokenType<'input> {
+    fn into_public(self, span: Span) -> TokenType<'input> {
+        match self {
+            Self::StreamStart(encoding) => TokenType::StreamStart(encoding),
+            Self::StreamEnd => TokenType::StreamEnd,
+            Self::VersionDirective(major, minor) => TokenType::VersionDirective(major, minor),
+            Self::TagDirective(handle, prefix) => TokenType::TagDirective(handle, prefix),
+            Self::DocumentStart => TokenType::DocumentStart,
+            Self::DocumentEnd => TokenType::DocumentEnd,
+            Self::BlockSequenceStart => TokenType::BlockSequenceStart,
+            Self::BlockMappingStart => TokenType::BlockMappingStart,
+            Self::BlockEnd => TokenType::BlockEnd,
+            Self::FlowSequenceStart => TokenType::FlowSequenceStart,
+            Self::FlowSequenceEnd => TokenType::FlowSequenceEnd,
+            Self::FlowMappingStart => TokenType::FlowMappingStart,
+            Self::FlowMappingEnd => TokenType::FlowMappingEnd,
+            Self::BlockEntry => TokenType::BlockEntry,
+            Self::FlowEntry => TokenType::FlowEntry,
+            Self::Key => TokenType::Key,
+            Self::Value => TokenType::Value,
+            Self::Alias(name) => TokenType::Alias(name),
+            Self::Anchor(name) => TokenType::Anchor(name),
+            Self::Tag(handle, suffix) => TokenType::Tag(handle, suffix),
+            Self::Scalar(style, value) => TokenType::Scalar(style, value),
+            Self::Comment(comment) => TokenType::Comment(comment.into_public(span)),
+            Self::ReservedDirective(name, params) => TokenType::ReservedDirective(name, params),
+        }
+    }
+}
+
+impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
+    fn from(token: TokenType<'input>) -> Self {
+        match token {
+            TokenType::StreamStart(encoding) => Self::StreamStart(encoding),
+            TokenType::StreamEnd => Self::StreamEnd,
+            TokenType::VersionDirective(major, minor) => Self::VersionDirective(major, minor),
+            TokenType::TagDirective(handle, prefix) => Self::TagDirective(handle, prefix),
+            TokenType::DocumentStart => Self::DocumentStart,
+            TokenType::DocumentEnd => Self::DocumentEnd,
+            TokenType::BlockSequenceStart => Self::BlockSequenceStart,
+            TokenType::BlockMappingStart => Self::BlockMappingStart,
+            TokenType::BlockEnd => Self::BlockEnd,
+            TokenType::FlowSequenceStart => Self::FlowSequenceStart,
+            TokenType::FlowSequenceEnd => Self::FlowSequenceEnd,
+            TokenType::FlowMappingStart => Self::FlowMappingStart,
+            TokenType::FlowMappingEnd => Self::FlowMappingEnd,
+            TokenType::BlockEntry => Self::BlockEntry,
+            TokenType::FlowEntry => Self::FlowEntry,
+            TokenType::Key => Self::Key,
+            TokenType::Value => Self::Value,
+            TokenType::Alias(name) => Self::Alias(name),
+            TokenType::Anchor(name) => Self::Anchor(name),
+            TokenType::Tag(handle, suffix) => Self::Tag(handle, suffix),
+            TokenType::Scalar(style, value) => Self::Scalar(style, value),
+            TokenType::Comment(comment) => Self::Comment(comment.into()),
+            TokenType::ReservedDirective(name, params) => Self::ReservedDirective(name, params),
+        }
+    }
+}
+
+/// A compact token stored by the scanner before it is emitted publicly.
+#[derive(Clone, PartialEq, Debug, Eq)]
+pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenType<'input>);
+
+impl<'input> QueuedToken<'input> {
+    fn into_public(self) -> Token<'input> {
+        Token(self.0, self.1.into_public(self.0))
+    }
+}
+
+impl<'input> From<Token<'input>> for QueuedToken<'input> {
+    fn from(token: Token<'input>) -> Self {
+        Self(token.0, token.1.into())
+    }
+}
+
 /// A scalar that was parsed and may correspond to a simple key.
 ///
 /// Upon scanning the following YAML:
@@ -623,11 +755,13 @@ pub struct Scanner<'input, T> {
     /// instance, if we just read a scalar, it can be a value or a key if an implicit mapping
     /// follows. In this case, the token stays in the `VecDeque` but cannot be returned from
     /// [`Self::next`] until we have more context.
-    tokens: VecDeque<Token<'input>>,
+    tokens: VecDeque<QueuedToken<'input>>,
     /// The last error that happened.
     error: Option<ScanError>,
     /// Error found after one or more already-scanned comment tokens.
     deferred_error: Option<ScanError>,
+    /// Whether the input may contain `#` comment indicators.
+    comments_possible: bool,
 
     /// Whether we have already emitted the `StreamStart` token.
     stream_start_produced: bool,
@@ -991,12 +1125,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Create a scanner over the given input source.
     pub fn new(input: T) -> Self {
         let initial_byte_offset = input.byte_offset();
+        let comments_possible = input.may_contain_comments();
         Scanner {
             input,
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             error: None,
             deferred_error: None,
+            comments_possible,
 
             stream_start_produced: false,
             stream_end_produced: false,
@@ -1131,7 +1267,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
+    #[cfg(test)]
     fn scan_comment_token(&mut self) -> Result<Token<'input>, ScanError> {
+        Ok(self.scan_comment_queued_token()?.into_public())
+    }
+
+    fn scan_comment_queued_token(&mut self) -> Result<QueuedToken<'input>, ScanError> {
         let start_mark = self.mark;
         debug_assert_eq!(self.input.peek(), '#');
         let placement = if self.leading_whitespace {
@@ -1174,14 +1315,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let end_mark = self.mark;
         let span = Span::new(start_mark, end_mark);
-        Ok(Token(
+        Ok(QueuedToken(
             span,
-            TokenType::Comment(Comment::new(span, text).with_placement(placement)),
+            QueuedTokenType::Comment(QueuedComment { text, placement }),
         ))
     }
 
     fn push_comment_token(&mut self) -> ScanResult {
-        let token = self.scan_comment_token()?;
+        let token = self.scan_comment_queued_token()?;
         self.tokens.push_back(token);
         Ok(())
     }
@@ -1212,6 +1353,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     #[inline]
     pub fn mark(&self) -> Marker {
         self.mark
+    }
+
+    /// Return whether this scanner may emit comment tokens.
+    #[inline]
+    pub(crate) fn comments_possible(&self) -> bool {
+        self.comments_possible
     }
 
     // Read and consume a line break (either `\r`, `\n` or `\r\n`).
@@ -1245,7 +1392,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn insert_token(&mut self, pos: usize, tok: Token<'input>) {
         let old_len = self.tokens.len();
         assert!(pos <= old_len);
-        self.tokens.insert(pos, tok);
+        self.tokens.insert(pos, tok.into());
     }
 
     #[inline]
@@ -1365,15 +1512,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
-    /// Return the next queued token, scanning more input when needed.
+    /// Return the next compact queued token, scanning more input when needed.
     ///
     /// # Errors
     /// Returns `ScanError` when scanning fails to find an expected next token.
-    pub fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
+    pub(crate) fn next_queued_token(&mut self) -> Result<Option<QueuedToken<'input>>, ScanError> {
         if self.deferred_error.is_some() {
             if !matches!(
                 self.tokens.front().map(|token| &token.1),
-                Some(TokenType::Comment(_))
+                Some(QueuedTokenType::Comment(_))
             ) {
                 if let Some(error) = self.deferred_error.take() {
                     return error.into_result();
@@ -1390,7 +1537,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if let Err(error) = self.fetch_more_tokens() {
                 if matches!(
                     self.tokens.front().map(|token| &token.1),
-                    Some(TokenType::Comment(_))
+                    Some(QueuedTokenType::Comment(_))
                 ) {
                     self.deferred_error = Some(error);
                 } else {
@@ -1407,10 +1554,19 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.token_available = false;
         self.tokens_parsed += 1;
 
-        if let TokenType::StreamEnd = t.1 {
+        let is_stream_end = matches!(t.1, QueuedTokenType::StreamEnd);
+        if is_stream_end {
             self.stream_end_produced = true;
         }
         Ok(Some(t))
+    }
+
+    /// Return the next queued token, scanning more input when needed.
+    ///
+    /// # Errors
+    /// Returns `ScanError` when scanning fails to find an expected next token.
+    pub fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
+        Ok(self.next_queued_token()?.map(QueuedToken::into_public))
     }
 
     /// Scan more input until a token is ready to be returned.
@@ -1428,7 +1584,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.stale_simple_keys()?;
                 if !matches!(
                     self.tokens.front().map(|token| &token.1),
-                    Some(TokenType::Comment(_))
+                    Some(QueuedTokenType::Comment(_))
                 ) {
                     // If our next token to be emitted may be a key, fetch more context.
                     for sk in &self.simple_keys {
@@ -1443,7 +1599,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Stop fetching immediately after document end/start markers
             // to allow the parser to emit the event before reading more content.
             if let Some(token) = self.tokens.back() {
-                if matches!(token.1, TokenType::DocumentEnd | TokenType::DocumentStart) {
+                if matches!(
+                    token.1,
+                    QueuedTokenType::DocumentEnd | QueuedTokenType::DocumentStart
+                ) {
                     break;
                 }
             }
@@ -1655,31 +1814,32 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
         debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
 
-        let mut encountered_tab = false;
-        let mut has_yaml_ws = false;
-
-        loop {
-            match self.input.look_ch() {
-                ' ' => {
-                    has_yaml_ws = true;
-                    self.skip_blank();
-                }
-                '\t' if skip_tabs != SkipTabs::No => {
-                    encountered_tab = true;
-                    self.skip_blank();
-                }
-                '#' if !encountered_tab && !has_yaml_ws => {
-                    return Err(ScanError::new_str(
-                        self.mark,
-                        "comments must be separated from other tokens by whitespace",
-                    ));
-                }
-                '#' => self.push_comment_token()?,
-                _ => break,
-            }
+        if !self.comments_possible {
+            let (chars_consumed, result) = self.input.skip_ws_to_eol(skip_tabs);
+            self.mark.col += chars_consumed;
+            self.mark.offsets.chars += chars_consumed;
+            self.mark.offsets.bytes = self.input.byte_offset();
+            return result.map_err(|msg| ScanError::new_str(self.mark, msg));
         }
 
-        Ok(SkipTabs::Result(encountered_tab, has_yaml_ws))
+        let (chars_consumed, whitespace) = self.input.skip_ws_to_eol_blanks(skip_tabs);
+        self.mark.col += chars_consumed;
+        self.mark.offsets.chars += chars_consumed;
+        self.mark.offsets.bytes = self.input.byte_offset();
+
+        if self.input.look_ch() != '#' {
+            return Ok(whitespace);
+        }
+
+        if !whitespace.found_tabs() && !whitespace.has_valid_yaml_ws() {
+            return Err(ScanError::new_str(
+                self.mark,
+                "comments must be separated from other tokens by whitespace",
+            ));
+        }
+
+        self.push_comment_token()?;
+        Ok(whitespace)
     }
 
     fn fetch_stream_start(&mut self) {
@@ -1687,10 +1847,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.indent = -1;
         self.stream_start_produced = true;
         self.allow_simple_key();
-        self.tokens.push_back(Token(
-            Span::empty(mark),
-            TokenType::StreamStart(TEncoding::Utf8),
-        ));
+        self.tokens
+            .push_back(Token(Span::empty(mark), TokenType::StreamStart(TEncoding::Utf8)).into());
         self.simple_keys.push(SimpleKey::new(Marker::new(0, 0, 0)));
     }
 
@@ -1719,7 +1877,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.disallow_simple_key();
 
         self.tokens
-            .push_back(Token(Span::empty(self.mark), TokenType::StreamEnd));
+            .push_back(Token(Span::empty(self.mark), TokenType::StreamEnd).into());
         Ok(())
     }
 
@@ -1893,7 +2051,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.disallow_simple_key();
 
         let tok = self.scan_tag()?;
-        self.tokens.push_back(tok);
+        self.tokens.push_back(tok.into());
         Ok(())
     }
 
@@ -2355,7 +2513,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let tok = self.scan_anchor(alias)?;
 
-        self.tokens.push_back(tok);
+        self.tokens.push_back(tok.into());
 
         Ok(())
     }
@@ -2564,7 +2722,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         // ???, fixes test G9HC.
-        if let Some(Token(span, TokenType::Anchor(..) | TokenType::Tag(..))) = self.tokens.back() {
+        if let Some(QueuedToken(span, QueuedTokenType::Anchor(..) | QueuedTokenType::Tag(..))) =
+            self.tokens.back()
+        {
             if self.mark.col == 0 && span.start.col == 0 && self.indent > -1 {
                 return Err(ScanError::new_str(
                     span.start,
@@ -2624,7 +2784,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_n_non_blank(3);
 
         self.document_prefix_allowed = matches!(t, TokenType::DocumentEnd);
-        self.tokens.push_back(Token(Span::new(mark, self.mark), t));
+        self.tokens
+            .push_back(Token(Span::new(mark, self.mark), t).into());
         Ok(())
     }
 
@@ -2633,7 +2794,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.allow_simple_key();
         let tok = self.scan_block_scalar(literal)?;
 
-        self.tokens.push_back(tok);
+        self.tokens.push_back(tok.into());
         Ok(())
     }
 
@@ -3774,7 +3935,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else {
             if is_implicit_flow_mapping {
                 self.tokens
-                    .push_back(Token(Span::empty(start_mark), TokenType::FlowMappingStart));
+                    .push_back(Token(Span::empty(start_mark), TokenType::FlowMappingStart).into());
             }
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
@@ -3801,7 +3962,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
         self.tokens
-            .push_back(Token(Span::empty(start_mark), TokenType::Value));
+            .push_back(Token(Span::empty(start_mark), TokenType::Value).into());
         self.tokens.append(&mut trailing_tokens);
 
         Ok(())
@@ -3844,7 +4005,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let tokens_parsed = self.tokens_parsed;
             match number {
                 Some(n) => self.insert_token(n - tokens_parsed, Token(Span::empty(mark), tok)),
-                None => self.tokens.push_back(Token(Span::empty(mark), tok)),
+                None => self.tokens.push_back(Token(Span::empty(mark), tok).into()),
             }
         }
     }
@@ -3863,7 +4024,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.indent = indent.indent;
             if indent.needs_block_end {
                 self.tokens
-                    .push_back(Token(Span::empty(self.mark), TokenType::BlockEnd));
+                    .push_back(Token(Span::empty(self.mark), TokenType::BlockEnd).into());
             }
         }
     }
@@ -3941,7 +4102,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             *self.implicit_flow_mapping_states.last_mut().unwrap() = ImplicitMappingState::Possible;
             self.set_current_flow_mapping_started(false);
             self.tokens
-                .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd));
+                .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd).into());
         }
     }
 
@@ -3987,7 +4148,7 @@ mod test {
 
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
-        scanner::{ScalarStyle, Scanner, Token, TokenType},
+        scanner::{QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Token, TokenType},
     };
 
     struct CountingChars {
@@ -4183,7 +4344,7 @@ mod test {
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
             scanner.tokens.front().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " queued"
+            QueuedTokenType::Comment(ref comment) if comment.text == " queued"
         ));
         assert_eq!(scanner.mark.line(), 1);
         assert_eq!(scanner.mark.col(), 9);
@@ -4198,7 +4359,7 @@ mod test {
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
             scanner.tokens.front().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " first"
+            QueuedTokenType::Comment(ref comment) if comment.text == " first"
         ));
         assert_eq!(scanner.mark.line(), 2);
         assert_eq!(scanner.mark.col(), 0);
@@ -4250,11 +4411,11 @@ mod test {
         assert_eq!(scanner.adjacent_value_allowed_at, usize::MAX);
         assert!(matches!(
             scanner.tokens.front().unwrap().1,
-            TokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
+            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
         ));
-        assert!(scanner.tokens.iter().any(|Token(_, token)| matches!(
+        assert!(scanner.tokens.iter().any(|QueuedToken(_, token)| matches!(
             token,
-            TokenType::Comment(comment) if comment.text == " quoted"
+            QueuedTokenType::Comment(comment) if comment.text == " quoted"
         )));
     }
 

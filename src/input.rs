@@ -158,6 +158,16 @@ pub trait Input {
         None
     }
 
+    /// Return whether this input may contain a `#` character.
+    ///
+    /// This is a conservative performance hint. Inputs that cannot answer cheaply should return
+    /// `true`, which keeps full comment handling enabled.
+    #[inline]
+    #[must_use]
+    fn may_contain_comments(&self) -> bool {
+        true
+    }
+
     /// Look for the next character and return it.
     ///
     /// The character is not consumed.
@@ -295,6 +305,44 @@ pub trait Input {
         (
             chars_consumed,
             Ok(SkipTabs::Result(encountered_tab, has_yaml_ws)),
+        )
+    }
+
+    /// Skip YAML blank characters, stopping before comments, line breaks, or other content.
+    ///
+    /// This is the comment-aware counterpart to [`Input::skip_ws_to_eol`]: it preserves a
+    /// following `#` for the scanner to tokenize while still letting input implementations batch
+    /// the common run of spaces and tabs.
+    ///
+    /// # Return
+    /// Returns the number of consumed characters and a [`SkipTabs::Result`] describing whether
+    /// tabs and valid YAML whitespace (` `) were encountered.
+    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, SkipTabs) {
+        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
+
+        let mut encountered_tab = false;
+        let mut has_yaml_ws = false;
+        let mut chars_consumed = 0;
+
+        loop {
+            match self.look_ch() {
+                ' ' => {
+                    has_yaml_ws = true;
+                    chars_consumed += 1;
+                    self.skip();
+                }
+                '\t' if skip_tabs != SkipTabs::No => {
+                    encountered_tab = true;
+                    chars_consumed += 1;
+                    self.skip();
+                }
+                _ => break,
+            }
+        }
+
+        (
+            chars_consumed,
+            SkipTabs::Result(encountered_tab, has_yaml_ws),
         )
     }
 

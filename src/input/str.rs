@@ -163,6 +163,11 @@ impl Input for StrInput<'_> {
     }
 
     #[inline]
+    fn may_contain_comments(&self) -> bool {
+        self.original.as_bytes().contains(&b'#')
+    }
+
+    #[inline]
     fn look_ch(&mut self) -> char {
         self.lookahead(1);
         self.peek()
@@ -287,6 +292,40 @@ impl Input for StrInput<'_> {
             chars_consumed,
             Ok(SkipTabs::Result(encountered_tab, has_yaml_ws)),
         )
+    }
+
+    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, SkipTabs) {
+        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
+
+        let bytes = self.buffer.as_bytes();
+        let mut i = 0;
+        let mut encountered_tab = false;
+        let mut has_yaml_ws = false;
+
+        if skip_tabs == SkipTabs::Yes {
+            while i < bytes.len() {
+                match bytes[i] {
+                    b' ' => {
+                        has_yaml_ws = true;
+                        i += 1;
+                    }
+                    b'\t' => {
+                        encountered_tab = true;
+                        i += 1;
+                    }
+                    _ => break,
+                }
+            }
+        } else {
+            while i < bytes.len() && bytes[i] == b' ' {
+                has_yaml_ws = true;
+                i += 1;
+            }
+        }
+
+        self.buffer = &self.buffer[i..];
+
+        (i, SkipTabs::Result(encountered_tab, has_yaml_ws))
     }
 
     #[allow(clippy::inline_always)]

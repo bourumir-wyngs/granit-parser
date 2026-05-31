@@ -9,7 +9,6 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 pub struct ReplayParser<'input> {
     events: Vec<(Event<'input>, Span)>,
     index: usize,
-    current: Option<(Event<'input>, Span)>,
     anchor_offset: usize,
 }
 
@@ -20,7 +19,6 @@ impl<'input> ReplayParser<'input> {
         Self {
             events,
             index: 0,
-            current: None,
             anchor_offset,
         }
     }
@@ -52,18 +50,10 @@ impl<'input> ReplayParser<'input> {
 
 impl<'input> ParserTrait<'input> for ReplayParser<'input> {
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
-        if self.current.is_none() {
-            self.current = self.events.get(self.index).cloned();
-        }
-        self.current.as_ref().map(Ok)
+        self.events.get(self.index).map(Ok)
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
-        if let Some(current) = self.current.take() {
-            self.index += 1;
-            self.advance_anchor_offset(&current.0);
-            return Some(Ok(current));
-        }
         let event = self.events.get(self.index).cloned()?;
         self.index += 1;
         self.advance_anchor_offset(&event.0);
