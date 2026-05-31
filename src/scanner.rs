@@ -4148,7 +4148,10 @@ mod test {
 
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
-        scanner::{QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Token, TokenType},
+        scanner::{
+            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
+            TEncoding, Token, TokenType,
+        },
     };
 
     struct CountingChars {
@@ -4322,6 +4325,62 @@ mod test {
             error.info(),
             "internal error: input advertised offsets but did not provide a slice"
         );
+    }
+
+    #[test]
+    fn queued_token_roundtrips_public_token_variants() {
+        let span = Span::new(Marker::new(0, 1, 0), Marker::new(7, 1, 7));
+        let tokens = [
+            Token(span, TokenType::StreamStart(TEncoding::Utf8)),
+            Token(span, TokenType::StreamEnd),
+            Token(span, TokenType::VersionDirective(1, 2)),
+            Token(
+                span,
+                TokenType::TagDirective(Cow::Borrowed("!app!"), Cow::Borrowed("tag:app.example,")),
+            ),
+            Token(span, TokenType::DocumentStart),
+            Token(span, TokenType::DocumentEnd),
+            Token(span, TokenType::BlockSequenceStart),
+            Token(span, TokenType::BlockMappingStart),
+            Token(span, TokenType::BlockEnd),
+            Token(span, TokenType::FlowSequenceStart),
+            Token(span, TokenType::FlowSequenceEnd),
+            Token(span, TokenType::FlowMappingStart),
+            Token(span, TokenType::FlowMappingEnd),
+            Token(span, TokenType::BlockEntry),
+            Token(span, TokenType::FlowEntry),
+            Token(span, TokenType::Key),
+            Token(span, TokenType::Value),
+            Token(span, TokenType::Alias(Cow::Borrowed("alias"))),
+            Token(span, TokenType::Anchor(Cow::Borrowed("anchor"))),
+            Token(
+                span,
+                TokenType::Tag(Cow::Borrowed("!"), Cow::Borrowed("tag")),
+            ),
+            Token(
+                span,
+                TokenType::Scalar(ScalarStyle::Literal, Cow::Borrowed("scalar")),
+            ),
+            Token(
+                span,
+                TokenType::Comment(
+                    Comment::new(span, Cow::Borrowed(" comment")).with_placement(Placement::Right),
+                ),
+            ),
+            Token(
+                span,
+                TokenType::ReservedDirective(
+                    "reserved".to_owned(),
+                    vec!["one".to_owned(), "two".to_owned()],
+                ),
+            ),
+        ];
+
+        for token in tokens {
+            let queued: QueuedToken = token.clone().into();
+
+            assert_eq!(queued.into_public(), token);
+        }
     }
 
     #[test]

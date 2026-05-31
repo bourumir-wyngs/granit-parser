@@ -9,6 +9,17 @@ fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
     Parser::new_from_str(source).collect()
 }
 
+fn scanner_tokens<'input>(source: &'input str) -> Result<Vec<Token<'input>>, ScanError> {
+    let mut scanner = Scanner::new(StrInput::new(source));
+    let mut tokens = Vec::new();
+
+    while let Some(token) = scanner.next_token()? {
+        tokens.push(token);
+    }
+
+    Ok(tokens)
+}
+
 /// Iterator wrapper that records how many characters the parser pulls from streaming input.
 struct CountingChars<I> {
     /// Wrapped character iterator consumed by `Parser::new_from_iter`.
@@ -557,6 +568,86 @@ fn scanner_treats_unseparated_hash_after_plain_scalar_as_content() {
     assert!(!tokens
         .iter()
         .any(|Token(_, token)| matches!(token, TokenType::Comment(_))));
+}
+
+#[test]
+fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
+    struct Case<'input> {
+        yaml: &'input str,
+        expected_value: &'input str,
+        expected_comment: Option<(&'input str, &'input str)>,
+    }
+
+    let cases = [
+        Case {
+            yaml: "a: b#bad\n",
+            expected_value: "b#bad",
+            expected_comment: None,
+        },
+        Case {
+            yaml: "a: b # good\n",
+            expected_value: "b",
+            expected_comment: Some((" good", "# good")),
+        },
+        Case {
+            yaml: "a: b\t# tab-before-comment\n",
+            expected_value: "b",
+            expected_comment: Some((" tab-before-comment", "# tab-before-comment")),
+        },
+    ];
+
+    for case in cases {
+        let tokens = scanner_tokens(case.yaml).expect("scanner should accept YAML");
+        let scalars = tokens
+            .iter()
+            .filter_map(|Token(_, token)| match token {
+                TokenType::Scalar(ScalarStyle::Plain, value) => Some(value.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let comments = tokens
+            .iter()
+            .filter_map(|Token(span, token)| match token {
+                TokenType::Comment(comment) => Some((
+                    comment.text.as_ref(),
+                    comment.placement,
+                    span.slice(case.yaml),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(scalars, vec!["a", case.expected_value], "{:?}", case.yaml);
+
+        match case.expected_comment {
+            Some((text, slice)) => {
+                assert_eq!(
+                    comments,
+                    vec![(text, Placement::Right, Some(slice))],
+                    "{:?}",
+                    case.yaml
+                );
+            }
+            None => assert!(comments.is_empty(), "{:?}", case.yaml),
+        }
+    }
+}
+
+#[test]
+fn scanner_rejects_tab_immediately_after_explicit_key_indicator() {
+    let mut scanner = Scanner::new(StrInput::new("?\tkey\n"));
+
+    let error = loop {
+        match scanner.next_token() {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("expected scanner error"),
+            Err(error) => break error,
+        }
+    };
+
+    assert_eq!(error.info(), "expected whitespace");
+    assert_eq!(error.marker().line(), 1);
+    assert_eq!(error.marker().col(), 1);
 }
 
 #[test]
