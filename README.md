@@ -87,10 +87,10 @@ DocumentStart(false) bytes=Some(1..1) source=Some("")
 MappingStart(Block, 0, None) bytes=Some(1..1) source=Some("")
 Scalar("items", Plain, 0, None) bytes=Some(1..6) source=Some("items")
 node tag: !shopping custom=true
-SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping" })) bytes=Some(20..20) source=Some("")
+SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" })) bytes=Some(20..20) source=Some("")
 Scalar("milk", Plain, 0, None) bytes=Some(22..26) source=Some("milk")
 scalar tag: tag:yaml.org,2002:str core-str=true for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str" })) bytes=Some(37..42) source=Some("bread")
+Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" })) bytes=Some(37..42) source=Some("bread")
 SequenceEnd bytes=Some(43..43) source=Some("")
 Scalar("locations", Plain, 0, None) bytes=Some(43..52) source=Some("locations")
 Comment(" Example with composite keys", Right) bytes=Some(54..83) source=Some("# Example with composite keys")
@@ -226,13 +226,15 @@ This crate includes fixes to improve resilience against:
 Like the upstream parser, it does **not** interpret application-level types, so parsing YAML does not trigger external side effects.
 
 ### Improved ergonomics
-There are the following new ergonomic helpers:
+There are following new ergonomic helpers:
 - `Event::tag`
 - `Event::scalar`
 - `Event::anchor_id`
 - `Event::alias_id`
 - `Event::is_node`
 - `Tag::parts`
+- `Tag::original_parts`
+- `Tag::original`
 - `Tag::is_custom`
 - `Tag::is_yaml_core_schema_tag`
 - `Span::slice`

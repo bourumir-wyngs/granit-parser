@@ -3,6 +3,8 @@
 - Performance improvements on comment parsing
 - Added `Span::tag_start` metadata for parser-emitted tagged node events, so diagnostics can point
   at the explicit tag token even when the node span starts on a later line.
+- Added `Tag::original_handle`, `Tag::original_parts`, and `Tag::original` so consumers can inspect
+  the tag handle as written before `%TAG` directive resolution.
 
 
 ## v0.0.3

@@ -155,7 +155,7 @@ pub struct Span {
     /// This is only meaningful for certain parser-emitted events (notably: block mapping keys).
     /// When indentation is not meaningful or cannot be provided, it must be `None`.
     pub indent: Option<usize>,
-    
+
     /// Optional source marker for the explicit tag token attached to this node.
     ///
     /// This is only meaningful for parser-emitted node events that carry a resolved tag, such as

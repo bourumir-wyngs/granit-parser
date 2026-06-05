@@ -169,9 +169,43 @@ pub struct Tag {
     pub handle: String,
     /// Tag suffix following the resolved handle or prefix.
     pub suffix: String,
+    /// Tag handle as written in the source before `%TAG` directive resolution.
+    ///
+    /// For example, with `%TAG !e! tag:example.com,2000:`, a source tag `!e!keep` is resolved
+    /// as `handle = "tag:example.com,2000:"` and `suffix = "keep"`, while
+    /// `original_handle = "!e!"`.
+    pub original_handle: String,
 }
 
 impl Tag {
+    /// Create a tag from resolved parts.
+    ///
+    /// This is mainly useful for tests and consumers constructing parser-compatible tags by hand.
+    /// When the original source handle matters, use [`Self::with_original_handle`].
+    #[must_use]
+    pub fn new(handle: impl Into<String>, suffix: impl Into<String>) -> Self {
+        let handle = handle.into();
+        Self {
+            original_handle: handle.clone(),
+            handle,
+            suffix: suffix.into(),
+        }
+    }
+
+    /// Create a tag from resolved parts and the handle as written in the source.
+    #[must_use]
+    pub fn with_original_handle(
+        handle: impl Into<String>,
+        suffix: impl Into<String>,
+        original_handle: impl Into<String>,
+    ) -> Self {
+        Self {
+            handle: handle.into(),
+            suffix: suffix.into(),
+            original_handle: original_handle.into(),
+        }
+    }
+
     /// Returns whether the tag is a YAML tag from the core schema (`!!str`, `!!int`, ...).
     ///
     /// The YAML specification specifies [a list of
@@ -207,6 +241,27 @@ impl Tag {
     #[must_use]
     pub fn parts(&self) -> (&str, &str) {
         (&self.handle, &self.suffix)
+    }
+
+    /// Return the tag as `(original_handle, suffix)` using the handle from the source token.
+    ///
+    /// This is useful when a consumer needs author spelling such as `!e!keep` instead of the
+    /// resolved URI tag `tag:example.com,2000:keep`.
+    #[must_use]
+    pub fn original_parts(&self) -> (&str, &str) {
+        (&self.original_handle, &self.suffix)
+    }
+
+    /// Return the tag spelling reconstructed from the source handle and suffix.
+    ///
+    /// For ordinary shorthand tags this returns the author-facing spelling, such as `!e!keep` or
+    /// `!!str`.
+    #[must_use]
+    pub fn original(&self) -> String {
+        let mut tag = String::with_capacity(self.original_handle.len() + self.suffix.len());
+        tag.push_str(&self.original_handle);
+        tag.push_str(&self.suffix);
+        tag
     }
 }
 
@@ -1497,11 +1552,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.pending_node_tag_start = tag_start;
     }
 
-    fn attach_tag_start<'a>(
-        event: Event<'a>,
+    fn attach_tag_start(
+        event: Event<'_>,
         span: Span,
         tag_start: Option<crate::scanner::Marker>,
-    ) -> (Event<'a>, Span) {
+    ) -> (Event<'_>, Span) {
         (event, span.with_tag_start(tag_start))
     }
 
@@ -2197,37 +2252,29 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         handle: &Cow<'input, str>,
         suffix: Cow<'input, str>,
     ) -> Result<Cow<'input, Tag>, ScanError> {
+        let original_handle = handle.to_string();
         let suffix = suffix.into_owned();
         let tag = if handle == "!!" {
             // "!!" is a shorthand for "tag:yaml.org,2002:". However, that default can be
             // overridden.
-            Tag {
-                handle: self
-                    .tags
+            Tag::with_original_handle(
+                self.tags
                     .get("!!")
                     .map_or_else(|| "tag:yaml.org,2002:".to_string(), ToString::to_string),
                 suffix,
-            }
+                original_handle,
+            )
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
             match self.tags.get("") {
-                Some(prefix) => Tag {
-                    handle: prefix.clone(),
-                    suffix,
-                },
-                None => Tag {
-                    handle: String::new(),
-                    suffix,
-                },
+                Some(prefix) => Tag::with_original_handle(prefix.clone(), suffix, original_handle),
+                None => Tag::with_original_handle(String::new(), suffix, original_handle),
             }
         } else {
             // Lookup handle in our tag directives.
             let prefix = self.tags.get(&**handle);
             if let Some(prefix) = prefix {
-                Tag {
-                    handle: prefix.clone(),
-                    suffix,
-                }
+                Tag::with_original_handle(prefix.clone(), suffix, original_handle)
             } else {
                 // Otherwise, it may be a local handle. With a local handle, the handle is set to
                 // "!" and the suffix to whatever follows it ("!foo" -> ("!", "foo")).
@@ -2236,10 +2283,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
                     return Err(ScanError::new_str(span.start, "the handle wasn't declared"));
                 }
-                Tag {
-                    handle: handle.to_string(),
-                    suffix,
-                }
+                Tag::with_original_handle(handle.to_string(), suffix, original_handle)
             }
         };
         Ok(Cow::Owned(tag))
@@ -2435,44 +2479,36 @@ mod test {
 
     #[test]
     fn display_resolved_core_tag_without_extra_bang() {
-        let tag = Tag {
-            handle: "tag:yaml.org,2002:".to_owned(),
-            suffix: "str".to_owned(),
-        };
+        let tag = Tag::with_original_handle("tag:yaml.org,2002:", "str", "!!");
 
         assert_eq!(tag.to_string(), "tag:yaml.org,2002:str");
     }
 
     #[test]
     fn tag_helpers_distinguish_core_and_local_tags() {
-        let core = Tag {
-            handle: "tag:yaml.org,2002:".to_owned(),
-            suffix: "int".to_owned(),
-        };
-        let local = Tag {
-            handle: "!".to_owned(),
-            suffix: "thing".to_owned(),
-        };
+        let core = Tag::with_original_handle("tag:yaml.org,2002:", "int", "!!");
+        let local = Tag::new("!", "thing");
 
         assert!(core.is_yaml_core_schema());
         assert!(core.is_yaml_core_schema_tag("int"));
         assert!(!core.is_yaml_core_schema_tag("str"));
         assert!(!core.is_custom());
         assert_eq!(core.parts(), ("tag:yaml.org,2002:", "int"));
+        assert_eq!(core.original_parts(), ("!!", "int"));
+        assert_eq!(core.original(), "!!int");
 
         assert!(!local.is_yaml_core_schema());
         assert!(!local.is_yaml_core_schema_tag("thing"));
         assert!(local.is_custom());
         assert_eq!(local.parts(), ("!", "thing"));
+        assert_eq!(local.original_parts(), ("!", "thing"));
+        assert_eq!(local.original(), "!thing");
         assert_eq!(local.to_string(), "!thing");
     }
 
     #[test]
     fn event_inspection_helpers_report_node_metadata() {
-        let tag = Tag {
-            handle: "!".to_owned(),
-            suffix: "thing".to_owned(),
-        };
+        let tag = Tag::new("!", "thing");
         let scalar = Event::Scalar(
             "value".into(),
             ScalarStyle::DoubleQuoted,
@@ -2893,6 +2929,8 @@ a5: *x
         assert_eq!(*anchor_id, 1);
         assert_eq!(tag.handle, "tag:yaml.org,2002:");
         assert_eq!(tag.suffix, "str");
+        assert_eq!(tag.original_handle, "!!");
+        assert_eq!(tag.original(), "!!str");
     }
 
     #[test]
@@ -2912,6 +2950,31 @@ a5: *x
         assert_eq!(*anchor_id, 1);
         assert_eq!(tag.handle, "tag:yaml.org,2002:");
         assert_eq!(tag.suffix, "str");
+        assert_eq!(tag.original_handle, "!!");
+        assert_eq!(tag.original(), "!!str");
+    }
+
+    #[test]
+    fn test_tag_directive_preserves_original_handle() {
+        let events =
+            Parser::new_from_str("%TAG !e! tag:example.com,2000:\n---\nconfig: !e!keep value\n")
+                .map(|event| event.unwrap().0)
+                .collect::<Vec<_>>();
+
+        let Some(Event::Scalar(value, _, _, Some(tag))) = events
+            .iter()
+            .find(|event| matches!(event, Event::Scalar(value, ..) if value == "value"))
+        else {
+            panic!("expected tagged scalar");
+        };
+
+        assert_eq!(value, "value");
+        assert_eq!(tag.handle, "tag:example.com,2000:");
+        assert_eq!(tag.suffix, "keep");
+        assert_eq!(tag.original_handle, "!e!");
+        assert_eq!(tag.parts(), ("tag:example.com,2000:", "keep"));
+        assert_eq!(tag.original_parts(), ("!e!", "keep"));
+        assert_eq!(tag.original(), "!e!keep");
     }
 
     #[test]
