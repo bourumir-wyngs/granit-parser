@@ -6,7 +6,9 @@
 
 use crate::{
     input::{str::StrInput, BorrowedInput},
-    scanner::{Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError, Scanner, Span},
+    scanner::{
+        Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError, Scanner, Span,
+    },
     BufferedInput,
 };
 
@@ -383,7 +385,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// Pending tag to attach to a node after an intervening comment.
     pending_node_tag: Option<Cow<'input, Tag>>,
     /// Pending explicit tag token start to attach to a node after an intervening comment.
-    pending_node_tag_start: Option<crate::scanner::Marker>,
+    pending_node_tag_start: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
     /// Anchors that have been encountered in the YAML document.
@@ -1545,19 +1547,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         anchor_id: usize,
         tag: Option<Cow<'input, Tag>>,
-        tag_start: Option<crate::scanner::Marker>,
+        tag_start: Option<Marker>,
     ) {
         self.pending_node_anchor_id = anchor_id;
         self.pending_node_tag = tag;
         self.pending_node_tag_start = tag_start;
     }
 
-    fn attach_tag_start(
-        event: Event<'_>,
-        span: Span,
-        tag_start: Option<crate::scanner::Marker>,
-    ) -> (Event<'_>, Span) {
-        (event, span.with_tag_start(tag_start))
+    fn attach_tag_start(event: Event<'_>, span: Span, start: Option<Marker>) -> (Event<'_>, Span) {
+        (event, span.with_tag_start(start))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2507,6 +2505,25 @@ mod test {
     }
 
     #[test]
+    fn attach_tag_start_applies_marker_to_span() {
+        let event = Event::Scalar("value".into(), ScalarStyle::Plain, 0, None);
+        let span = Span::new(Marker::new(6, 1, 6), Marker::new(11, 1, 11));
+        let tag_start = Marker::new(0, 1, 0);
+
+        let (attached_event, attached_span) =
+            Parser::<crate::input::str::StrInput<'_>>::attach_tag_start(
+                event.clone(),
+                span,
+                Some(tag_start),
+            );
+
+        assert_eq!(attached_event, event);
+        assert_eq!(attached_span.start, span.start);
+        assert_eq!(attached_span.end, span.end);
+        assert_eq!(attached_span.tag_start(), Some(tag_start));
+    }
+
+    #[test]
     fn event_inspection_helpers_report_node_metadata() {
         let tag = Tag::new("!", "thing");
         let scalar = Event::Scalar(
@@ -2961,12 +2978,13 @@ a5: *x
                 .map(|event| event.unwrap().0)
                 .collect::<Vec<_>>();
 
-        let Some(Event::Scalar(value, _, _, Some(tag))) = events
+        let (value, tag) = events
             .iter()
-            .find(|event| matches!(event, Event::Scalar(value, ..) if value == "value"))
-        else {
-            panic!("expected tagged scalar");
-        };
+            .find_map(|event| match event {
+                Event::Scalar(value, _, _, Some(tag)) if value == "value" => Some((value, tag)),
+                _ => None,
+            })
+            .expect("expected tagged scalar");
 
         assert_eq!(value, "value");
         assert_eq!(tag.handle, "tag:example.com,2000:");
