@@ -34,7 +34,7 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 ## Minimal example
 
-[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges plus source slices:
+[`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges, source slices, and explicit tag-token starts for tagged nodes:
 
 Comments are emitted as `Event::Comment(text, placement)`. They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion `Span` for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from `Parser::new_from_str`, `span.slice(yaml)` returns that source comment text.
 
@@ -226,10 +226,20 @@ This crate includes fixes to improve resilience against:
 Like the upstream parser, it does **not** interpret application-level types, so parsing YAML does not trigger external side effects.
 
 ### Improved ergonomics
-Release 0.0.3 includes ergonomic helpers such as `Event::tag`, `Event::scalar`,
-`Event::anchor_id`, `Event::alias_id`, `Event::is_node`, `Tag::parts`,
-`Tag::is_custom`, `Tag::is_yaml_core_schema_tag`, `Span::slice`, and
-`ParserStack::push_include`. See CHANGELOG.md for details.
+There are the following new ergonomic helpers:
+- `Event::tag`
+- `Event::scalar`
+- `Event::anchor_id`
+- `Event::alias_id`
+- `Event::is_node`
+- `Tag::parts`
+- `Tag::is_custom`
+- `Tag::is_yaml_core_schema_tag`
+- `Span::slice`
+- `Span::tag_start`
+- `ParserStack::push_include`
+
+See CHANGELOG.md for details.
 
 ## Tools
 

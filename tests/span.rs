@@ -72,6 +72,7 @@ fn span_helpers_report_length_empty_and_byte_range() {
     assert_eq!(span.len(), 4);
     assert!(!span.is_empty());
     assert_eq!(span.byte_range(), Some(5..13));
+    assert_eq!(span.tag_start(), None);
 
     let empty = granit_parser::Span::empty(Marker::new(6, 1, 6).with_byte_offset(Some(13)));
     assert!(empty.is_empty());
@@ -79,6 +80,51 @@ fn span_helpers_report_length_empty_and_byte_range() {
 
     let without_byte_offsets = granit_parser::Span::new(Marker::new(0, 1, 0), Marker::new(1, 1, 1));
     assert_eq!(without_byte_offsets.byte_range(), None);
+}
+
+#[test]
+fn tagged_block_collection_reports_tag_start_on_tag_line() {
+    let yaml = "key: !!omap # tag is here\n  a: 1\n";
+    let (_event, span) = Parser::new_from_str(yaml)
+        .map(Result::unwrap)
+        .find(|(event, _span)| {
+            matches!(
+                event,
+                Event::MappingStart(_, _, Some(tag)) if tag.suffix == "omap"
+            )
+        })
+        .expect("expected tagged block mapping");
+
+    assert_eq!(span.start.line(), 2);
+
+    let tag_start = span
+        .tag_start()
+        .expect("tagged node should report tag start");
+    assert_eq!(tag_start.line(), 1);
+    assert_eq!(tag_start.col(), 5);
+    assert_eq!(tag_start.byte_offset(), Some(5));
+}
+
+#[test]
+fn tag_start_uses_tag_token_when_anchor_precedes_tag() {
+    let yaml = "key: &a !!str value\n";
+    let (_event, span) = Parser::new_from_str(yaml)
+        .map(Result::unwrap)
+        .find(|(event, _span)| {
+            matches!(
+                event,
+                Event::Scalar(value, _, _, Some(tag))
+                    if value.as_ref() == "value" && tag.suffix == "str"
+            )
+        })
+        .expect("expected tagged anchored scalar");
+
+    let tag_start = span
+        .tag_start()
+        .expect("tagged node should report tag start");
+    assert_eq!(tag_start.line(), 1);
+    assert_eq!(tag_start.col(), 8);
+    assert_eq!(tag_start.byte_offset(), Some(8));
 }
 
 #[test]

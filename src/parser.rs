@@ -327,6 +327,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_anchor_id: usize,
     /// Pending tag to attach to a node after an intervening comment.
     pending_node_tag: Option<Cow<'input, Tag>>,
+    /// Pending explicit tag token start to attach to a node after an intervening comment.
+    pending_node_tag_start: Option<crate::scanner::Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
     /// Anchors that have been encountered in the YAML document.
@@ -684,6 +686,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             pending_key_indent: None,
             pending_node_anchor_id: 0,
             pending_node_tag: None,
+            pending_node_tag_start: None,
             pending_empty_scalar_span: None,
 
             anchors: BTreeMap::new(),
@@ -1483,9 +1486,23 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok(new_id)
     }
 
-    fn save_pending_node_properties(&mut self, anchor_id: usize, tag: Option<Cow<'input, Tag>>) {
+    fn save_pending_node_properties(
+        &mut self,
+        anchor_id: usize,
+        tag: Option<Cow<'input, Tag>>,
+        tag_start: Option<crate::scanner::Marker>,
+    ) {
         self.pending_node_anchor_id = anchor_id;
         self.pending_node_tag = tag;
+        self.pending_node_tag_start = tag_start;
+    }
+
+    fn attach_tag_start<'a>(
+        event: Event<'a>,
+        span: Span,
+        tag_start: Option<crate::scanner::Marker>,
+    ) -> (Event<'a>, Span) {
+        (event, span.with_tag_start(tag_start))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1499,6 +1516,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
         let mut tag = self.pending_node_tag.take();
+        let mut tag_start = self.pending_node_tag_start.take();
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
@@ -1518,15 +1536,18 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(_, QueuedTokenType::Anchor(_)) => {
                 if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
                     anchor_id = self.register_anchor(name, &span)?;
-                    if let QueuedTokenType::Tag(..) = self.peek_token()?.1 {
-                        if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
-                            tag = Some(self.resolve_tag(span, &handle, suffix)?);
+                    if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
+                        if let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
+                            self.fetch_token()
+                        {
+                            tag_start = Some(tag_span.start);
+                            tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
                         } else {
                             unreachable!()
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start);
                         return Ok(comment);
                     }
                 } else {
@@ -1535,6 +1556,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, QueuedTokenType::Tag(..)) => {
                 if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
+                    tag_start = Some(mark.start);
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
@@ -1545,7 +1567,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start);
                         return Ok(comment);
                     }
                 } else {
@@ -1560,7 +1582,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 let comments = self.next_comment_events()?;
                 let start = (
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
-                    mark,
+                    mark.with_tag_start(tag_start),
                 );
                 if comments.is_empty() {
                     self.pending_empty_scalar_span = Some(mark);
@@ -1589,7 +1611,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(_, QueuedTokenType::Scalar(..)) => {
                 self.pop_state();
                 if let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token() {
-                    Ok((Event::Scalar(v, style, anchor_id, tag), mark))
+                    Ok(Self::attach_tag_start(
+                        Event::Scalar(v, style, anchor_id, tag),
+                        mark,
+                        tag_start,
+                    ))
                 } else {
                     unreachable!()
                 }
@@ -1597,39 +1623,47 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(mark, QueuedTokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
                 self.skip();
-                Ok((
+                Ok(Self::attach_tag_start(
                     Event::SequenceStart(StructureStyle::Flow, anchor_id, tag),
                     mark,
+                    tag_start,
                 ))
             }
             QueuedToken(mark, QueuedTokenType::FlowMappingStart) => {
                 self.state = State::FlowMappingFirstKey;
                 self.skip();
-                Ok((
+                Ok(Self::attach_tag_start(
                     Event::MappingStart(StructureStyle::Flow, anchor_id, tag),
                     mark,
+                    tag_start,
                 ))
             }
             QueuedToken(mark, QueuedTokenType::BlockSequenceStart) if block => {
                 self.state = State::BlockSequenceFirstEntry;
                 self.skip();
-                Ok((
+                Ok(Self::attach_tag_start(
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
                     mark,
+                    tag_start,
                 ))
             }
             QueuedToken(mark, QueuedTokenType::BlockMappingStart) if block => {
                 self.state = State::BlockMappingFirstKey;
                 self.skip();
-                Ok((
+                Ok(Self::attach_tag_start(
                     Event::MappingStart(StructureStyle::Block, anchor_id, tag),
                     mark,
+                    tag_start,
                 ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
             QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
                 self.pop_state();
-                Ok((Event::empty_scalar_with_anchor(anchor_id, tag), mark))
+                Ok(Self::attach_tag_start(
+                    Event::empty_scalar_with_anchor(anchor_id, tag),
+                    mark,
+                    tag_start,
+                ))
             }
             QueuedToken(span, _) => {
                 let info = match self.state {

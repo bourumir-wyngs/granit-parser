@@ -155,6 +155,16 @@ pub struct Span {
     /// This is only meaningful for certain parser-emitted events (notably: block mapping keys).
     /// When indentation is not meaningful or cannot be provided, it must be `None`.
     pub indent: Option<usize>,
+    
+    /// Optional source marker for the explicit tag token attached to this node.
+    ///
+    /// This is only meaningful for parser-emitted node events that carry a resolved tag, such as
+    /// [`Event::Scalar`](crate::Event::Scalar),
+    /// [`Event::SequenceStart`](crate::Event::SequenceStart), or
+    /// [`Event::MappingStart`](crate::Event::MappingStart). The normal [`Span::start`] and
+    /// [`Span::end`] continue to cover the node value or collection; `tag_start` points to the
+    /// tag token when that token appears at a different source location.
+    pub tag_start: Option<Marker>,
 }
 
 impl Span {
@@ -165,6 +175,7 @@ impl Span {
             start,
             end,
             indent: None,
+            tag_start: None,
         }
     }
 
@@ -180,6 +191,7 @@ impl Span {
             start: mark,
             end: mark,
             indent: None,
+            tag_start: None,
         }
     }
 
@@ -188,6 +200,23 @@ impl Span {
     pub fn with_indent(mut self, indent: Option<usize>) -> Span {
         self.indent = indent;
         self
+    }
+
+    /// Return a copy of this [`Span`] with the given explicit tag-token start marker.
+    #[must_use]
+    pub fn with_tag_start(mut self, tag_start: Option<Marker>) -> Span {
+        self.tag_start = tag_start;
+        self
+    }
+
+    /// Return the source marker of the explicit tag token attached to this node, if any.
+    ///
+    /// The regular span still covers the node value or collection. This accessor is useful for
+    /// diagnostics that should point at the tag itself, especially when a tagged block collection
+    /// begins on a later line than the tag token.
+    #[must_use]
+    pub fn tag_start(&self) -> Option<Marker> {
+        self.tag_start
     }
 
     /// Return the length of the span (in characters).

@@ -1,6 +1,8 @@
 # Changelog
-## v0.0.4
+## v0.0.5
 - Performance improvements on comment parsing
+- Added `Span::tag_start` metadata for parser-emitted tagged node events, so diagnostics can point
+  at the explicit tag token even when the node span starts on a later line.
 
 
 ## v0.0.3
