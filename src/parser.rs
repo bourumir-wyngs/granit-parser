@@ -2519,7 +2519,10 @@ mod test {
         assert_eq!(non_specific.original(), "!");
 
         assert_eq!(verbatim.parts(), ("", "tag:example.com,2000:thing"));
-        assert_eq!(verbatim.original_parts(), ("", "tag:example.com,2000:thing"));
+        assert_eq!(
+            verbatim.original_parts(),
+            ("", "tag:example.com,2000:thing")
+        );
         assert_eq!(verbatim.original(), "!<tag:example.com,2000:thing>");
     }
 
