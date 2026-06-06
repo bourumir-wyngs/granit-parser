@@ -115,7 +115,6 @@ name = "granit-parser"
 version = "0.0.5"
 dependencies = [
  "arraydeque",
- "clap",
  "libtest-mimic",
  "smallvec",
 ]
