@@ -30,13 +30,20 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
         let (event, span) = next?;
 
         if let Some(tag) = event.tag() {
+            let tag_start = span
+                .tag_start()
+                .map(|mark| (mark.line(), mark.col(), mark.byte_offset()));
+
             if let Some((value, _style)) = event.scalar() {
                 lines.push(format!(
-                    "scalar tag: {tag} core-str={} for {value:?}",
+                    "scalar tag: {tag} core-str={} tag_start(line,col,byte)={tag_start:?} for {value:?}",
                     tag.is_yaml_core_schema_tag("str")
                 ));
             } else if event.is_node() {
-                lines.push(format!("node tag: {tag} custom={}", tag.is_custom()));
+                lines.push(format!(
+                    "node tag: {tag} custom={} tag_start(line,col,byte)={tag_start:?}",
+                    tag.is_custom()
+                ));
             }
         }
 

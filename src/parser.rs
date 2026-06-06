@@ -257,9 +257,18 @@ impl Tag {
     /// Return the tag spelling reconstructed from the source handle and suffix.
     ///
     /// For ordinary shorthand tags this returns the author-facing spelling, such as `!e!keep` or
-    /// `!!str`.
+    /// `!!str`. For verbatim tags this returns a normalized verbatim spelling such as
+    /// `!<tag:example.com,2000:thing>`, not necessarily the byte-exact source token.
     #[must_use]
     pub fn original(&self) -> String {
+        if self.original_handle.is_empty() && self.suffix != "!" {
+            let mut tag = String::with_capacity(self.suffix.len() + 3);
+            tag.push_str("!<");
+            tag.push_str(&self.suffix);
+            tag.push('>');
+            return tag;
+        }
+
         let mut tag = String::with_capacity(self.original_handle.len() + self.suffix.len());
         tag.push_str(&self.original_handle);
         tag.push_str(&self.suffix);
@@ -2486,6 +2495,8 @@ mod test {
     fn tag_helpers_distinguish_core_and_local_tags() {
         let core = Tag::with_original_handle("tag:yaml.org,2002:", "int", "!!");
         let local = Tag::new("!", "thing");
+        let non_specific = Tag::with_original_handle("", "!", "");
+        let verbatim = Tag::with_original_handle("", "tag:example.com,2000:thing", "");
 
         assert!(core.is_yaml_core_schema());
         assert!(core.is_yaml_core_schema_tag("int"));
@@ -2502,6 +2513,14 @@ mod test {
         assert_eq!(local.original_parts(), ("!", "thing"));
         assert_eq!(local.original(), "!thing");
         assert_eq!(local.to_string(), "!thing");
+
+        assert_eq!(non_specific.parts(), ("", "!"));
+        assert_eq!(non_specific.original_parts(), ("", "!"));
+        assert_eq!(non_specific.original(), "!");
+
+        assert_eq!(verbatim.parts(), ("", "tag:example.com,2000:thing"));
+        assert_eq!(verbatim.original_parts(), ("", "tag:example.com,2000:thing"));
+        assert_eq!(verbatim.original(), "!<tag:example.com,2000:thing>");
     }
 
     #[test]
@@ -2993,6 +3012,28 @@ a5: *x
         assert_eq!(tag.parts(), ("tag:example.com,2000:", "keep"));
         assert_eq!(tag.original_parts(), ("!e!", "keep"));
         assert_eq!(tag.original(), "!e!keep");
+    }
+
+    #[test]
+    fn test_verbatim_tag_original_is_normalized_author_spelling() {
+        let events = Parser::new_from_str("key: !<tag:example.com,2000:thing> value\n")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        let Some(Event::Scalar(value, _, _, Some(tag))) = events
+            .iter()
+            .find(|event| matches!(event, Event::Scalar(value, ..) if value == "value"))
+        else {
+            panic!("expected tagged scalar");
+        };
+
+        assert_eq!(value, "value");
+        assert_eq!(tag.handle, "");
+        assert_eq!(tag.suffix, "tag:example.com,2000:thing");
+        assert_eq!(tag.original_handle, "");
+        assert_eq!(tag.parts(), ("", "tag:example.com,2000:thing"));
+        assert_eq!(tag.original_parts(), ("", "tag:example.com,2000:thing"));
+        assert_eq!(tag.original(), "!<tag:example.com,2000:thing>");
     }
 
     #[test]

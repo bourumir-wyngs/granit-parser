@@ -128,6 +128,28 @@ fn tag_start_uses_tag_token_when_anchor_precedes_tag() {
 }
 
 #[test]
+fn tag_start_uses_tag_token_when_tag_precedes_anchor() {
+    let yaml = "key: !!str &a value\n";
+    let (_event, span) = Parser::new_from_str(yaml)
+        .map(Result::unwrap)
+        .find(|(event, _span)| {
+            matches!(
+                event,
+                Event::Scalar(value, _, _, Some(tag))
+                    if value.as_ref() == "value" && tag.suffix == "str"
+            )
+        })
+        .expect("expected tagged anchored scalar");
+
+    let tag_start = span
+        .tag_start()
+        .expect("tagged node should report tag start");
+    assert_eq!(tag_start.line(), 1);
+    assert_eq!(tag_start.col(), 5);
+    assert_eq!(tag_start.byte_offset(), Some(5));
+}
+
+#[test]
 fn span_slice_returns_source_text_for_valid_byte_ranges() {
     let source = "key: value";
     let span = granit_parser::Span::new(
