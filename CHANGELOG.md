@@ -7,6 +7,8 @@
   the tag handle as written before `%TAG` directive resolution and reconstruct normalized
   author-facing tag spelling, including verbatim tags (breaking change).
 
+## v0.0.4
+  Retracted
 
 ## v0.0.3
 
