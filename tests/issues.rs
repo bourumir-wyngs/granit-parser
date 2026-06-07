@@ -668,3 +668,33 @@ fn test_issue84() {
         ]
     );
 }
+
+#[test]
+fn test_granit_issue14_anchor_and_alias_names_may_end_with_colon() {
+    // YAML 1.2.2:
+    //
+    //   ns-anchor-char ::= ns-char - c-flow-indicator
+    //   ns-anchor-name ::= ns-anchor-char+
+    //
+    // `:` is not a flow indicator. Therefore both `&foo:` and `*foo:`
+    // use the anchor/alias name `foo:`.
+    //
+    // A buggy scanner that stops anchor/alias names before `:` will tokenize
+    // this as `&foo` / `*foo` followed by a mapping value indicator, producing
+    // either a parse error or the wrong event stream.
+    let input = "- &foo: value\n- *foo:\n";
+
+    assert_eq!(
+        run_parser(input).unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            seq(Block),
+            Event::Scalar("value".into(), ScalarStyle::Plain, 1, None),
+            Event::Alias(1),
+            Event::SequenceEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}

@@ -5326,4 +5326,38 @@ mod test {
             .expect_err("stale simple key should be reported as a scan error");
         assert_eq!(error.info(), "simple key is no longer valid");
     }
+
+    #[test]
+    fn issue14_alias_scanner_consumes_colon_as_name_character() {
+        let mut scanner = Scanner::new(StrInput::new("*foo: bar\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+
+        let token = scanner.next_token().unwrap().unwrap();
+
+        assert!(
+            matches!(token.1, TokenType::Alias(ref name) if name.as_ref() == "foo:"),
+            "expected `*foo: bar` to start with Alias(\"foo:\"), got {token:?}"
+        );
+    }
+
+    #[test]
+    fn issue14_anchor_scanner_consumes_colon_as_name_character() {
+        let mut scanner = Scanner::new(StrInput::new("&foo: bar\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+
+        let token = scanner.next_token().unwrap().unwrap();
+
+        assert!(
+            matches!(token.1, TokenType::Anchor(ref name) if name.as_ref() == "foo:"),
+            "expected `&foo: bar` to start with Anchor(\"foo:\"), got {token:?}"
+        );
+    }
 }
