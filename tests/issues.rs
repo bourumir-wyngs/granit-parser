@@ -462,6 +462,51 @@ fn test_issue14_v2() {
 }
 
 #[test]
+fn test_granit_issue14_colon_in_alias_name_is_not_value_indicator() {
+    // YAML 1.2.2:
+    //
+    //   ns-anchor-char ::= ns-char - c-flow-indicator
+    //
+    // ':' is not a c-flow-indicator, so in `*foo: bar` the alias name is `foo:`.
+    // This must not be parsed as alias `foo` used as a mapping key.
+    //
+    // The first line intentionally defines `&foo`. A buggy parser that stops the
+    // alias at ':' will therefore parse the second line as a valid mapping entry.
+    // A fixed parser consumes `foo:` as the alias name and then rejects the stray
+    // `bar` node.
+    let input = "foo: &foo value\n*foo: bar\n";
+
+    assert!(
+        run_parser(input).is_err(),
+        "`*foo: bar` must be rejected: ':' is part of the alias name `foo:`, \
+         not a mapping value indicator after alias `foo`"
+    );
+}
+
+#[test]
+fn test_granit_issue14_space_before_colon_keeps_alias_key_mapping_valid() {
+    // With an explicit separation space before ':', the alias name is `foo`.
+    // This is the valid alias-key mapping form.
+    let input = "foo: &foo value\n*foo : bar\n";
+
+    assert_eq!(
+        run_parser(input).unwrap(),
+        [
+            Event::StreamStart,
+            Event::DocumentStart(false),
+            map(Block),
+            Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("value".into(), ScalarStyle::Plain, 1, None),
+            Event::Alias(1),
+            Event::Scalar("bar".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
 fn test_issue13() {
     // The following input creates an infinite loop.
     // https://github.com/saphyr-rs/saphyr/issues/13
