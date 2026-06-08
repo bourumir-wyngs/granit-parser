@@ -4282,9 +4282,23 @@ mod test {
     }
 
     #[test]
-    fn test_is_anchor_char() {
+    fn anchor_character_set_allows_colon_and_rejects_flow_indicators() {
         use super::is_anchor_char;
+
         assert!(is_anchor_char('x'));
+        assert!(is_anchor_char('-'));
+        assert!(is_anchor_char('_'));
+        assert!(is_anchor_char(':'));
+        assert!(is_anchor_char('#'));
+        assert!(is_anchor_char('/'));
+        assert!(is_anchor_char('?'));
+
+        for c in [',', '[', ']', '{', '}', ' ', '\t', '\n', '\r', '\0'] {
+            assert!(
+                !is_anchor_char(c),
+                "character {c:?} must not be accepted in anchor/alias names"
+            );
+        }
     }
 
     #[test]
@@ -4609,6 +4623,40 @@ mod test {
                 .expect("scanner must eventually produce a token");
             if let TokenType::Alias(name) = tok.1 {
                 assert!(matches!(name, Cow::Borrowed("anch")));
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn alias_name_scans_colon_as_part_of_name() {
+        let mut scanner = Scanner::new(StrInput::new("*foo: bar\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("scanner must not fail before alias token")
+                .expect("scanner must eventually emit an alias token");
+
+            if let TokenType::Alias(name) = tok.1 {
+                assert_eq!(name.as_ref(), "foo:");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn anchor_name_scans_colon_as_part_of_name() {
+        let mut scanner = Scanner::new(StrInput::new("&foo: bar\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("scanner must not fail before anchor token")
+                .expect("scanner must eventually emit an anchor token");
+
+            if let TokenType::Anchor(name) = tok.1 {
+                assert_eq!(name.as_ref(), "foo:");
                 break;
             }
         }
@@ -5277,5 +5325,39 @@ mod test {
             .fetch_value()
             .expect_err("stale simple key should be reported as a scan error");
         assert_eq!(error.info(), "simple key is no longer valid");
+    }
+
+    #[test]
+    fn issue14_alias_scanner_consumes_colon_as_name_character() {
+        let mut scanner = Scanner::new(StrInput::new("*foo: bar\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+
+        let token = scanner.next_token().unwrap().unwrap();
+
+        assert!(
+            matches!(token.1, TokenType::Alias(ref name) if name.as_ref() == "foo:"),
+            "expected `*foo: bar` to start with Alias(\"foo:\"), got {token:?}"
+        );
+    }
+
+    #[test]
+    fn issue14_anchor_scanner_consumes_colon_as_name_character() {
+        let mut scanner = Scanner::new(StrInput::new("&foo: bar\n"));
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart(_)
+        ));
+
+        let token = scanner.next_token().unwrap().unwrap();
+
+        assert!(
+            matches!(token.1, TokenType::Anchor(ref name) if name.as_ref() == "foo:"),
+            "expected `&foo: bar` to start with Anchor(\"foo:\"), got {token:?}"
+        );
     }
 }
