@@ -181,20 +181,12 @@ pub struct Tag {
 
 const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
 
-// The exact place is YAML 1.2.2, Chapter 10, Recommended Schemas.
-// §10.3.1 Core Schema / Tags says: “The core schema uses the same tags as the JSON schema.”
-
-// §10.2.1 JSON Schema / Tags says JSON Schema uses tags in addition to the failsafe schema, and then lists:
-// tag:yaml.org,2002:null,
-// tag:yaml.org,2002:bool,
-// tag:yaml.org,2002:int,
-// tag:yaml.org,2002:float.
-
-// §10.1.1 Failsafe Schema / Tags lists:
-// tag:yaml.org,2002:map,
-// tag:yaml.org,2002:seq,
-// tag:yaml.org,2002:str.
-
+// YAML 1.2.2 defines Core Schema tags by reference:
+// - §10.3.1 says Core Schema uses the same tags as YAML's JSON Schema.
+// - §10.2.1 adds null/bool/int/float to the Failsafe Schema.
+// - §10.1.1 defines the Failsafe Schema tags map/seq/str.
+// Therefore the YAML 1.2.2 Core Schema tag suffixes are:
+// bool, float, int, map, null, seq, and str.
 const YAML_CORE_SCHEMA_SUFFIXES: [&str; 7] = ["bool", "float", "int", "map", "null", "seq", "str"];
 
 fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&str> {
@@ -271,7 +263,7 @@ impl Tag {
     /// suffix.
     ///
     /// # Return
-    /// Returns `true` if the resolved tag is a known `tag:yaml.org,2002:*` core tag.
+    /// Returns `true` if the resolved tag is a known YAML 1.2.2 Core Schema tag.
     #[must_use]
     pub fn is_yaml_core_schema(&self) -> bool {
         self.core_suffix().is_some()
@@ -287,9 +279,11 @@ impl Tag {
             .is_some_and(|core_suffix| core_suffix == suffix)
     }
 
-    /// Return true for a tag outside the YAML core-schema namespace.
+    /// Return true for a tag outside the YAML 1.2.2 Core Schema tag set.
     ///
-    /// This checks the resolved tag URI, not just the tag handle.
+    /// This checks the resolved tag URI, not just the tag handle spelling. For example,
+    /// `tag:yaml.org,2002:timestamp` is in the YAML tag namespace, but it is not a YAML 1.2.2
+    /// Core Schema tag.
     #[must_use]
     pub fn is_custom(&self) -> bool {
         !self.is_yaml_core_schema()

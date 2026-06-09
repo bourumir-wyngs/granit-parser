@@ -1,7 +1,8 @@
 # Changelog
 ## v0.0.6
-- Added `Tag::core_suffix` and made core-tag helpers match known resolved
-  `tag:yaml.org,2002:*` tags instead of checking only the resolved handle.
+- Added `Tag::core_suffix` and made core-tag helpers match the resolved YAML 1.2.2
+  Core Schema tags (`null`, `bool`, `int`, `float`, `map`, `seq`, and `str`)
+  instead of checking only the resolved handle.
 
 ## v0.0.5
 - Performance improvements on comment parsing
