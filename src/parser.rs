@@ -180,23 +180,22 @@ pub struct Tag {
 }
 
 const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
-const YAML_CORE_SCHEMA_SUFFIXES: [&str; 15] = [
-    "binary",
-    "bool",
-    "float",
-    "int",
-    "map",
-    "merge",
-    "null",
-    "omap",
-    "pairs",
-    "seq",
-    "set",
-    "str",
-    "timestamp",
-    "value",
-    "yaml",
-];
+
+// The exact place is YAML 1.2.2, Chapter 10, Recommended Schemas.
+// §10.3.1 Core Schema / Tags says: “The core schema uses the same tags as the JSON schema.”
+
+// §10.2.1 JSON Schema / Tags says JSON Schema uses tags in addition to the failsafe schema, and then lists:
+// tag:yaml.org,2002:null,
+// tag:yaml.org,2002:bool,
+// tag:yaml.org,2002:int,
+// tag:yaml.org,2002:float.
+
+// §10.1.1 Failsafe Schema / Tags lists:
+// tag:yaml.org,2002:map,
+// tag:yaml.org,2002:seq,
+// tag:yaml.org,2002:str.
+
+const YAML_CORE_SCHEMA_SUFFIXES: [&str; 7] = ["bool", "float", "int", "map", "null", "seq", "str"];
 
 fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&str> {
     YAML_CORE_SCHEMA_SUFFIXES
@@ -2633,26 +2632,24 @@ mod test {
     }
 
     #[test]
-    fn core_suffix_recognizes_split_standard_yaml_tag_names() {
+    fn core_suffix_rejects_non_core_yaml_org_tags() {
         let cases = [
-            (
-                "merge",
-                "%TAG !m! tag:yaml.org,2002:mer\n---\nv: !m!ge 1\n",
-                ("tag:yaml.org,2002:mer", "ge"),
-            ),
-            (
-                "yaml",
-                "%TAG !m! tag:yaml.org,2002:ya\n---\nv: !m!ml 1\n",
-                ("tag:yaml.org,2002:ya", "ml"),
-            ),
+            "binary",
+            "merge",
+            "omap",
+            "pairs",
+            "set",
+            "timestamp",
+            "value",
+            "yaml",
         ];
 
-        for (suffix, input, expected_parts) in cases {
-            let tag = first_tagged_scalar_tag(input);
+        for suffix in cases {
+            let tag = Tag::with_original_handle("tag:yaml.org,2002:", suffix, "!!");
 
-            assert_eq!(tag.parts(), expected_parts, "{suffix}");
-            assert_eq!(tag.core_suffix(), Some(suffix), "{suffix}");
-            assert!(tag.is_yaml_core_schema_tag(suffix), "{suffix}");
+            assert_eq!(tag.core_suffix(), None, "{suffix}");
+            assert!(!tag.is_yaml_core_schema(), "{suffix}");
+            assert!(tag.is_custom(), "{suffix}");
         }
     }
 
