@@ -179,6 +179,42 @@ pub struct Tag {
     pub original_handle: String,
 }
 
+const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
+const YAML_CORE_SCHEMA_SUFFIXES: [&str; 15] = [
+    "binary",
+    "bool",
+    "float",
+    "int",
+    "map",
+    "merge",
+    "null",
+    "omap",
+    "pairs",
+    "seq",
+    "set",
+    "str",
+    "timestamp",
+    "value",
+    "yaml",
+];
+
+fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&str> {
+    YAML_CORE_SCHEMA_SUFFIXES
+        .contains(&suffix)
+        .then_some(suffix)
+}
+
+fn known_yaml_core_schema_suffix_from_split(
+    handle_tail: &str,
+    suffix: &str,
+) -> Option<&'static str> {
+    YAML_CORE_SCHEMA_SUFFIXES.iter().copied().find(|candidate| {
+        candidate
+            .strip_prefix(handle_tail)
+            .is_some_and(|candidate_tail| candidate_tail == suffix)
+    })
+}
+
 impl Tag {
     /// Create a tag from resolved parts.
     ///
@@ -208,17 +244,38 @@ impl Tag {
         }
     }
 
+    /// Return the resolved YAML core-schema suffix for this tag, if it is a known core tag.
+    ///
+    /// The tag is matched by its resolved URI, not by the source handle spelling. For example,
+    /// `!!int`, `!<tag:yaml.org,2002:int>`, and a `%TAG` split such as
+    /// `%TAG !m! tag:yaml.org,2002:i` followed by `!m!nt` all return `Some("int")`.
+    ///
+    /// Authored tag parts are left unchanged; use [`Self::parts`], [`Self::original_parts`], or
+    /// [`Self::original`] to inspect those spellings.
+    #[must_use]
+    pub fn core_suffix(&self) -> Option<&str> {
+        if self.handle.len() <= YAML_CORE_SCHEMA_PREFIX.len() {
+            let remaining_prefix = YAML_CORE_SCHEMA_PREFIX.strip_prefix(&self.handle)?;
+            let suffix = self.suffix.strip_prefix(remaining_prefix)?;
+            return known_yaml_core_schema_suffix(suffix);
+        }
+
+        let handle_tail = self.handle.strip_prefix(YAML_CORE_SCHEMA_PREFIX)?;
+        known_yaml_core_schema_suffix_from_split(handle_tail, &self.suffix)
+    }
+
     /// Returns whether the tag is a YAML tag from the core schema (`!!str`, `!!int`, ...).
     ///
     /// The YAML specification specifies [a list of
-    /// tags](https://yaml.org/spec/1.2.2/#103-core-schema) for the Core Schema. This function
-    /// checks whether _the handle_ (but not the suffix) is the handle for the YAML Core Schema.
+    /// tags](https://yaml.org/spec/1.2.2/#103-core-schema) for the Core Schema. This function uses
+    /// the resolved tag URI, so it is independent of how the tag was split between handle and
+    /// suffix.
     ///
     /// # Return
-    /// Returns `true` if the handle is `tag:yaml.org,2002:`, `false` otherwise.
+    /// Returns `true` if the resolved tag is a known `tag:yaml.org,2002:*` core tag.
     #[must_use]
     pub fn is_yaml_core_schema(&self) -> bool {
-        self.handle == "tag:yaml.org,2002:"
+        self.core_suffix().is_some()
     }
 
     /// Return true for a YAML core-schema tag with the given suffix.
@@ -227,13 +284,13 @@ impl Tag {
     /// `!!null`, `!!map`, or `!!seq` after tag resolution.
     #[must_use]
     pub fn is_yaml_core_schema_tag(&self, suffix: &str) -> bool {
-        self.is_yaml_core_schema() && self.suffix == suffix
+        self.core_suffix()
+            .is_some_and(|core_suffix| core_suffix == suffix)
     }
 
     /// Return true for a tag outside the YAML core-schema namespace.
     ///
-    /// This checks only the tag handle. It returns `false` for any tag whose handle is
-    /// `tag:yaml.org,2002:`, regardless of suffix.
+    /// This checks the resolved tag URI, not just the tag handle.
     #[must_use]
     pub fn is_custom(&self) -> bool {
         !self.is_yaml_core_schema()
@@ -2419,6 +2476,15 @@ mod test {
         panic!("expected parser error")
     }
 
+    fn first_tagged_scalar_tag(input: &str) -> Tag {
+        Parser::new_from_str(input)
+            .find_map(|event| match event.expect("input should parse").0 {
+                Event::Scalar(_, _, _, Some(tag)) => Some(tag.into_owned()),
+                _ => None,
+            })
+            .expect("expected tagged scalar")
+    }
+
     #[test]
     fn deferred_parse_node_can_emit_comment_before_flow_node() {
         let mut parser = Parser::new_from_str("# deferred\nvalue\n");
@@ -2497,7 +2563,9 @@ mod test {
         let local = Tag::new("!", "thing");
         let non_specific = Tag::with_original_handle("", "!", "");
         let verbatim = Tag::with_original_handle("", "tag:example.com,2000:thing", "");
+        let unknown_yaml_org = Tag::with_original_handle("", "tag:yaml.org,2002:application", "");
 
+        assert_eq!(core.core_suffix(), Some("int"));
         assert!(core.is_yaml_core_schema());
         assert!(core.is_yaml_core_schema_tag("int"));
         assert!(!core.is_yaml_core_schema_tag("str"));
@@ -2506,6 +2574,7 @@ mod test {
         assert_eq!(core.original_parts(), ("!!", "int"));
         assert_eq!(core.original(), "!!int");
 
+        assert_eq!(local.core_suffix(), None);
         assert!(!local.is_yaml_core_schema());
         assert!(!local.is_yaml_core_schema_tag("thing"));
         assert!(local.is_custom());
@@ -2524,6 +2593,92 @@ mod test {
             ("", "tag:example.com,2000:thing")
         );
         assert_eq!(verbatim.original(), "!<tag:example.com,2000:thing>");
+
+        assert_eq!(unknown_yaml_org.core_suffix(), None);
+        assert!(!unknown_yaml_org.is_yaml_core_schema());
+        assert!(unknown_yaml_org.is_custom());
+    }
+
+    #[test]
+    fn core_suffix_uses_resolved_tag_uri_for_common_spellings() {
+        let cases = [
+            ("shorthand", "v: !!int 1\n", ("tag:yaml.org,2002:", "int")),
+            (
+                "verbatim",
+                "v: !<tag:yaml.org,2002:int> 1\n",
+                ("", "tag:yaml.org,2002:int"),
+            ),
+            (
+                "full prefix",
+                "%TAG !e! tag:yaml.org,2002:\n---\nv: !e!int 1\n",
+                ("tag:yaml.org,2002:", "int"),
+            ),
+            (
+                "mid-split",
+                "%TAG !m! tag:yaml.org,2002:i\n---\nv: !m!nt 1\n",
+                ("tag:yaml.org,2002:i", "nt"),
+            ),
+        ];
+
+        for (label, input, expected_parts) in cases {
+            let tag = first_tagged_scalar_tag(input);
+
+            assert_eq!(tag.parts(), expected_parts, "{label}");
+            assert_eq!(tag.core_suffix(), Some("int"), "{label}");
+            assert!(tag.is_yaml_core_schema(), "{label}");
+            assert!(tag.is_yaml_core_schema_tag("int"), "{label}");
+            assert!(!tag.is_yaml_core_schema_tag("str"), "{label}");
+            assert!(!tag.is_custom(), "{label}");
+        }
+    }
+
+    #[test]
+    fn core_suffix_recognizes_split_standard_yaml_tag_names() {
+        let cases = [
+            (
+                "merge",
+                "%TAG !m! tag:yaml.org,2002:mer\n---\nv: !m!ge 1\n",
+                ("tag:yaml.org,2002:mer", "ge"),
+            ),
+            (
+                "yaml",
+                "%TAG !m! tag:yaml.org,2002:ya\n---\nv: !m!ml 1\n",
+                ("tag:yaml.org,2002:ya", "ml"),
+            ),
+        ];
+
+        for (suffix, input, expected_parts) in cases {
+            let tag = first_tagged_scalar_tag(input);
+
+            assert_eq!(tag.parts(), expected_parts, "{suffix}");
+            assert_eq!(tag.core_suffix(), Some(suffix), "{suffix}");
+            assert!(tag.is_yaml_core_schema_tag(suffix), "{suffix}");
+        }
+    }
+
+    #[test]
+    fn core_suffix_rejects_non_core_tags() {
+        let cases = [
+            ("local", "v: !local 1\n"),
+            ("verbatim custom", "v: !<tag:example.com,2000:int> 1\n"),
+            (
+                "custom directive",
+                "%TAG !e! tag:example.com,2000:\n---\nv: !e!int 1\n",
+            ),
+            (
+                "overridden secondary handle",
+                "%TAG !! tag:example.com,2000:app/\n---\nv: !!int 1\n",
+            ),
+        ];
+
+        for (label, input) in cases {
+            let tag = first_tagged_scalar_tag(input);
+
+            assert_eq!(tag.core_suffix(), None, "{label}");
+            assert!(!tag.is_yaml_core_schema(), "{label}");
+            assert!(!tag.is_yaml_core_schema_tag("int"), "{label}");
+            assert!(tag.is_custom(), "{label}");
+        }
     }
 
     #[test]
