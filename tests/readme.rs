@@ -36,7 +36,8 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
 
             if let Some((value, _style)) = event.scalar() {
                 lines.push(format!(
-                    "scalar tag: {tag} core-str={} tag_start(line,col,byte)={tag_start:?} for {value:?}",
+                    "scalar tag: {tag} core-suffix={:?} core-str={} tag_start(line,col,byte)={tag_start:?} for {value:?}",
+                    tag.core_suffix(),
                     tag.is_yaml_core_schema_tag("str")
                 ));
             } else if event.is_node() {

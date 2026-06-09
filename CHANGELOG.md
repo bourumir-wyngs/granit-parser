@@ -1,4 +1,9 @@
 # Changelog
+## v0.0.6
+- Added `Tag::core_suffix` and made core-tag helpers match the resolved YAML 1.2.2
+  Core Schema tags (`null`, `bool`, `int`, `float`, `map`, `seq`, and `str`)
+  instead of checking only the resolved handle.
+
 ## v0.0.5
 - Performance improvements on comment parsing
 - Added `Span::tag_start` metadata for parser-emitted tagged node events, so diagnostics can point
