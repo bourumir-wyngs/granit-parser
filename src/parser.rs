@@ -199,14 +199,11 @@ fn known_yaml_core_schema_suffix_from_split(
     handle_tail: &str,
     suffix: &str,
 ) -> Option<&'static str> {
-    YAML_CORE_SCHEMA_SUFFIXES
-        .iter()
-        .copied()
-        .find(|candidate| {
-            candidate
-                .strip_prefix(handle_tail)
-                .is_some_and(|candidate_tail| candidate_tail == suffix)
-        })
+    YAML_CORE_SCHEMA_SUFFIXES.iter().copied().find(|candidate| {
+        candidate
+            .strip_prefix(handle_tail)
+            .is_some_and(|candidate_tail| candidate_tail == suffix)
+    })
 }
 
 impl Tag {
@@ -250,9 +247,7 @@ impl Tag {
     pub fn core_suffix(&self) -> Option<&str> {
         // The handle ends at or before the namespace boundary. The remaining namespace
         // prefix and the complete type name are both contained in `suffix`.
-        if let Some(remaining_prefix) =
-            YAML_CORE_SCHEMA_PREFIX.strip_prefix(self.handle.as_str())
-        {
+        if let Some(remaining_prefix) = YAML_CORE_SCHEMA_PREFIX.strip_prefix(self.handle.as_str()) {
             let suffix = self.suffix.strip_prefix(remaining_prefix)?;
             return known_yaml_core_schema_suffix(suffix);
         }

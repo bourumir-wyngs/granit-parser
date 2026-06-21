@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "granit-parser"
-version = "0.0.5"
+version = "0.0.7"
 dependencies = [
  "arraydeque",
  "smallvec",
