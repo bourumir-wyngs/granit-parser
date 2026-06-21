@@ -253,6 +253,7 @@ The following ergonomic helpers are available:
 - `Tag::original_parts`
 - `Tag::original`
 - `Tag::core_suffix`
+- `Tag::suffix_in_namespace`
 - `Tag::is_custom`
 - `Tag::is_yaml_core_schema_tag`
 - `Span::slice`

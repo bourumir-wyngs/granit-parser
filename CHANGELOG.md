@@ -1,4 +1,10 @@
 # Changelog
+## v0.0.7
+- Added `Tag::suffix_in_namespace`, which returns the type name a tag resolves to within
+  an arbitrary namespace prefix (matching the resolved `handle ++ suffix` URI across every
+  spelling, including `%TAG` mid-name splits). This generalizes `Tag::core_suffix`, which
+  now delegates to it.
+
 ## v0.0.6
 - Added `Tag::core_suffix` and made core-tag helpers match the resolved YAML 1.2.2
   Core Schema tags (`null`, `bool`, `int`, `float`, `map`, `seq`, and `str`)

@@ -189,21 +189,11 @@ const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
 // bool, float, int, map, null, seq, and str.
 const YAML_CORE_SCHEMA_SUFFIXES: [&str; 7] = ["bool", "float", "int", "map", "null", "seq", "str"];
 
-fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&str> {
+fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&'static str> {
     YAML_CORE_SCHEMA_SUFFIXES
-        .contains(&suffix)
-        .then_some(suffix)
-}
-
-fn known_yaml_core_schema_suffix_from_split(
-    handle_tail: &str,
-    suffix: &str,
-) -> Option<&'static str> {
-    YAML_CORE_SCHEMA_SUFFIXES.iter().copied().find(|candidate| {
-        candidate
-            .strip_prefix(handle_tail)
-            .is_some_and(|candidate_tail| candidate_tail == suffix)
-    })
+        .iter()
+        .copied()
+        .find(|&candidate| candidate == suffix)
 }
 
 impl Tag {
@@ -245,14 +235,42 @@ impl Tag {
     /// [`Self::original`] to inspect those spellings.
     #[must_use]
     pub fn core_suffix(&self) -> Option<&str> {
-        if self.handle.len() <= YAML_CORE_SCHEMA_PREFIX.len() {
-            let remaining_prefix = YAML_CORE_SCHEMA_PREFIX.strip_prefix(&self.handle)?;
-            let suffix = self.suffix.strip_prefix(remaining_prefix)?;
-            return known_yaml_core_schema_suffix(suffix);
+        // Resolve the type name within the YAML core-schema namespace, then keep only the
+        // seven Core Schema names. Matching against the static name keeps the returned
+        // borrow independent of the (possibly owned) `%TAG`-split resolution.
+        let resolved = self.suffix_in_namespace(YAML_CORE_SCHEMA_PREFIX)?;
+        known_yaml_core_schema_suffix(&resolved)
+    }
+
+    /// Return the type name this tag resolves to within `prefix`, or `None` outside it.
+    ///
+    /// Like [`Self::core_suffix`], the tag is matched by its resolved `handle ++ suffix` URI,
+    /// not the source spelling, so `!!omap`, `!<tag:yaml.org,2002:omap>`, and a `%TAG` split
+    /// such as `%TAG !o! tag:yaml.org,2002:o` then `!o!map` all resolve to `Some("omap")` for
+    /// the `tag:yaml.org,2002:` prefix — but the name is not limited to the seven core types.
+    ///
+    /// Borrows from `self`; allocates only when the handle extends past `prefix`.
+    #[must_use]
+    pub fn suffix_in_namespace(&self, prefix: &str) -> Option<Cow<'_, str>> {
+        if let Some(handle_tail) = self.handle.strip_prefix(prefix) {
+            // Handle spans the whole prefix; the name is its tail plus the suffix (the tail
+            // is empty unless a `%TAG` split pushed part of the name into the handle).
+            return Some(if handle_tail.is_empty() {
+                Cow::Borrowed(self.suffix.as_str())
+            } else {
+                let mut name = String::with_capacity(handle_tail.len() + self.suffix.len());
+                name.push_str(handle_tail);
+                name.push_str(&self.suffix);
+                Cow::Owned(name)
+            });
         }
 
-        let handle_tail = self.handle.strip_prefix(YAML_CORE_SCHEMA_PREFIX)?;
-        known_yaml_core_schema_suffix_from_split(handle_tail, &self.suffix)
+        // Handle stops inside the prefix; the suffix supplies the rest of the prefix
+        // and then the name.
+        prefix
+            .strip_prefix(self.handle.as_str())
+            .and_then(|prefix_tail| self.suffix.strip_prefix(prefix_tail))
+            .map(Cow::Borrowed)
     }
 
     /// Returns whether the tag is a YAML tag from the core schema (`!!str`, `!!int`, ...).
@@ -2670,6 +2688,60 @@ mod test {
             assert!(!tag.is_yaml_core_schema_tag("int"), "{label}");
             assert!(tag.is_custom(), "{label}");
         }
+    }
+
+    #[test]
+    fn suffix_in_namespace_resolves_across_spellings() {
+        const NS: &str = "tag:yaml.org,2002:";
+
+        // Every spelling of `tag:yaml.org,2002:omap` resolves to the same name, even though
+        // `omap` is not a Core Schema type (so `core_suffix` reports `None`). `mid_split` cuts
+        // the URI after the namespace prefix (handle longer than `NS`); `inside_split` cuts it
+        // before the prefix ends (handle a non-empty prefix of `NS`), exercising both branches.
+        let shorthand = Tag::with_original_handle(NS, "omap", "!!");
+        let verbatim = Tag::with_original_handle("", "tag:yaml.org,2002:omap", "");
+        let mid_split = Tag::with_original_handle("tag:yaml.org,2002:o", "map", "!o!");
+        let inside_split = Tag::with_original_handle("tag:yaml.org,", "2002:omap", "!y!");
+        for tag in [&shorthand, &verbatim, &mid_split, &inside_split] {
+            assert_eq!(tag.suffix_in_namespace(NS).as_deref(), Some("omap"));
+            assert_eq!(tag.core_suffix(), None);
+        }
+
+        // Borrow whenever the resolved name is a contiguous slice of `handle` or `suffix`;
+        // allocate only when a split lands inside the name itself (handle extends past `NS`).
+        assert!(matches!(
+            shorthand.suffix_in_namespace(NS),
+            Some(Cow::Borrowed(_))
+        ));
+        assert!(matches!(
+            verbatim.suffix_in_namespace(NS),
+            Some(Cow::Borrowed(_))
+        ));
+        assert!(matches!(
+            inside_split.suffix_in_namespace(NS),
+            Some(Cow::Borrowed(_))
+        ));
+        assert!(matches!(
+            mid_split.suffix_in_namespace(NS),
+            Some(Cow::Owned(_))
+        ));
+
+        // The non-core `merge` type resolves the same way; core types still flow through
+        // `core_suffix`.
+        let merge = Tag::with_original_handle(NS, "merge", "!!");
+        assert_eq!(merge.suffix_in_namespace(NS).as_deref(), Some("merge"));
+        assert_eq!(merge.core_suffix(), None);
+        assert_eq!(
+            Tag::new(NS, "int").suffix_in_namespace(NS).as_deref(),
+            Some("int")
+        );
+
+        // Tags outside the namespace do not resolve into it.
+        assert_eq!(Tag::new("!", "omap").suffix_in_namespace(NS), None);
+        assert_eq!(
+            Tag::with_original_handle("", "tag:example.com,2000:omap", "").suffix_in_namespace(NS),
+            None
+        );
     }
 
     #[test]
