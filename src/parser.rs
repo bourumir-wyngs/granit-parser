@@ -189,11 +189,24 @@ const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
 // bool, float, int, map, null, seq, and str.
 const YAML_CORE_SCHEMA_SUFFIXES: [&str; 7] = ["bool", "float", "int", "map", "null", "seq", "str"];
 
-fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&'static str> {
+fn known_yaml_core_schema_suffix(suffix: &str) -> Option<&str> {
+    YAML_CORE_SCHEMA_SUFFIXES
+        .contains(&suffix)
+        .then_some(suffix)
+}
+
+fn known_yaml_core_schema_suffix_from_split(
+    handle_tail: &str,
+    suffix: &str,
+) -> Option<&'static str> {
     YAML_CORE_SCHEMA_SUFFIXES
         .iter()
         .copied()
-        .find(|&candidate| candidate == suffix)
+        .find(|candidate| {
+            candidate
+                .strip_prefix(handle_tail)
+                .is_some_and(|candidate_tail| candidate_tail == suffix)
+        })
 }
 
 impl Tag {
@@ -235,11 +248,20 @@ impl Tag {
     /// [`Self::original`] to inspect those spellings.
     #[must_use]
     pub fn core_suffix(&self) -> Option<&str> {
-        // Resolve the type name within the YAML core-schema namespace, then keep only the
-        // seven Core Schema names. Matching against the static name keeps the returned
-        // borrow independent of the (possibly owned) `%TAG`-split resolution.
-        let resolved = self.suffix_in_namespace(YAML_CORE_SCHEMA_PREFIX)?;
-        known_yaml_core_schema_suffix(&resolved)
+        // The handle ends at or before the namespace boundary. The remaining namespace
+        // prefix and the complete type name are both contained in `suffix`.
+        if let Some(remaining_prefix) =
+            YAML_CORE_SCHEMA_PREFIX.strip_prefix(self.handle.as_str())
+        {
+            let suffix = self.suffix.strip_prefix(remaining_prefix)?;
+            return known_yaml_core_schema_suffix(suffix);
+        }
+
+        // The handle extends beyond the namespace boundary, so the type name is split
+        // between the end of `handle` and `suffix`. Compare against the seven fixed names
+        // directly instead of assembling an allocated String.
+        let handle_tail = self.handle.strip_prefix(YAML_CORE_SCHEMA_PREFIX)?;
+        known_yaml_core_schema_suffix_from_split(handle_tail, &self.suffix)
     }
 
     /// Return the type name this tag resolves to within `prefix`, or `None` outside it.
