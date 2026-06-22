@@ -60,7 +60,7 @@ fn format_events(events: &[Event]) -> Vec<String> {
         .map(|e| match e {
             Event::StreamStart => "StreamStart".to_string(),
             Event::StreamEnd => "StreamEnd".to_string(),
-            Event::DocumentStart(_) => "DocStart".to_string(),
+            Event::DocumentStart(..) => "DocStart".to_string(),
             Event::DocumentEnd => "DocEnd".to_string(),
             Event::Comment(text, _) => alloc::format!("Comment({})", text.as_ref()),
             Event::Scalar(val, _, _, _) => alloc::format!("Scalar({})", val.as_ref()),
@@ -513,7 +513,7 @@ fn test_replay_parser_updates_anchor_offset() {
     let span = Span::empty(Marker::new(0, 1, 0));
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (Event::MappingStart(StructureStyle::Block, 0, None), span),
         (
             Event::Scalar("k2".into(), granit_parser::ScalarStyle::Plain, 0, None),
@@ -561,7 +561,7 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
     let span = Span::empty(Marker::new(0, 1, 0));
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (Event::MappingStart(StructureStyle::Block, 0, None), span),
         (
             Event::Scalar(
@@ -602,7 +602,7 @@ fn replay_parser_peek_next_and_load_track_collection_anchors() {
     let span = test_span();
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (Event::SequenceStart(StructureStyle::Block, 4, None), span),
         (Event::SequenceEnd, span),
         (Event::MappingStart(StructureStyle::Block, 7, None), span),
@@ -644,10 +644,10 @@ fn replay_parser_load_single_stops_at_document_end() {
     let span = test_span();
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("first", 0), span),
         (Event::DocumentEnd, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("second", 0), span),
         (Event::DocumentEnd, span),
         (Event::StreamEnd, span),
@@ -668,10 +668,10 @@ fn replay_parser_try_load_single_stops_at_document_end() {
     let span = test_span();
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("first", 0), span),
         (Event::DocumentEnd, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("second", 0), span),
         (Event::DocumentEnd, span),
         (Event::StreamEnd, span),
@@ -692,7 +692,7 @@ fn replay_parser_try_load_multi_reads_stream_end() {
     let span = test_span();
     let replay_events = vec![
         (Event::StreamStart, span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("first", 0), span),
         (Event::DocumentEnd, span),
         (Event::StreamEnd, span),
@@ -720,7 +720,7 @@ fn replay_parser_preserves_comment_events() {
     let replay_events = vec![
         (Event::StreamStart, span),
         (Event::Comment(" replay".into(), Placement::Free), span),
-        (Event::DocumentStart(false), span),
+        (Event::DocumentStart(false, None), span),
         (plain_scalar("value", 0), span),
         (Event::DocumentEnd, span),
         (Event::StreamEnd, span),

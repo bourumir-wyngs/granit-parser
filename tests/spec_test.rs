@@ -26,7 +26,7 @@ struct YamlChecker {
 impl EventReceiver<'_> for YamlChecker {
     fn on_event(&mut self, ev: Event) {
         let tev = match ev {
-            Event::DocumentStart(_) => TestEvent::OnDocumentStart,
+            Event::DocumentStart(..) => TestEvent::OnDocumentStart,
             Event::DocumentEnd => TestEvent::OnDocumentEnd,
             Event::SequenceStart(..) => TestEvent::OnSequenceStart,
             Event::SequenceEnd => TestEvent::OnSequenceEnd,

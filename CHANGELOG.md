@@ -1,11 +1,12 @@
 # Changelog
 ## v0.0.7
+- Added `YamlVersion` and changed `Event::DocumentStart` to
+  `DocumentStart(bool, Option<YamlVersion>)`, emitting the `%YAML` directive
+  version for each document start when present.
 - Added `Tag::suffix_in_namespace`, which returns the type name a tag resolves to within
   an arbitrary namespace prefix (matching the resolved `handle ++ suffix` URI across every
   spelling, including `%TAG` mid-name splits). This generalizes `Tag::core_suffix`, which
   now delegates to it.
-
-## v0.0.7
 - Add Tag::suffix_in_namespace: resolved type name within an arbitrary namespace
 
 ## v0.0.6

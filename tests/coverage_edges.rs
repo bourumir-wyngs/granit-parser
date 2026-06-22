@@ -36,7 +36,7 @@ fn explicit_block_mapping_empty_key_is_null() {
         events,
         vec![
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),

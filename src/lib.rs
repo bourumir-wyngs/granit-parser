@@ -95,7 +95,7 @@ mod scanner;
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
 pub use crate::parser::{
     Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,
-    TryEventReceiver, TryLoadError, TrySpannedEventReceiver,
+    TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
 pub use crate::scanner::{
     Comment, Marker, Placement, ScalarStyle, ScanError, Scanner, Span, Token, TokenType,

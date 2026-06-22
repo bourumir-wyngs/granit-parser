@@ -38,11 +38,14 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 Comments are emitted as `Event::Comment(text, placement)`. They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion `Span` for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from `Parser::new_from_str`, `span.slice(yaml)` returns that source comment text.
 
+Document starts are emitted as `Event::DocumentStart(explicit, version)`, where `version` is the optional `YamlVersion` declared by a preceding `%YAML` directive for that document.
+
 ```rust
 use granit_parser::Parser;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = r#"
+%YAML 1.2
 %TAG !example! tag:example.com,2000:
 %TAG !core! tag:yaml.org,2002:i
 ---
@@ -96,39 +99,39 @@ This prints an event stream like:
 
 ```text
 StreamStart bytes=Some(0..0) source=Some("")
-DocumentStart(true) bytes=Some(70..73) source=Some("---")
-MappingStart(Block, 0, None) bytes=Some(74..74) source=Some("")
-Scalar("items", Plain, 0, None) bytes=Some(74..79) source=Some("items")
-node tag: !shopping custom=true tag_start(line,col,byte)=Some((5, 7, Some(81)))
-SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" })) bytes=Some(93..93) source=Some("")
-Scalar("milk", Plain, 0, None) bytes=Some(95..99) source=Some("milk")
-scalar tag: tag:example.com,2000:sliced core-suffix=None core-str=false tag_start(line,col,byte)=Some((7, 4, Some(104))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" })) bytes=Some(120..125) source=Some("bread")
-scalar tag: tag:yaml.org,2002:str core-suffix=Some("str") core-str=true tag_start(line,col,byte)=Some((8, 4, Some(130))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" })) bytes=Some(136..141) source=Some("bread")
-scalar tag: tag:yaml.org,2002:int core-suffix=Some("int") core-str=false tag_start(line,col,byte)=Some((9, 4, Some(146))) for "1"
-Scalar("1", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" })) bytes=Some(155..156) source=Some("1")
-SequenceEnd bytes=Some(157..157) source=Some("")
-Scalar("locations", Plain, 0, None) bytes=Some(157..166) source=Some("locations")
-Comment(" Example with composite keys", Right) bytes=Some(168..197) source=Some("# Example with composite keys")
-MappingStart(Block, 0, None) bytes=Some(200..200) source=Some("")
-SequenceStart(Flow, 0, None) bytes=Some(200..201) source=Some("[")
-Scalar("47.3769", Plain, 0, None) bytes=Some(201..208) source=Some("47.3769")
-Scalar("8.5417", Plain, 0, None) bytes=Some(210..216) source=Some("8.5417")
-SequenceEnd bytes=Some(216..217) source=Some("]")
-Scalar("local", Plain, 0, None) bytes=Some(219..224) source=Some("local")
-SequenceStart(Flow, 0, None) bytes=Some(227..228) source=Some("[")
-Scalar("40.7128", Plain, 0, None) bytes=Some(228..235) source=Some("40.7128")
-Scalar("-74.0060", Plain, 0, None) bytes=Some(237..245) source=Some("-74.0060")
-SequenceEnd bytes=Some(245..246) source=Some("]")
-Scalar("remote", Plain, 0, None) bytes=Some(248..254) source=Some("remote")
-Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(256..292) source=Some("# JSON-style \\uXXXX surrogate pairs:")
-MappingEnd bytes=Some(293..293) source=Some("")
-Scalar("music", Plain, 0, None) bytes=Some(293..298) source=Some("music")
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(300..338) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-MappingEnd bytes=Some(339..339) source=Some("")
-DocumentEnd bytes=Some(339..339) source=Some("")
-StreamEnd bytes=Some(339..339) source=Some("")
+DocumentStart(true, Some(YamlVersion { major: 1, minor: 2 })) bytes=Some(80..83) source=Some("---")
+MappingStart(Block, 0, None) bytes=Some(84..84) source=Some("")
+Scalar("items", Plain, 0, None) bytes=Some(84..89) source=Some("items")
+node tag: !shopping custom=true tag_start(line,col,byte)=Some((6, 7, Some(91)))
+SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" })) bytes=Some(103..103) source=Some("")
+Scalar("milk", Plain, 0, None) bytes=Some(105..109) source=Some("milk")
+scalar tag: tag:example.com,2000:sliced core-suffix=None core-str=false tag_start(line,col,byte)=Some((8, 4, Some(114))) for "bread"
+Scalar("bread", Plain, 0, Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" })) bytes=Some(130..135) source=Some("bread")
+scalar tag: tag:yaml.org,2002:str core-suffix=Some("str") core-str=true tag_start(line,col,byte)=Some((9, 4, Some(140))) for "bread"
+Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" })) bytes=Some(146..151) source=Some("bread")
+scalar tag: tag:yaml.org,2002:int core-suffix=Some("int") core-str=false tag_start(line,col,byte)=Some((10, 4, Some(156))) for "1"
+Scalar("1", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" })) bytes=Some(165..166) source=Some("1")
+SequenceEnd bytes=Some(167..167) source=Some("")
+Scalar("locations", Plain, 0, None) bytes=Some(167..176) source=Some("locations")
+Comment(" Example with composite keys", Right) bytes=Some(178..207) source=Some("# Example with composite keys")
+MappingStart(Block, 0, None) bytes=Some(210..210) source=Some("")
+SequenceStart(Flow, 0, None) bytes=Some(210..211) source=Some("[")
+Scalar("47.3769", Plain, 0, None) bytes=Some(211..218) source=Some("47.3769")
+Scalar("8.5417", Plain, 0, None) bytes=Some(220..226) source=Some("8.5417")
+SequenceEnd bytes=Some(226..227) source=Some("]")
+Scalar("local", Plain, 0, None) bytes=Some(229..234) source=Some("local")
+SequenceStart(Flow, 0, None) bytes=Some(237..238) source=Some("[")
+Scalar("40.7128", Plain, 0, None) bytes=Some(238..245) source=Some("40.7128")
+Scalar("-74.0060", Plain, 0, None) bytes=Some(247..255) source=Some("-74.0060")
+SequenceEnd bytes=Some(255..256) source=Some("]")
+Scalar("remote", Plain, 0, None) bytes=Some(258..264) source=Some("remote")
+Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
+MappingEnd bytes=Some(303..303) source=Some("")
+Scalar("music", Plain, 0, None) bytes=Some(303..308) source=Some("music")
+Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
+MappingEnd bytes=Some(349..349) source=Some("")
+DocumentEnd bytes=Some(349..349) source=Some("")
+StreamEnd bytes=Some(349..349) source=Some("")
 ```
 
 ## Event API choices

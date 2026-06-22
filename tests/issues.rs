@@ -106,7 +106,7 @@ fn test_issue1() {
 
     let expected = [
         Event::StreamStart,
-        Event::DocumentStart(false),
+        Event::DocumentStart(false, None),
         seq(Block),
         map(Block),
         Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
@@ -121,7 +121,7 @@ fn test_issue1() {
     assert_eq!(run_parser(reference).unwrap(), expected);
     let expected_flow = [
         Event::StreamStart,
-        Event::DocumentStart(false),
+        Event::DocumentStart(false, None),
         seq(Flow),
         map(Flow),
         Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
@@ -139,7 +139,7 @@ fn test_issue1() {
         run_parser("[a: [1, 2]]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
@@ -156,7 +156,7 @@ fn test_issue1() {
 
     let expected_mapping = [
         Event::StreamStart,
-        Event::DocumentStart(false),
+        Event::DocumentStart(false, None),
         seq(Flow),
         map(Flow),
         Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
@@ -180,7 +180,7 @@ fn test_issue1() {
         run_parser("[foo: [bar]]: baz").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Block),
             seq(Flow),
             map(Flow),
@@ -202,7 +202,7 @@ fn test_issue1() {
         run_parser("[:]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
@@ -219,7 +219,7 @@ fn test_issue1() {
         run_parser("[: [:]]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
@@ -246,7 +246,7 @@ fn test_issue1() {
         // third nested sequences, but not the second.
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
@@ -276,7 +276,7 @@ fn test_issue1() {
         run_parser(r#"["a":[]]"#).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("a".into(), ScalarStyle::DoubleQuoted, 0, None),
@@ -296,7 +296,7 @@ fn test_flow_sequence_empty_key_with_value() {
         run_parser("[: value]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
@@ -315,7 +315,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         run_parser("[ : [foo] ]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
@@ -333,7 +333,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         run_parser("[ : {a: b} ]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
@@ -352,7 +352,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         run_parser("[{}, : foo]").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Flow),
             map(Flow),
             Event::MappingEnd,
@@ -373,7 +373,7 @@ fn test_flow_mapping_quoted_key_colon_on_next_line() {
         run_parser("{\"foo\"\n: \"bar\"}\n").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Flow),
             Event::Scalar("foo".into(), ScalarStyle::DoubleQuoted, 0, None),
             Event::Scalar("bar".into(), ScalarStyle::DoubleQuoted, 0, None),
@@ -390,7 +390,7 @@ fn test_flow_mapping_plain_key_spans_line_break() {
         run_parser("- { single line: value}\n- { multi\n  line: value}\n").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Block),
             map(Flow),
             Event::Scalar("single line".into(), ScalarStyle::Plain, 0, None),
@@ -413,7 +413,7 @@ fn test_flow_mapping_key_and_colon_on_separate_lines() {
         run_parser("k: {\n k\n :\n v\n }\n").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Block),
             Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
             map(Flow),
@@ -433,7 +433,7 @@ fn test_pr12() {
         run_parser("---\n- |\n  a").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             seq(Block),
             Event::Scalar("a\n".into(), ScalarStyle::Literal, 0, None),
             Event::SequenceEnd,
@@ -493,7 +493,7 @@ fn test_granit_issue14_space_before_colon_keeps_alias_key_mapping_valid() {
         run_parser(input).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Block),
             Event::Scalar("foo".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("value".into(), ScalarStyle::Plain, 1, None),
@@ -525,7 +525,7 @@ array:
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             map(Block),
             Event::Scalar("array".into(), ScalarStyle::Plain, 0, None),
             seq(Block),
@@ -566,7 +566,7 @@ fn test_issue22() {
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Block),
             Event::Scalar("comment".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("hello ... world".into(), ScalarStyle::Plain, 0, None),
@@ -600,7 +600,7 @@ fn test_issue37() {
         run_parser_with_span(s).unwrap(),
         [
             (Event::StreamStart,                                                          Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(0, 1, 0).with_byte_offset(Some(0)))),
-            (Event::DocumentStart(true),                                                  Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(3, 1, 3).with_byte_offset(Some(3)))),
+            (Event::DocumentStart(true, None),                                                  Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(3, 1, 3).with_byte_offset(Some(3)))),
             (map(Block),                                                Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(8, 2, 4).with_byte_offset(Some(8)))),
             (Event::Scalar("hash_block_null_value".into(), ScalarStyle::Plain, 0, None),  Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(29, 2, 25).with_byte_offset(Some(29))).with_indent(Some(4))),
 
@@ -650,7 +650,7 @@ fn test_issue84() {
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             map(Block),
             Event::Scalar("hello".into(), ScalarStyle::Plain, 0, None),
             map(Block),
@@ -688,7 +688,7 @@ fn test_granit_issue14_anchor_and_alias_names_may_end_with_colon() {
         run_parser(input).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             seq(Block),
             Event::Scalar("value".into(), ScalarStyle::Plain, 1, None),
             Event::Alias(1),

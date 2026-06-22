@@ -95,7 +95,7 @@ fn test_document_start_emitted_immediately() {
     // Find the DocumentStart event and check its span
     let doc_start_event = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::DocumentStart(true)))
+        .find(|(ev, _)| matches!(ev, Event::DocumentStart(true, None)))
         .expect("DocumentStart(true) event should exist");
 
     // The DocumentStart span should start at position 0 (start of "---")
@@ -140,7 +140,7 @@ fn test_document_end_emitted_immediately_on_next_document_start_marker() {
         .get(doc_end_idx + 1)
         .expect("DocumentStart(true) should follow DocumentEnd");
     assert!(
-        matches!(next_ev, Event::DocumentStart(true)),
+        matches!(next_ev, Event::DocumentStart(true, None)),
         "DocumentStart(true) should immediately follow DocumentEnd"
     );
 
