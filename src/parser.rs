@@ -505,6 +505,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_document_version: Option<YamlVersion>,
     /// Whether document directives were already initialized before comments preceding `---`.
     pending_document_directives: bool,
+    /// `%TAG` handles already seen before comments preceding an explicit document start.
+    pending_document_tag_handles: BTreeSet<String>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -864,6 +866,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             pending_empty_scalar_span: None,
             pending_document_version: None,
             pending_document_directives: false,
+            pending_document_tag_handles: BTreeSet::new(),
 
             anchors: BTreeMap::new(),
             // valid anchor_id starts from 1
@@ -1507,7 +1510,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.explicit_document_start()
             }
             QueuedToken(span, _) if implicit => {
-                self.parser_process_directives(None, false)?;
+                self.parser_process_directives(None, false, BTreeSet::new())?;
                 self.push_state(State::DocumentEnd);
                 self.state = State::BlockNode;
                 Ok((Event::DocumentStart(false, None), span))
@@ -1523,13 +1526,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         mut version: Option<YamlVersion>,
         continuing: bool,
-    ) -> Result<Option<YamlVersion>, ScanError> {
+        mut document_tag_handles: BTreeSet<String>,
+    ) -> Result<(Option<YamlVersion>, BTreeSet<String>), ScanError> {
         let mut tags = if continuing || self.keep_tags {
             self.tags.clone()
         } else {
             BTreeMap::new()
         };
-        let mut document_tag_handles = BTreeSet::new();
 
         loop {
             match self.peek_token()? {
@@ -1560,7 +1563,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
 
         self.tags = tags;
-        Ok(version)
+        Ok((version, document_tag_handles))
     }
 
     fn explicit_document_start<'a>(&mut self) -> ParseResult<'a>
@@ -1569,10 +1572,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let pending_version = self.pending_document_version.take();
         let continuing_directives = core::mem::take(&mut self.pending_document_directives);
-        let version = self.parser_process_directives(pending_version, continuing_directives)?;
+        let pending_tag_handles = core::mem::take(&mut self.pending_document_tag_handles);
+        let (version, document_tag_handles) = self.parser_process_directives(
+            pending_version,
+            continuing_directives,
+            pending_tag_handles,
+        )?;
         if let Some(comment) = self.maybe_next_comment_event()? {
             self.pending_document_version = version;
             self.pending_document_directives = true;
+            self.pending_document_tag_handles = document_tag_handles;
             return Ok(comment);
         }
         match *self.peek_token()? {
@@ -3247,6 +3256,49 @@ a5: *x
         assert_eq!(
             first_error_info("%TAG !t! tag:test,2024:\n%TAG !t! tag:other,2024:\n---\n"),
             "the TAG directive must only be given at most once per handle in the same document"
+        );
+    }
+
+    #[test]
+    fn duplicate_tag_directive_across_comment_is_rejected() {
+        let input = concat!(
+            "%TAG !e! tag:example.com,2000:one/\n",
+            "# separator\n",
+            "%TAG !e! tag:example.com,2000:two/\n",
+            "---\n",
+        );
+
+        assert_eq!(
+            first_error_info(input),
+            "the TAG directive must only be given at most once per handle in the same document"
+        );
+    }
+
+    #[test]
+    fn test_keep_tags_inherited_handle_can_be_redeclared_in_next_document() {
+        let input = concat!(
+            "%TAG !e! tag:example.com,2000:one/\n",
+            "---\n",
+            "first: !e!thing value\n",
+            "...\n",
+            "%TAG !e! tag:example.com,2000:two/\n",
+            "---\n",
+            "second: !e!thing value\n",
+        );
+
+        let tags = Parser::new_from_str(input)
+            .keep_tags(true)
+            .filter_map(|event| match event.expect("input should parse").0 {
+                Event::Scalar(value, _, _, Some(tag)) if value == "value" => {
+                    Some(tag.handle.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            tags,
+            vec!["tag:example.com,2000:one/", "tag:example.com,2000:two/"]
         );
     }
 
