@@ -402,7 +402,7 @@ where
                 }
                 Some(Ok(event)) => {
                     if self.parsers.len() > 1
-                        && matches!(event.0, Event::StreamStart | Event::DocumentStart(_))
+                        && matches!(event.0, Event::StreamStart | Event::DocumentStart(..))
                     {
                         continue;
                     }

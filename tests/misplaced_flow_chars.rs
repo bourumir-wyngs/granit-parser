@@ -17,7 +17,7 @@ fn misplaced_closing_bracket_at_col_0() {
 
     assert_eq!(events.len(), 9);
     assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false)));
+    assert!(matches!(events[1], Event::DocumentStart(false, None)));
     assert!(matches!(
         events[2],
         Event::MappingStart(StructureStyle::Block, 0, None)
@@ -54,7 +54,7 @@ fn misplaced_closing_brace_at_col_0() {
 
     assert_eq!(events.len(), 9);
     assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false)));
+    assert!(matches!(events[1], Event::DocumentStart(false, None)));
     assert!(matches!(
         events[2],
         Event::MappingStart(StructureStyle::Block, 0, None)
@@ -91,7 +91,7 @@ fn misplaced_comma_at_col_0() {
 
     assert_eq!(events.len(), 11);
     assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false)));
+    assert!(matches!(events[1], Event::DocumentStart(false, None)));
     assert!(matches!(
         events[2],
         Event::MappingStart(StructureStyle::Block, 0, None)

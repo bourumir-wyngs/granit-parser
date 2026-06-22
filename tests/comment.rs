@@ -1222,7 +1222,7 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
         .iter()
         .filter_map(|(event, _)| match event {
             Event::StreamStart => Some("StreamStart".into()),
-            Event::DocumentStart(_) => Some("DocumentStart".into()),
+            Event::DocumentStart(..) => Some("DocumentStart".into()),
             Event::SequenceStart(..) => Some("SequenceStart".into()),
             Event::SequenceEnd => Some("SequenceEnd".into()),
             Event::DocumentEnd => Some("DocumentEnd".into()),

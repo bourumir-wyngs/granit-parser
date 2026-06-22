@@ -1,6 +1,8 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser::{Event, Parser, Placement, ScalarStyle, ScanError, StructureStyle};
+use granit_parser::{
+    Event, Parser, Placement, ScalarStyle, ScanError, StructureStyle, YamlVersion,
+};
 
 /// Run the parser through the string.
 ///
@@ -131,7 +133,7 @@ fn test_empty_doc() {
         run_parser("---").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -145,7 +147,7 @@ fn test_utf() {
         run_parser("a: \u{4F60}\u{5273}").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("\u{4F60}\u{5273}".into(), ScalarStyle::Plain, 0, None),
@@ -170,7 +172,7 @@ a: b # This is another comment
         [
             Event::StreamStart,
             Event::Comment(" This is a comment".into(), Placement::Above),
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
@@ -196,7 +198,7 @@ fn test_quoting() {
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::SequenceStart(StructureStyle::Block, 0, None),
             Event::Scalar("plain".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("squote".into(), ScalarStyle::SingleQuoted, 0, None),
@@ -221,13 +223,13 @@ a scalar
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -242,7 +244,7 @@ fn test_github_27() {
         run_parser("&a").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::Scalar("".into(), ScalarStyle::Plain, 1, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -285,7 +287,7 @@ foobar";
         [
             Event::StreamStart,
             Event::Comment(" This is a comment".into(), Placement::Above),
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, Some(YamlVersion::new(1, 2))),
             Event::Comment("-------".into(), Placement::Right),
             Event::Scalar("foobar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
@@ -310,7 +312,7 @@ a: |-
         run_parser(s).unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("a\n    b".into(), ScalarStyle::Literal, 0, None),
@@ -328,7 +330,7 @@ fn test_bad_docstart() {
         run_parser("----").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
@@ -339,7 +341,7 @@ fn test_bad_docstart() {
         run_parser("--- #comment").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(true),
+            Event::DocumentStart(true, None),
             Event::Comment("comment".into(), Placement::Right),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
@@ -351,7 +353,7 @@ fn test_bad_docstart() {
         run_parser("---- #comment").unwrap(),
         [
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
             Event::Comment("comment".into(), Placement::Right),
             Event::DocumentEnd,

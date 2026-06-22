@@ -33,7 +33,7 @@ fn colon_without_space_is_part_of_scalar_value() {
         events,
         vec![
             Event::StreamStart,
-            Event::DocumentStart(false),
+            Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("a:b".into(), ScalarStyle::Plain, 0, None),

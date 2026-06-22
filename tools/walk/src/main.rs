@@ -70,7 +70,7 @@ fn load_first_document(contents: &str) -> Result<WalkNode> {
         let (event, span) = event.map_err(|err| miette!("{err}"))?;
         match event {
             Event::StreamStart | Event::Comment(..) => {}
-            Event::DocumentStart(_) => return load_document_node(&mut parser, span),
+            Event::DocumentStart(..) => return load_document_node(&mut parser, span),
             Event::StreamEnd => bail!("No YAML document found"),
             event => return build_node(&event, span, &mut parser),
         }
@@ -92,7 +92,7 @@ fn load_document_node<'input>(
                     data: WalkData::Scalar,
                 });
             }
-            Event::StreamStart | Event::DocumentStart(_) | Event::Comment(..) => {}
+            Event::StreamStart | Event::DocumentStart(..) | Event::Comment(..) => {}
             event => return build_node(&event, span, parser),
         }
     }
@@ -116,7 +116,7 @@ fn build_node<'input>(
         Event::Comment(..) => bail!("Unexpected comment while building node"),
         Event::StreamStart
         | Event::StreamEnd
-        | Event::DocumentStart(_)
+        | Event::DocumentStart(..)
         | Event::DocumentEnd
         | Event::SequenceEnd
         | Event::MappingEnd => bail!("Unexpected event while building node: {event:?}"),

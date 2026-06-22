@@ -380,7 +380,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
             Event::StreamStart => "+STR".into(),
             Event::StreamEnd => "-STR".into(),
 
-            Event::DocumentStart(_) => "+DOC".into(),
+            Event::DocumentStart(..) => "+DOC".into(),
             Event::DocumentEnd => "-DOC".into(),
 
             Event::SequenceStart(_, idx, tag) => {
