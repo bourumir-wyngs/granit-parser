@@ -51,17 +51,12 @@ impl<T: Iterator<Item = char>> BufferedInput<T> {
     fn push_source_or_padding(&mut self) {
         let c = if self.source_exhausted {
             '\0'
+        } else if let Some(c) = self.input.next() {
+            self.real_buffered += 1;
+            c
         } else {
-            match self.input.next() {
-                Some(c) => {
-                    self.real_buffered += 1;
-                    c
-                }
-                None => {
-                    self.source_exhausted = true;
-                    '\0'
-                }
-            }
+            self.source_exhausted = true;
+            '\0'
         };
         self.buffer.push_back(c).unwrap();
     }
@@ -84,14 +79,11 @@ impl<T: Iterator<Item = char>> BufferedInput<T> {
     fn read_source_or_eof(&mut self) -> (char, bool) {
         if self.source_exhausted {
             ('\0', false)
+        } else if let Some(c) = self.input.next() {
+            (c, true)
         } else {
-            match self.input.next() {
-                Some(c) => (c, true),
-                None => {
-                    self.source_exhausted = true;
-                    ('\0', false)
-                }
-            }
+            self.source_exhausted = true;
+            ('\0', false)
         }
     }
 

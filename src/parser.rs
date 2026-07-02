@@ -3057,9 +3057,8 @@ a5: *x
                 None => panic!("expected parse error"),
             }
         };
-        let second_error = match parser.peek() {
-            Some(Err(error)) => error,
-            _ => panic!("expected cached parse error"),
+        let Some(Err(second_error)) = parser.peek() else {
+            panic!("expected cached parse error");
         };
 
         assert_eq!(first_error, second_error);
@@ -3076,13 +3075,11 @@ a5: *x
             parser.next_event().unwrap().unwrap();
         }
 
-        let first_error = match parser.peek() {
-            Some(Err(error)) => error,
-            _ => panic!("expected unknown alias error"),
+        let Some(Err(first_error)) = parser.peek() else {
+            panic!("expected unknown alias error");
         };
-        let second_error = match parser.peek() {
-            Some(Err(error)) => error,
-            _ => panic!("expected cached unknown alias error"),
+        let Some(Err(second_error)) = parser.peek() else {
+            panic!("expected cached unknown alias error");
         };
 
         assert_eq!(first_error, second_error);

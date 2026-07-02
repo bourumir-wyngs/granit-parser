@@ -73,7 +73,14 @@ pub trait Input {
     #[must_use]
     fn bufmaxlen(&self) -> usize;
 
-    /// Return whether the lookahead buffer is empty.
+    /// Return whether the active lookahead window is empty.
+    ///
+    /// This is equivalent to `self.buflen() == 0`. It does not mean the underlying source is
+    /// exhausted: after a previous [`lookahead`] call, an input may keep a non-empty lookahead
+    /// window available even after all source characters have been consumed, with positions past
+    /// EOF observed as `\0`.
+    ///
+    /// [`lookahead`]: Input::lookahead
     #[inline]
     #[must_use]
     fn buf_is_empty(&self) -> bool {
