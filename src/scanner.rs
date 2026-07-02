@@ -2629,6 +2629,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.allow_simple_key();
 
         self.skip_non_blank();
+        let end_mark = self.mark;
 
         if tok == TokenType::FlowMappingStart {
             self.flow_mapping_started.push(true);
@@ -2641,7 +2642,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
-        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, end_mark), tok));
         Ok(())
     }
 
@@ -2685,6 +2686,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
@@ -2697,7 +2699,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.adjacent_value_allowed_at = self.mark.index();
         }
 
-        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, end_mark), tok));
         Ok(())
     }
 
@@ -2713,12 +2715,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, self.mark), TokenType::FlowEntry),
+            Token(Span::new(start_mark, end_mark), TokenType::FlowEntry),
         );
         Ok(())
     }
@@ -3864,6 +3867,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
         let stopped_after_comment = self.skip_yaml_whitespace(true)?;
@@ -3876,7 +3880,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, self.mark), TokenType::Key),
+            Token(Span::new(start_mark, end_mark), TokenType::Key),
         );
         Ok(())
     }
@@ -4341,6 +4345,75 @@ mod test {
             read.get() <= super::SIMPLE_KEY_MAX_LOOKAHEAD + 128,
             "scanner read {} chars before yielding the first flow scalar",
             read.get()
+        );
+    }
+
+    fn first_token_slice(
+        yaml: &str,
+        matches_token: impl Fn(&TokenType<'_>) -> bool,
+    ) -> Option<String> {
+        let mut scanner = Scanner::new(StrInput::new(yaml));
+
+        loop {
+            let token = scanner
+                .next_token()
+                .expect("scanner should accept the test YAML")?;
+            if matches_token(&token.1) {
+                return token.0.slice(yaml).map(ToOwned::to_owned);
+            }
+        }
+    }
+
+    #[test]
+    fn flow_indicator_token_spans_cover_only_the_indicator() {
+        assert_eq!(
+            first_token_slice("[ # c\n  a]\n", |token| matches!(
+                token,
+                TokenType::FlowSequenceStart
+            ))
+            .as_deref(),
+            Some("[")
+        );
+        assert_eq!(
+            first_token_slice("{ # c\n  a: b}\n", |token| matches!(
+                token,
+                TokenType::FlowMappingStart
+            ))
+            .as_deref(),
+            Some("{")
+        );
+        assert_eq!(
+            first_token_slice("[a] # c\n", |token| matches!(
+                token,
+                TokenType::FlowSequenceEnd
+            ))
+            .as_deref(),
+            Some("]")
+        );
+        assert_eq!(
+            first_token_slice("{a: b} # c\n", |token| matches!(
+                token,
+                TokenType::FlowMappingEnd
+            ))
+            .as_deref(),
+            Some("}")
+        );
+        assert_eq!(
+            first_token_slice("[a, # c\nb]\n", |token| matches!(
+                token,
+                TokenType::FlowEntry
+            ))
+            .as_deref(),
+            Some(",")
+        );
+    }
+
+    #[test]
+    fn explicit_key_token_span_covers_only_the_indicator() {
+        assert_eq!(
+            first_token_slice("? # c\n: value\n", |token| matches!(token, TokenType::Key))
+                .as_deref(),
+            Some("?")
         );
     }
 

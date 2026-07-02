@@ -62,6 +62,14 @@ fn deref_pairs(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
         .collect()
 }
 
+fn first_event_slice(yaml: &str, matches_event: impl Fn(&Event<'_>) -> bool) -> Option<String> {
+    Parser::new_from_str(yaml)
+        .filter_map(Result::ok)
+        .find_map(|(event, span)| {
+            matches_event(&event).then(|| span.slice(yaml).map(str::to_owned))?
+        })
+}
+
 #[test]
 fn span_helpers_report_length_empty_and_byte_range() {
     let span = granit_parser::Span::new(
@@ -80,6 +88,34 @@ fn span_helpers_report_length_empty_and_byte_range() {
 
     let without_byte_offsets = granit_parser::Span::new(Marker::new(0, 1, 0), Marker::new(1, 1, 1));
     assert_eq!(without_byte_offsets.byte_range(), None);
+}
+
+#[test]
+fn flow_collection_event_spans_cover_only_the_indicators() {
+    assert_eq!(
+        first_event_slice("[ # c\n  a]\n", |event| matches!(
+            event,
+            Event::SequenceStart(..)
+        ))
+        .as_deref(),
+        Some("[")
+    );
+    assert_eq!(
+        first_event_slice("[a] # c\n", |event| matches!(event, Event::SequenceEnd)).as_deref(),
+        Some("]")
+    );
+    assert_eq!(
+        first_event_slice("{ # c\n  a: b}\n", |event| matches!(
+            event,
+            Event::MappingStart(..)
+        ))
+        .as_deref(),
+        Some("{")
+    );
+    assert_eq!(
+        first_event_slice("{a: b} # c\n", |event| matches!(event, Event::MappingEnd)).as_deref(),
+        Some("}")
+    );
 }
 
 #[test]
