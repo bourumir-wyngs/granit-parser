@@ -161,6 +161,7 @@ where
 {
     parsers: Vec<AnyParser<'input, I, T>>,
     current: Option<(Event<'input>, Span)>,
+    current_error: Option<ScanError>,
     stream_end_emitted: bool,
     #[allow(clippy::type_complexity)]
     include_resolver: Option<Box<dyn FnMut(&str) -> Result<String, ScanError> + 'input>>,
@@ -177,6 +178,7 @@ where
         Self {
             parsers: Vec::new(),
             current: None,
+            current_error: None,
             stream_end_emitted: false,
             include_resolver: None,
         }
@@ -431,6 +433,8 @@ where
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
         if let Some(ref x) = self.current {
             Some(Ok(x))
+        } else if let Some(error) = &self.current_error {
+            Some(Err(error.clone()))
         } else {
             if self.stream_end_emitted {
                 return None;
@@ -440,12 +444,20 @@ where
                     self.current = Some(token);
                     Some(Ok(self.current.as_ref().unwrap()))
                 }
-                Err(e) => Some(e.into_result()),
+                Err(e) => {
+                    self.current_error = Some(e.clone());
+                    Some(Err(e))
+                }
             }
         }
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        if let Some(error) = self.current_error.take() {
+            self.stream_end_emitted = true;
+            return Some(Err(error));
+        }
+
         if let Some(token) = self.current.take() {
             if let Event::StreamEnd = token.0 {
                 self.stream_end_emitted = true;
@@ -462,7 +474,10 @@ where
                 }
                 Some(Ok(token))
             }
-            Err(e) => Some(e.into_result()),
+            Err(e) => {
+                self.stream_end_emitted = true;
+                Some(Err(e))
+            }
         }
     }
 

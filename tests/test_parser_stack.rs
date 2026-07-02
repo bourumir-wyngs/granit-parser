@@ -1008,6 +1008,53 @@ fn parser_stack_peek_surfaces_parse_error() {
 }
 
 #[test]
+fn parser_stack_error_survives_peek_until_next_event() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: [1, 2"), "bad".to_string());
+
+    loop {
+        match stack.peek() {
+            Some(Ok(_)) => {
+                stack.next_event().unwrap().unwrap();
+            }
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                break;
+            }
+            None => panic!("expected parse error before the stream ended"),
+        }
+    }
+
+    let second_peek_error = stack.peek().unwrap().unwrap_err();
+    assert_eq!(second_peek_error.info(), "unclosed bracket '['");
+
+    let next_error = stack.next_event().unwrap().unwrap_err();
+    assert_eq!(next_error.info(), "unclosed bracket '['");
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
+}
+
+#[test]
+fn parser_stack_next_event_error_is_terminal() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: [1, 2"), "bad".to_string());
+
+    loop {
+        match stack.next_event() {
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                break;
+            }
+            None => panic!("expected parse error before the stream ended"),
+        }
+    }
+
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
+}
+
+#[test]
 fn nested_replay_stream_end_is_popped_and_parent_continues() {
     let span = test_span();
     let mut stack: MyStack = ParserStack::new();
