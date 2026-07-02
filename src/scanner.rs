@@ -2947,13 +2947,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Chomping::Strip => String::new(),
                 // There was no newline after the chomping indicator.
                 _ if self.mark.line == start_mark.line() => String::new(),
-                // We clip lines, and there was a newline after the chomping indicator.
-                // All other breaks are ignored.
-                Chomping::Clip => chomping_break,
-                // We keep lines. There was a newline after the chomping indicator but nothing
-                // else.
-                Chomping::Keep if trailing_breaks.is_empty() => chomping_break,
-                // Otherwise, the newline after chomping is ignored.
+                // With no content lines, the header break is not scalar content.
+                Chomping::Clip => String::new(),
+                // An indented whitespace-only line at EOF is an empty content line.
+                Chomping::Keep if trailing_breaks.is_empty() && self.mark.col > 0 => chomping_break,
+                // Keep actual empty content lines, if any, but not the header break.
                 Chomping::Keep => trailing_breaks,
             };
 
@@ -5225,8 +5223,11 @@ mod test {
 
     #[test]
     fn empty_block_scalar_at_eof_honors_chomping() {
+        assert_eq!(first_scalar_value("|\n"), "");
         assert_eq!(first_scalar_value("|-\n"), "");
-        assert_eq!(first_scalar_value("|+\n"), "\n");
+        assert_eq!(first_scalar_value("|+\n"), "");
+        assert_eq!(first_scalar_value("|+\n\n"), "\n");
+        assert_eq!(first_scalar_value("|+\n   "), "\n");
     }
 
     #[test]

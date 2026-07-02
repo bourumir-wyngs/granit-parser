@@ -307,6 +307,24 @@ fn test_directive_followed_by_comment_then_content_errors() {
 }
 
 #[test]
+fn test_empty_block_scalar_value_does_not_depend_on_eof() {
+    fn value_of(yaml: &str) -> String {
+        run_parser(yaml)
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event {
+                Event::Scalar(value, ScalarStyle::Literal, _, _) => Some(value.into_owned()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    assert_eq!(value_of("a: |\nb: c\n"), value_of("a: |\n"));
+    assert_eq!(value_of("a: |+\nb: c\n"), value_of("a: |+\n"));
+    assert_eq!(value_of("a: |+\n\n"), "\n");
+}
+
+#[test]
 fn test_large_block_scalar_indent() {
     // https://github.com/Ethiraric/yaml-rust2/issues/29
     // https://github.com/saphyr-rs/saphyr-parser/issues/2
