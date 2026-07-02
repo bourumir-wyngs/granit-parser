@@ -51,11 +51,21 @@ pub trait Input {
     ///
     /// This method may be a no-op if buffering yields no performance improvement.
     ///
-    /// Implementers of [`Input`] must _not_ load more than `count` characters into the buffer. The
-    /// parser tracks how many characters are loaded in the buffer and acts accordingly.
+    /// Implementers of [`Input`] must _not_ expose a lookahead window larger than
+    /// [`Input::bufmaxlen`]. They may retain a larger window requested by an earlier call; callers
+    /// should use [`Input::buflen`] to observe the currently available window.
     fn lookahead(&mut self, count: usize);
 
-    /// Return the number of buffered characters in `self`.
+    /// Return the number of characters in the active lookahead window.
+    ///
+    /// This is the number of characters that the input promises can be read through [`peek`] and
+    /// [`peek_nth`] after prior [`lookahead`] calls. It is not necessarily the number of source
+    /// characters remaining: inputs may keep the window available after consuming characters and
+    /// may pad positions past EOF with `\0`.
+    ///
+    /// [`lookahead`]: Input::lookahead
+    /// [`peek`]: Input::peek
+    /// [`peek_nth`]: Input::peek_nth
     #[must_use]
     fn buflen(&self) -> usize;
 
@@ -70,15 +80,17 @@ pub trait Input {
         self.buflen() == 0
     }
 
-    /// Read a character from the input stream and return it directly.
+    /// Read the next character from the logical input stream and return it directly.
     ///
-    /// The internal buffer (if any) is bypassed.
+    /// If an implementation has already fetched characters for lookahead, this consumes the
+    /// buffered stream front before reading farther from the underlying source.
     #[must_use]
     fn raw_read_ch(&mut self) -> char;
 
     /// Read a non-breakz character from the input stream and return it directly.
     ///
-    /// The internal buffer (if any) is bypassed.
+    /// If an implementation has already fetched characters for lookahead, this consumes from the
+    /// buffered stream front before reading farther from the underlying source.
     ///
     /// If the next character is a breakz, it is either not consumed or placed into the buffer (if
     /// any).
