@@ -458,9 +458,15 @@ impl<'input> Event<'input> {
         Event::Scalar("~".into(), ScalarStyle::Plain, 0, None)
     }
 
-    /// Create an empty scalar with the given anchor.
+    /// Create an empty scalar with the given node properties.
     fn empty_scalar_with_anchor(anchor: usize, tag: Option<Cow<'input, Tag>>) -> Self {
-        Event::Scalar(Cow::default(), ScalarStyle::Plain, anchor, tag)
+        let value = if tag.is_some() {
+            Cow::default()
+        } else {
+            "~".into()
+        };
+
+        Event::Scalar(value, ScalarStyle::Plain, anchor, tag)
     }
 }
 

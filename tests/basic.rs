@@ -245,9 +245,48 @@ fn test_github_27() {
         [
             Event::StreamStart,
             Event::DocumentStart(false, None),
-            Event::Scalar("".into(), ScalarStyle::Plain, 1, None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, 1, None),
             Event::DocumentEnd,
             Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
+fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
+    let scalar_events = |input: &str| -> Vec<(String, ScalarStyle, usize, Option<String>)> {
+        run_parser(input)
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Scalar(value, style, anchor, tag) => Some((
+                    value.into_owned(),
+                    style,
+                    anchor,
+                    tag.map(|tag| tag.original()),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        scalar_events("a: &x\n"),
+        vec![
+            ("a".to_string(), ScalarStyle::Plain, 0, None),
+            ("~".to_string(), ScalarStyle::Plain, 1, None),
+        ]
+    );
+    assert_eq!(
+        scalar_events("a: !!str\n"),
+        vec![
+            ("a".to_string(), ScalarStyle::Plain, 0, None),
+            (
+                String::new(),
+                ScalarStyle::Plain,
+                0,
+                Some("!!str".to_string()),
+            ),
         ]
     );
 }
