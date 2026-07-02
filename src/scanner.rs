@@ -3099,7 +3099,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn skip_block_scalar_indent(&mut self, indent: usize, breaks: &mut String) {
         loop {
             // Consume all spaces. Tabs cannot be used as indentation.
-            if indent < self.input.bufmaxlen() - 2 {
+            if indent < self.input.bufmaxlen().saturating_sub(2) {
                 self.input.lookahead(self.input.bufmaxlen());
                 while self.mark.col < indent && self.input.peek() == ' ' {
                     self.skip_blank();
@@ -3398,10 +3398,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Inside a flow context, this is allowed.
             ':' if self.flow_level > 0 => {}
             _ => {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "invalid trailing content after double-quoted scalar",
-                ));
+                let message = if single {
+                    "invalid trailing content after single-quoted scalar"
+                } else {
+                    "invalid trailing content after double-quoted scalar"
+                };
+                return Err(ScanError::new_str(self.mark, message));
             }
         }
 
@@ -3729,12 +3731,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 let mut end = false;
                 while !end {
                     // Fill the buffer once and process all characters in the buffer until the next
-                    // fetch. Note that `next_can_be_plain_scalar` needs 2 lookahead characters,
-                    // hence the `for` loop looping `self.input.bufmaxlen() - 1` times.
+                    // fetch. `next_can_be_plain_scalar` needs 2 lookahead characters, so keep one
+                    // spare slot for normal inputs while still forcing progress for very small
+                    // custom buffer lengths.
                     self.input.lookahead(self.input.bufmaxlen());
+                    let chunk_len = self.input.bufmaxlen().saturating_sub(1).max(1);
                     let (stop, chars_consumed) = self.input.fetch_plain_scalar_chunk(
                         &mut string,
-                        self.input.bufmaxlen() - 1,
+                        chunk_len,
                         self.flow_level > 0,
                     );
                     end = stop;
@@ -4278,6 +4282,64 @@ mod test {
         }
     }
 
+    struct SmallReportedBufferInput<'input> {
+        inner: StrInput<'input>,
+        reported_bufmaxlen: usize,
+    }
+
+    impl<'input> SmallReportedBufferInput<'input> {
+        fn new(source: &'input str, reported_bufmaxlen: usize) -> Self {
+            Self {
+                inner: StrInput::new(source),
+                reported_bufmaxlen,
+            }
+        }
+    }
+
+    impl Input for SmallReportedBufferInput<'_> {
+        fn lookahead(&mut self, count: usize) {
+            self.inner.lookahead(count);
+        }
+
+        fn buflen(&self) -> usize {
+            self.inner.buflen()
+        }
+
+        fn bufmaxlen(&self) -> usize {
+            self.reported_bufmaxlen
+        }
+
+        fn raw_read_ch(&mut self) -> char {
+            self.inner.raw_read_ch()
+        }
+
+        fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+            self.inner.raw_read_non_breakz_ch()
+        }
+
+        fn skip(&mut self) {
+            self.inner.skip();
+        }
+
+        fn skip_n(&mut self, count: usize) {
+            self.inner.skip_n(count);
+        }
+
+        fn peek(&self) -> char {
+            self.inner.peek()
+        }
+
+        fn peek_nth(&self, n: usize) -> char {
+            self.inner.peek_nth(n)
+        }
+    }
+
+    impl<'input> BorrowedInput<'input> for SmallReportedBufferInput<'input> {
+        fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'input str> {
+            self.inner.slice_borrowed(start, end)
+        }
+    }
+
     #[test]
     fn anchor_character_set_allows_colon_and_rejects_flow_indicators() {
         use super::is_anchor_char;
@@ -4334,6 +4396,36 @@ mod test {
             "scanner read {} chars before yielding the first flow scalar",
             read.get()
         );
+    }
+
+    #[test]
+    fn block_scalar_indent_tolerates_small_reported_bufmaxlen() {
+        let mut scanner = Scanner::new(SmallReportedBufferInput::new("|\n  value\n", 0));
+
+        let scalar = scanner
+            .find_map(|token| match token {
+                Token(_, TokenType::Scalar(ScalarStyle::Literal, value)) => {
+                    Some(value.into_owned())
+                }
+                _ => None,
+            })
+            .expect("expected block scalar token");
+
+        assert_eq!(scalar, "value\n");
+    }
+
+    #[test]
+    fn plain_scalar_chunk_tolerates_small_reported_bufmaxlen() {
+        let mut scanner = Scanner::new(SmallReportedBufferInput::new("plain\n", 0));
+
+        let scalar = scanner
+            .find_map(|token| match token {
+                Token(_, TokenType::Scalar(ScalarStyle::Plain, value)) => Some(value.into_owned()),
+                _ => None,
+            })
+            .expect("expected plain scalar token");
+
+        assert_eq!(scalar, "plain");
     }
 
     fn first_token_slice(
@@ -5325,6 +5417,18 @@ mod test {
         assert_eq!(
             first_scanner_error_info("a: \"one\nbad\"\n"),
             "invalid indentation in multiline quoted scalar"
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_trailing_content_error_names_quote_style() {
+        assert_eq!(
+            first_scanner_error_info("'foo' trailing\n"),
+            "invalid trailing content after single-quoted scalar"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"foo\" trailing\n"),
+            "invalid trailing content after double-quoted scalar"
         );
     }
 
