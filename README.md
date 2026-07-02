@@ -17,7 +17,7 @@
 >
 > — [Ethiraric](https://crates.io/users/Ethiraric)
 
-**granit-parser** is both YAML 1.1 and 1.2 compliant parser in pure Rust with strict compliance, comment and style support, no-std support, and spans for parser events. “Granit” is a correct word in many European languages (English *granite*).
+**granit-parser** is a YAML 1.2 parser in pure Rust with comment and style support, no-std support, and spans for parser events. It accepts many real-world YAML documents from the YAML 1.1 era where the syntax overlaps with YAML 1.2. “Granit” is a correct word in many European languages (English *granite*).
 
 This crate started as a fork of [saphyr-parser](https://crates.io/crates/saphyr-parser) that descends from [yaml-rust](https://github.com/chyh1990/yaml-rust), with influences from [libyaml](https://crates.io/crates/libyaml) and [yaml-cpp](https://github.com/jbeder/yaml-cpp). The project has since diverged significantly and is now maintained as an independent project.
 
@@ -264,6 +264,10 @@ The following ergonomic helpers are available:
 - `ParserStack::push_include`
 
 See CHANGELOG.md for details.
+
+### Unsupported features
+YAML 1.1 line breaks. YAML 1.1 defines NEL (U+0085), LS (U+2028) and PS (U+2029) as line breaks, this parser
+uses `\n`/`\r` only line-breaking that as expected in YAML 1.2. 
 
 ## Tools
 
