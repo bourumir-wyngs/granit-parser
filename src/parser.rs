@@ -1555,13 +1555,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         loop {
             match self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
-                    // YAML version compatibility is non-fatal here. The scanner validates the
-                    // directive shape, and the parser rejects duplicates below, but it does not
-                    // expose a warning channel for unsupported versions.
                     if version.is_some() {
                         return Err(ScanError::new_str(
                             span.start,
                             "duplicate version directive",
+                        ));
+                    }
+                    if *major != 1 {
+                        return Err(ScanError::new_str(
+                            span.start,
+                            "unsupported YAML major version",
                         ));
                     }
                     version = Some(YamlVersion::new(*major, *minor));
@@ -3356,6 +3359,14 @@ a5: *x
     }
 
     #[test]
+    fn test_unsupported_yaml_major_version_errors() {
+        assert_eq!(
+            first_error_info("%YAML 9.9\n--- a\n"),
+            "unsupported YAML major version"
+        );
+    }
+
+    #[test]
     fn test_document_start_emits_yaml_version() {
         let events = Parser::new_from_str("%YAML 1.2\n---\nvalue\n")
             .map(|event| event.unwrap().0)
@@ -3366,6 +3377,21 @@ a5: *x
             Some(Event::DocumentStart(
                 true,
                 Some(YamlVersion { major: 1, minor: 2 })
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_document_start_allows_supported_major_future_minor_version() {
+        let events = Parser::new_from_str("%YAML 1.9\n---\nvalue\n")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        assert!(matches!(
+            events.get(1),
+            Some(Event::DocumentStart(
+                true,
+                Some(YamlVersion { major: 1, minor: 9 })
             ))
         ));
     }

@@ -141,6 +141,28 @@ fn test_two_parsers_second_has_two_docs_error() {
 }
 
 #[test]
+fn nested_parser_scan_error_after_document_end_is_propagated_verbatim() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
+    stack.push_str_parser(
+        Parser::new_from_str("child: value\n...\n[\n"),
+        "child".to_string(),
+    );
+
+    loop {
+        match stack.next_event() {
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                assert_eq!(stack.stack(), vec!["parent".to_string()]);
+                break;
+            }
+            None => panic!("expected nested scan error"),
+        }
+    }
+}
+
+#[test]
 fn test_two_parsers_first_has_multiple_docs_fine() {
     let mut stack: MyStack = ParserStack::new();
     // p1 is bottom. It can have multiple documents.
@@ -856,6 +878,42 @@ fn parser_stack_push_include_resolves_included_content() {
             "DocEnd",
             "StreamEnd"
         ]
+    );
+}
+
+#[test]
+fn multi_document_include_does_not_splice_into_parent() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("root:\n  inc: !include two.yaml\n  after: tail\n"),
+        "root".to_string(),
+    );
+    stack.set_resolver(|_| Ok("x: 1\n---\ny: 2\n".to_string()));
+
+    let mut saw_error = false;
+    let mut spliced = false;
+
+    while let Some(result) = stack.next_event() {
+        match result {
+            Ok((Event::Scalar(value, _, _, Some(_)), _)) if value.as_ref() == "two.yaml" => {
+                stack.push_include(value.as_ref()).unwrap();
+            }
+            Ok((Event::Scalar(value, ..), _)) if value.as_ref() == "y" => {
+                spliced = true;
+            }
+            Err(err) => {
+                assert_eq!(err.info(), "multiple documents not supported here");
+                assert_eq!(stack.stack(), vec!["root".to_string()]);
+                saw_error = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_error);
+    assert!(
+        !spliced,
+        "second include document leaked into parent stream"
     );
 }
 

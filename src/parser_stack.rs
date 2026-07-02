@@ -335,6 +335,11 @@ where
         }
     }
 
+    fn pop_parser_and_propagate_anchor_offset(&mut self) {
+        let popped = self.parsers.pop().unwrap();
+        self.propagate_anchor_offset_from_popped(&popped);
+    }
+
     fn next_event_impl(&mut self) -> Result<(Event<'input>, Span), ScanError> {
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
@@ -357,8 +362,7 @@ where
                         self.parsers.pop();
                         return Ok((Event::StreamEnd, span));
                     }
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                 }
                 None => {
                     if self.parsers.len() == 1 {
@@ -368,12 +372,10 @@ where
                             Span::empty(crate::scanner::Marker::new(0, 1, 0)),
                         ));
                     }
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                 }
                 Some(Err(e)) => {
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                     return e.into_result();
                 }
                 Some(Ok((Event::DocumentEnd, span))) => {
@@ -391,14 +393,18 @@ where
 
                     match peek_res {
                         Some(Ok((Event::StreamEnd, _))) | None => {
-                            let popped = self.parsers.pop().unwrap();
-                            self.propagate_anchor_offset_from_popped(&popped);
+                            self.pop_parser_and_propagate_anchor_offset();
                         }
-                        _ => {
+                        Some(Ok(_)) => {
+                            self.pop_parser_and_propagate_anchor_offset();
                             return Err(ScanError::new_str(
                                 span.start,
                                 "multiple documents not supported here",
                             ));
+                        }
+                        Some(Err(e)) => {
+                            self.pop_parser_and_propagate_anchor_offset();
+                            return Err(e);
                         }
                     }
                 }
