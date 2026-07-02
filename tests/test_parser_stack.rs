@@ -836,6 +836,55 @@ fn default_empty_stack_peek_and_next_emit_stream_end_once() {
 }
 
 #[test]
+fn parser_stack_push_str_after_exhaustion_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+
+    while stack.next_event().is_some() {}
+    assert!(stack.peek().is_none());
+
+    stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
+fn parser_stack_push_after_peeked_empty_stream_end_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+
+    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+
+    stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
 fn parser_stack_resolve_without_resolver_reports_error() {
     let mut stack: MyStack = ParserStack::new();
 
@@ -874,6 +923,38 @@ fn parser_stack_push_include_resolves_included_content() {
             "MapStart",
             "Scalar(a)",
             "Scalar(1)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
+fn parser_stack_push_include_after_exhaustion_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.set_resolver(|name| match name {
+        "child" => Ok("b: 2".to_string()),
+        _ => Err(ScanError::new(
+            Marker::new(0, 1, 0),
+            "Not found".to_string(),
+        )),
+    });
+
+    while stack.next_event().is_some() {}
+    assert!(stack.peek().is_none());
+
+    stack.push_include("child").unwrap();
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
             "MapEnd",
             "DocEnd",
             "StreamEnd"

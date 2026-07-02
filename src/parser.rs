@@ -3093,6 +3093,18 @@ a5: *x
     }
 
     #[test]
+    fn test_load_full_stream_fuses_iterator_after_stream_end() {
+        let mut parser = Parser::new_from_str("a: 1\n");
+        let mut sink = CollectingSink::default();
+
+        parser.load(&mut sink, true).unwrap();
+
+        assert!(matches!(sink.events.last(), Some(Event::StreamEnd)));
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
     fn test_load_after_peek_delivers_buffered_document_end_before_stream_end() {
         let mut parser = Parser::new_from_str("a");
         for _ in 0..3 {
@@ -3314,6 +3326,18 @@ a5: *x
         parser.try_load(&mut sink, true).unwrap();
 
         assert_eq!(sink.events, vec![Event::StreamEnd]);
+    }
+
+    #[test]
+    fn test_try_load_full_stream_fuses_iterator_after_stream_end() {
+        let mut parser = Parser::new_from_str("a: 1\n");
+        let mut sink = FailingSink { events: Vec::new() };
+
+        parser.try_load(&mut sink, true).unwrap();
+
+        assert!(matches!(sink.events.last(), Some(Event::StreamEnd)));
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
     }
 
     #[test]

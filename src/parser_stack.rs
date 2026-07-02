@@ -241,11 +241,19 @@ where
         self.resolve(include_name)
     }
 
+    fn prepare_for_push(&mut self) {
+        if matches!(self.current.as_ref(), Some((Event::StreamEnd, _))) {
+            self.current = None;
+        }
+        self.stream_end_emitted = false;
+    }
+
     /// Push a string parser onto the stack.
     ///
     /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
     /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_str_parser(&mut self, mut parser: Parser<'input, StrInput<'input>>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -261,6 +269,7 @@ where
         mut parser: Parser<'static, BufferedInput<I>>,
         name: String,
     ) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -272,6 +281,7 @@ where
     /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
     /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_custom_parser(&mut self, mut parser: Parser<'input, T>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -283,6 +293,7 @@ where
     /// Replay parsers are used for included content that has already been parsed into events.
     /// `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_replay_parser(&mut self, mut parser: ReplayParser<'input>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             let inherited = parent.get_anchor_offset();
             parser.set_anchor_offset(parser.get_anchor_offset().max(inherited));
@@ -301,6 +312,7 @@ where
         name: String,
         current: (Event<'input>, Span),
     ) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
