@@ -2975,6 +2975,33 @@ a5: *x
     }
 
     #[test]
+    fn test_iterator_terminates_after_node_property_error() {
+        let parser = Parser::new_from_str("- *nope\n- 2\n");
+        let mut errors = 0usize;
+        let mut saw_later_node = false;
+        let mut events = 0usize;
+
+        for item in parser {
+            events += 1;
+            match item {
+                Ok((Event::Scalar(value, ..), _)) if value == "2" => saw_later_node = true,
+                Ok(_) => {}
+                Err(error) => {
+                    assert_eq!(error.info(), "while parsing node, found unknown anchor");
+                    errors += 1;
+                }
+            }
+            assert!(
+                events < 1000,
+                "parser iterator did not terminate after a node-property error"
+            );
+        }
+
+        assert_eq!(errors, 1);
+        assert!(!saw_later_node, "parser resumed after the alias error");
+    }
+
+    #[test]
     fn test_peeked_scan_error_is_returned_once_by_next_event() {
         let mut parser = Parser::new_from_str("a: [1, 2");
 
@@ -2993,6 +3020,33 @@ a5: *x
         };
 
         assert_eq!(first_error, second_error);
+        assert_eq!(parser.next_event().unwrap().unwrap_err(), first_error);
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
+    fn test_peeked_node_property_error_is_stable_and_terminal() {
+        let mut parser = Parser::new_from_str("a: *nope\nb: 2\n");
+
+        for _ in 0..4 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        let first_error = match parser.peek() {
+            Some(Err(error)) => error,
+            _ => panic!("expected unknown alias error"),
+        };
+        let second_error = match parser.peek() {
+            Some(Err(error)) => error,
+            _ => panic!("expected cached unknown alias error"),
+        };
+
+        assert_eq!(first_error, second_error);
+        assert_eq!(
+            first_error.info(),
+            "while parsing node, found unknown anchor"
+        );
         assert_eq!(parser.next_event().unwrap().unwrap_err(), first_error);
         assert!(parser.next_event().is_none());
         assert!(parser.peek().is_none());
