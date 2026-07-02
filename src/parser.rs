@@ -2505,21 +2505,31 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
             try_emit(recv, ev, span)?;
         }
 
-        if self.scanner.stream_ended() {
+        let has_buffered_result = self.current.is_some()
+            || self.current_error.is_some()
+            || !self.queued_events.is_empty();
+        if self.scanner.stream_ended() && !has_buffered_result {
             // The scanner has already reached EOF before the document loop, so emit the terminal
             // event and stop.
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
+            self.stream_end_emitted = true;
             return Ok(());
         }
 
         loop {
-            let (ev, span) = self.next_event_impl()?;
+            let (ev, span) = if let Some(error) = self.current_error.take() {
+                self.stream_end_emitted = true;
+                return Err(TryLoadError::scan(error));
+            } else {
+                self.next_event_impl()?
+            };
             let is_doc_end = matches!(ev, Event::DocumentEnd);
             let is_stream_end = matches!(ev, Event::StreamEnd);
 
             try_emit(recv, ev, span)?;
 
             if is_stream_end {
+                self.stream_end_emitted = true;
                 return Ok(());
             }
             if !multi && is_doc_end {
@@ -3080,6 +3090,22 @@ a5: *x
     }
 
     #[test]
+    fn test_load_after_peek_delivers_buffered_document_end_before_stream_end() {
+        let mut parser = Parser::new_from_str("a");
+        for _ in 0..3 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::DocumentEnd);
+
+        let mut sink = CollectingSink::default();
+        parser.load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::DocumentEnd, Event::StreamEnd]);
+        assert!(parser.next_event().is_none());
+    }
+
+    #[test]
     fn test_load_visits_nested_collection_events() {
         let mut parser = Parser::new_from_str("root:\n  - item: value\n  - [a, b]\n");
         let mut sink = CollectingSink::default();
@@ -3285,6 +3311,22 @@ a5: *x
         parser.try_load(&mut sink, true).unwrap();
 
         assert_eq!(sink.events, vec![Event::StreamEnd]);
+    }
+
+    #[test]
+    fn test_try_load_after_peek_delivers_buffered_document_end_before_stream_end() {
+        let mut parser = Parser::new_from_str("a");
+        for _ in 0..3 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::DocumentEnd);
+
+        let mut sink = FailingSink { events: Vec::new() };
+        parser.try_load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::DocumentEnd, Event::StreamEnd]);
+        assert!(parser.next_event().is_none());
     }
 
     #[test]
