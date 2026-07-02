@@ -295,6 +295,17 @@ foobar";
         ]
     );
 }
+
+#[test]
+fn test_directive_followed_by_comment_then_content_errors() {
+    for yaml in ["%YAML 1.2\n# c\nfoo\n--- bar\n", "%YAML 1.2\n# c\n"] {
+        let error = run_parser(yaml)
+            .expect_err("directives must still be followed by an explicit document start");
+
+        assert_eq!(error.info(), "did not find expected <document start>");
+    }
+}
+
 #[test]
 fn test_large_block_scalar_indent() {
     // https://github.com/Ethiraric/yaml-rust2/issues/29

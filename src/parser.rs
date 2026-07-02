@@ -1490,6 +1490,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    fn has_pending_document_directives(&self) -> bool {
+        self.pending_document_directives
+            || self.pending_document_version.is_some()
+            || !self.pending_document_tag_handles.is_empty()
+    }
+
     fn document_start<'a>(&mut self, implicit: bool) -> ParseResult<'a>
     where
         'input: 'a,
@@ -1500,6 +1506,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         // Anchors are scoped to a single document.
         self.anchors.clear();
+
+        if self.has_pending_document_directives() {
+            return self.explicit_document_start();
+        }
 
         match *self.peek_token()? {
             QueuedToken(span, QueuedTokenType::StreamEnd) => {
@@ -1648,7 +1658,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // or `%TAG ! ...` to leak into following documents lets earlier documents alter how
             // explicit tags are interpreted later on.
             self.tags.remove("!!");
-            self.tags.remove("");
+            self.tags.remove("!");
         } else {
             self.tags.clear();
         }
@@ -2407,7 +2417,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             )
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
-            match self.tags.get("") {
+            match self.tags.get("!") {
                 Some(prefix) => Tag::with_original_handle(prefix.clone(), suffix, original_handle),
                 None => Tag::with_original_handle(String::new(), suffix, original_handle),
             }
@@ -3615,11 +3625,28 @@ baz: "qux"
     }
 
     #[test]
+    fn test_keep_tags_does_not_persist_primary_tag_handle() {
+        let text = "%TAG ! tag:evil,2024:\n--- !int 1\n--- !int 2\n";
+
+        let tags = Parser::new_from_str(text)
+            .keep_tags(true)
+            .filter_map(|event| match event.expect("input should parse").0 {
+                Event::Scalar(_, _, _, Some(tag)) if tag.suffix == "int" => {
+                    Some(tag.handle.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(tags, vec!["tag:evil,2024:", "!"]);
+    }
+
+    #[test]
     fn test_resolve_tag_uses_overridden_local_prefix() {
         let mut parser = Parser::new_from_str("");
         parser
             .tags
-            .insert(String::new(), "tag:local.example,2024:".to_string());
+            .insert("!".to_string(), "tag:local.example,2024:".to_string());
 
         let tag = parser
             .resolve_tag(
