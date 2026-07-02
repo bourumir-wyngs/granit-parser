@@ -484,6 +484,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     token: Option<QueuedToken<'input>>,
     /// The next YAML event to emit.
     current: Option<(Event<'input>, Span)>,
+    /// The next parser error to emit after it has been observed by `peek`.
+    current_error: Option<ScanError>,
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
     queued_events: VecDeque<(Event<'input>, Span)>,
 
@@ -518,10 +520,11 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     ///
     /// Key is the handle, and value is the prefix.
     tags: BTreeMap<String, String>,
-    /// Whether we have emitted [`Event::StreamEnd`].
+    /// Whether we have emitted a terminal iterator result.
     ///
-    /// Emitted means that it has been returned from [`Self::next`]. If it is stored in
-    /// [`Self::token`], this is set to `false`.
+    /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
+    /// been returned from [`Self::next_event`] or [`Self::next`]. If the terminal result is stored
+    /// in [`Self::current`] or [`Self::current_error`], this is set to `false`.
     stream_end_emitted: bool,
     /// Make tags global across all documents.
     keep_tags: bool,
@@ -857,6 +860,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             state: State::StreamStart,
             token: None,
             current: None,
+            current_error: None,
             queued_events: VecDeque::new(),
 
             pending_key_indent: None,
@@ -909,6 +913,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// Any subsequent call to [`Parser::peek`] will return the same value, until a call to
     /// [`Iterator::next`] or [`Parser::load`].
+    /// If the buffered value is a [`ScanError`], [`Parser::next_event`] returns that error once
+    /// and then the parser is exhausted.
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
@@ -917,6 +923,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     }
 
     /// Try to load the next event and return it, consuming it from `self`.
+    ///
+    /// After this returns a [`ScanError`], subsequent calls return [`None`].
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
@@ -2427,25 +2435,35 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
         if let Some(ref x) = self.current {
             Some(Ok(x))
+        } else if let Some(error) = &self.current_error {
+            Some(Err(error.clone()))
         } else {
             if self.stream_end_emitted {
                 return None;
             }
             match self.next_event_impl() {
                 Ok(token) => self.current = Some(token),
-                Err(e) => return Some(e.into_result()),
+                Err(error) => {
+                    self.current_error = Some(error.clone());
+                    return Some(Err(error));
+                }
             }
             self.current.as_ref().map(Ok)
         }
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        if let Some(error) = self.current_error.take() {
+            self.stream_end_emitted = true;
+            return Some(Err(error));
+        }
+
         if self.stream_end_emitted {
             return None;
         }
 
         let tok = self.next_event_impl();
-        if matches!(tok, Ok((Event::StreamEnd, _))) {
+        if matches!(tok, Ok((Event::StreamEnd, _)) | Err(_)) {
             self.stream_end_emitted = true;
         }
         Some(tok)
@@ -2924,6 +2942,50 @@ a5: *x
                 None => panic!("expected parse error"),
             }
         }
+    }
+
+    #[test]
+    fn test_iterator_terminates_after_scan_error() {
+        let parser = Parser::new_from_str("foo:\n  bar\ninvalid\n");
+        let mut errors = 0usize;
+        let mut events = 0usize;
+
+        for item in parser {
+            events += 1;
+            if item.is_err() {
+                errors += 1;
+            }
+            assert!(
+                events < 1000,
+                "parser iterator did not terminate after a scan error"
+            );
+        }
+
+        assert_eq!(errors, 1);
+    }
+
+    #[test]
+    fn test_peeked_scan_error_is_returned_once_by_next_event() {
+        let mut parser = Parser::new_from_str("a: [1, 2");
+
+        let first_error = loop {
+            match parser.peek() {
+                Some(Ok(_)) => {
+                    parser.next_event().unwrap().unwrap();
+                }
+                Some(Err(error)) => break error,
+                None => panic!("expected parse error"),
+            }
+        };
+        let second_error = match parser.peek() {
+            Some(Err(error)) => error,
+            _ => panic!("expected cached parse error"),
+        };
+
+        assert_eq!(first_error, second_error);
+        assert_eq!(parser.next_event().unwrap().unwrap_err(), first_error);
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
     }
 
     #[test]
