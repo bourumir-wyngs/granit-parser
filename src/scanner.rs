@@ -2763,18 +2763,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ));
         }
 
-        // ???, fixes test G9HC.
-        if let Some(QueuedToken(span, QueuedTokenType::Anchor(..) | QueuedTokenType::Tag(..))) =
-            self.tokens.back()
-        {
-            if self.mark.col == 0 && span.start.col == 0 && self.indent > -1 {
-                return Err(ScanError::new_str(
-                    span.start,
-                    "invalid indentation for anchor",
-                ));
-            }
-        }
-
         // Skip over the `-`.
         let mark = self.mark;
         self.skip_non_blank();
