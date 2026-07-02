@@ -507,8 +507,12 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_tag: Option<Cow<'input, Tag>>,
     /// Pending explicit tag token start to attach to a node after an intervening comment.
     pending_node_tag_start: Option<Marker>,
+    /// Pending end marker of the last node-property token before an intervening comment.
+    pending_node_property_end: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
+    /// End marker of the most recently produced event.
+    last_event_end: Option<Marker>,
     /// Pending YAML version captured before comments preceding an explicit document start.
     pending_document_version: Option<YamlVersion>,
     /// Whether document directives were already initialized before comments preceding `---`.
@@ -873,7 +877,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             pending_node_anchor_id: 0,
             pending_node_tag: None,
             pending_node_tag_start: None,
+            pending_node_property_end: None,
             pending_empty_scalar_span: None,
+            last_event_end: None,
             pending_document_version: None,
             pending_document_directives: false,
             pending_document_tag_handles: BTreeSet::new(),
@@ -947,7 +953,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        match self.current.take() {
+        let event = match self.current.take() {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
@@ -958,7 +964,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             Some(v) => Ok(v),
-        }
+        }?;
+
+        Ok(self.remember_event_end(event))
     }
 
     fn apply_pending_key_indent<'a>(&mut self, (ev, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
@@ -969,6 +977,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
 
         (ev, span)
+    }
+
+    fn remember_event_end<'a>(&mut self, (event, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
+        self.last_event_end = Some(span.end);
+        (event, span)
     }
 
     /// Peek at the next token from the scanner.
@@ -1640,8 +1653,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.pop_state();
-            // empty scalar
-            Ok((Event::empty_scalar(), mark))
+            let span = self
+                .last_event_end
+                .map_or_else(|| Span::empty(mark.start), Span::empty);
+            Ok((Event::empty_scalar(), span))
         } else {
             self.state = State::BlockNode;
             self.parse_node(true, false)
@@ -1659,7 +1674,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 span
             }
-            QueuedToken(span, _) => span,
+            QueuedToken(span, _) => self
+                .last_event_end
+                .map_or_else(|| Span::empty(span.start), Span::empty),
         };
 
         if self.keep_tags {
@@ -1710,10 +1727,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         anchor_id: usize,
         tag: Option<Cow<'input, Tag>>,
         tag_start: Option<Marker>,
+        property_end: Option<Marker>,
     ) {
         self.pending_node_anchor_id = anchor_id;
         self.pending_node_tag = tag;
         self.pending_node_tag_start = tag_start;
+        self.pending_node_property_end = property_end;
     }
 
     fn attach_tag_start(event: Event<'_>, span: Span, start: Option<Marker>) -> (Event<'_>, Span) {
@@ -1732,6 +1751,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
         let mut tag = self.pending_node_tag.take();
         let mut tag_start = self.pending_node_tag_start.take();
+        let mut property_end = self.pending_node_property_end.take();
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
@@ -1751,18 +1771,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(_, QueuedTokenType::Anchor(_)) => {
                 if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
                     anchor_id = self.register_anchor(name, &span)?;
+                    property_end = Some(span.end);
                     if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
                         if let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
                             self.fetch_token()
                         {
                             tag_start = Some(tag_span.start);
                             tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
+                            property_end = Some(tag_span.end);
                         } else {
                             unreachable!()
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                         return Ok(comment);
                     }
                 } else {
@@ -1772,17 +1794,19 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(mark, QueuedTokenType::Tag(..)) => {
                 if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
                     tag_start = Some(mark.start);
+                    property_end = Some(mark.end);
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
                         {
                             anchor_id = self.register_anchor(name, &mark)?;
+                            property_end = Some(mark.end);
                         } else {
                             unreachable!()
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                         return Ok(comment);
                     }
                 } else {
@@ -1874,9 +1898,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // ex 7.2, an empty scalar can follow a secondary tag
             QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
                 self.pop_state();
+                let span = property_end.map_or_else(|| Span::empty(mark.start), Span::empty);
                 Ok(Self::attach_tag_start(
                     Event::empty_scalar_with_anchor(anchor_id, tag),
-                    mark,
+                    span,
                     tag_start,
                 ))
             }
@@ -1930,7 +1955,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // A missing block-mapping key before `:` is represented as an empty scalar.
             QueuedToken(mark, QueuedTokenType::Value) => {
                 self.state = State::BlockMappingValue;
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
             QueuedToken(mark, QueuedTokenType::BlockEnd) => {
                 self.pop_state();
@@ -1954,7 +1979,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.state = State::BlockMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(
                 State::BlockNodeOrIndentlessSequence,
@@ -1990,8 +2015,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, _) => {
                 self.state = State::BlockMappingKey;
-                // empty scalar
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
         }
     }
@@ -2002,7 +2026,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.block_mapping_value_node_with_empty_span(mark)
     }
@@ -2065,7 +2089,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     }
                     QueuedToken(marker, QueuedTokenType::Value) => {
                         self.state = State::FlowMappingValue;
-                        return Ok((Event::empty_scalar(), marker));
+                        return Ok((Event::empty_scalar(), Span::empty(marker.start)));
                     }
                     QueuedToken(_, QueuedTokenType::FlowMappingEnd) => (),
                     _ => {
@@ -2096,7 +2120,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.state = State::FlowMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(State::FlowNode, State::FlowMappingValue, false, false)
         }
@@ -2110,7 +2134,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             if empty {
                 let QueuedToken(mark, _) = *self.peek_token()?;
                 self.state = State::FlowMappingKey;
-                return Ok((Event::empty_scalar(), mark));
+                return Ok((Event::empty_scalar(), Span::empty(mark.start)));
             }
             match *self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::Value) => {
@@ -2134,7 +2158,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.state = State::FlowMappingValueNode;
                     return Ok(self.queue_tail_and_return_first(comments));
                 }
-                QueuedToken(marker, _) => marker,
+                QueuedToken(marker, _) => Span::empty(marker.start),
             }
         };
 
@@ -2245,7 +2269,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.indentless_sequence_entry_node_with_empty_span(mark)
     }
@@ -2315,7 +2339,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.block_sequence_entry_node_with_empty_span(mark)
     }
@@ -2342,7 +2366,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             *self.peek_token()?
         {
             self.state = State::FlowSequenceEntryMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(
                 State::FlowNode,
@@ -2369,7 +2393,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, _) => {
                 self.state = State::FlowSequenceEntryMappingEnd;
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
         }
     }

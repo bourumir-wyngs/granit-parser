@@ -118,8 +118,9 @@ fn test_document_end_emitted_immediately_on_next_document_start_marker() {
     // document start marker ("---") at the beginning of a line.
     //
     // In YAML, a `---` marker can implicitly terminate the previous document.
-    // The `DocumentEnd` span should therefore be located at the `---` marker and must be
-    // emitted before the subsequent `DocumentStart(true)`.
+    // The synthetic `DocumentEnd` should be emitted before the subsequent
+    // `DocumentStart(true)`, but its span belongs to the end of the previous document, not to the
+    // following `---` marker.
     let s = "foo\n---\nbar";
     //       0123 456 789...
     //       foo\n = 0-3 (4 chars)
@@ -144,17 +145,17 @@ fn test_document_end_emitted_immediately_on_next_document_start_marker() {
         "DocumentStart(true) should immediately follow DocumentEnd"
     );
 
-    // DocumentEnd should be located at the `---` marker.
+    // DocumentEnd should be a zero-width span at the end of the previous document.
     let doc_end_span = events[doc_end_idx].1;
     assert_eq!(
         doc_end_span.start.index(),
-        4,
-        "DocumentEnd should start at the '---' marker"
+        3,
+        "DocumentEnd should start at the end of the previous document"
     );
     assert_eq!(
         doc_end_span.end.index(),
-        7,
-        "DocumentEnd should end right after the '---' marker"
+        3,
+        "DocumentEnd should end at the end of the previous document"
     );
 
     // Sanity: the DocumentStart marker span should match.
