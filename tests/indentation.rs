@@ -142,7 +142,7 @@ fn indented_mapping_value_sequence_can_have_anchor_and_comment_on_previous_lines
 fn unindented_mapping_value_sequence_after_anchor_is_rejected() {
     assert_eq!(
         first_error_info("seq:\n&anchor\n- a\n- b\n").as_deref(),
-        Some("simple key expect ':'")
+        Some("simple key expected ':'")
     );
 }
 
@@ -150,7 +150,7 @@ fn unindented_mapping_value_sequence_after_anchor_is_rejected() {
 fn unindented_mapping_value_sequence_after_anchor_comment_is_rejected() {
     assert_eq!(
         first_error_info("seq:\n&anchor\n# c\n- a\n- b\n").as_deref(),
-        Some("simple key expect ':'")
+        Some("simple key expected ':'")
     );
 }
 
@@ -158,6 +158,6 @@ fn unindented_mapping_value_sequence_after_anchor_comment_is_rejected() {
 fn unindented_mapping_value_sequence_after_tag_comment_is_rejected() {
     assert_eq!(
         first_error_info("seq:\n!tag\n# c\n- a\n- b\n").as_deref(),
-        Some("simple key expect ':'")
+        Some("simple key expected ':'")
     );
 }

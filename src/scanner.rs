@@ -1203,8 +1203,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     #[cold]
-    fn simple_key_expected(&self) -> ScanError {
-        ScanError::new_str(self.mark, "simple key expected")
+    fn simple_key_expected(mark: Marker) -> ScanError {
+        ScanError::new_str(mark, "simple key expected ':'")
     }
 
     #[cold]
@@ -1674,7 +1674,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             if sk.possible && (is_line_stale || is_length_stale) {
                 if sk.required {
-                    return Err(ScanError::new_str(self.mark, "simple key expect ':'"));
+                    return Err(Self::simple_key_expected(sk.mark));
                 }
                 sk.possible = false;
             }
@@ -1906,7 +1906,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // had. If one was required, however, that was an error and we must propagate it.
         for sk in &mut self.simple_keys {
             if sk.required && sk.possible {
-                return Err(self.simple_key_expected());
+                return Err(Self::simple_key_expected(sk.mark));
             }
             sk.possible = false;
         }
@@ -4117,7 +4117,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn remove_simple_key(&mut self) -> ScanResult {
         let last = self.simple_keys.last_mut().unwrap();
         if last.possible && last.required {
-            return Err(self.simple_key_expected());
+            return Err(Self::simple_key_expected(last.mark));
         }
 
         last.possible = false;
@@ -4190,8 +4190,8 @@ mod test {
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{
-            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
-            TEncoding, Token, TokenType,
+            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError,
+            Scanner, Span, TEncoding, Token, TokenType,
         },
     };
 
@@ -5107,12 +5107,16 @@ mod test {
     }
 
     fn first_scanner_error_info(input: &str) -> String {
+        first_scanner_error(input).info().to_owned()
+    }
+
+    fn first_scanner_error(input: &str) -> ScanError {
         let mut scanner = Scanner::new(StrInput::new(input));
         loop {
             match scanner.next_token() {
                 Ok(Some(_)) => {}
                 Ok(None) => panic!("expected scanner error"),
-                Err(error) => return error.info().to_owned(),
+                Err(error) => return error,
             }
         }
     }
@@ -5442,9 +5446,15 @@ mod test {
 
     #[test]
     fn required_simple_key_requires_value_at_stream_end() {
+        let error = first_scanner_error("a:\n&b\n- c\n");
+
+        assert_eq!(error.info(), "simple key expected ':'");
+        assert_eq!(error.marker().index(), 3);
+        assert_eq!(error.marker().line(), 2);
+        assert_eq!(error.marker().col(), 0);
         assert_eq!(
-            first_scanner_error_info("a:\n&b\n- c\n"),
-            "simple key expect ':'"
+            alloc::format!("{error}"),
+            "simple key expected ':' at char 3 line 2 column 1"
         );
     }
 
