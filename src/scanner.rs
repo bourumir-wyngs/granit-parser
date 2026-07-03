@@ -4836,6 +4836,73 @@ mod test {
     }
 
     #[test]
+    fn tag_directive_parts_are_owned_for_buffered_input() {
+        let mut scanner = Scanner::new(BufferedInput::new(
+            "%TAG !e! tag:example.com,2000:app/\n".chars(),
+        ));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+                assert!(matches!(handle, Cow::Owned(_)));
+                assert_eq!(&*handle, "!e!");
+                assert!(matches!(prefix, Cow::Owned(_)));
+                assert_eq!(&*prefix, "tag:example.com,2000:app/");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn buffered_tag_directive_decodes_prefix_escape() {
+        let mut scanner = Scanner::new(BufferedInput::new(
+            "%TAG !e! %74ag:example.com,2000:app/\n".chars(),
+        ));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+                assert_eq!(&*handle, "!e!");
+                assert!(matches!(prefix, Cow::Owned(_)));
+                assert_eq!(&*prefix, "tag:example.com,2000:app/");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn local_tag_combines_handle_text_with_escaped_suffix() {
+        let mut scanner = Scanner::new(StrInput::new("!foo%20bar value\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::Tag(handle, suffix) = tok.1 {
+                assert!(matches!(handle, Cow::Borrowed("!")));
+                assert!(matches!(suffix, Cow::Owned(_)));
+                assert_eq!(&*suffix, "foo bar");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn secondary_tag_requires_suffix_in_borrowed_and_buffered_paths() {
+        let expected = "while parsing a tag, did not find expected tag URI";
+
+        assert_eq!(first_scanner_error_info("!! value\n"), expected);
+        assert_eq!(first_buffered_scanner_error_info("!! value\n"), expected);
+    }
+
+    #[test]
     fn plain_scalar_is_borrowed_when_whitespace_free_for_str_input() {
         let mut scanner = Scanner::new(StrInput::new("foo\n"));
 
@@ -5107,6 +5174,17 @@ mod test {
         first_scanner_error(input).info().to_owned()
     }
 
+    fn first_buffered_scanner_error_info(input: &str) -> String {
+        let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
+        loop {
+            match scanner.next_token() {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("expected scanner error"),
+                Err(error) => return error.info().to_owned(),
+            }
+        }
+    }
+
     fn first_scanner_error(input: &str) -> ScanError {
         let mut scanner = Scanner::new(StrInput::new(input));
         loop {
@@ -5120,6 +5198,17 @@ mod test {
 
     fn first_scalar_value(input: &str) -> String {
         let mut scanner = Scanner::new(StrInput::new(input));
+        loop {
+            match scanner.next_token().expect("scanner should not error") {
+                Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
+                Some(_) => {}
+                None => panic!("expected scalar token"),
+            }
+        }
+    }
+
+    fn first_buffered_scalar_value(input: &str) -> String {
+        let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
         loop {
             match scanner.next_token().expect("scanner should not error") {
                 Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
@@ -5201,6 +5290,10 @@ mod test {
     fn tag_directive_handle_must_start_with_bang() {
         assert_eq!(
             first_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
+            "while scanning a tag, did not find expected '!'"
+        );
+        assert_eq!(
+            first_buffered_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
             "while scanning a tag, did not find expected '!'"
         );
     }
@@ -5385,6 +5478,14 @@ mod test {
     }
 
     #[test]
+    fn buffered_block_scalar_reads_content_past_lookahead_window() {
+        assert_eq!(
+            first_buffered_scalar_value("|\n  abcdefghijklmnopqrstuvwxyz\n"),
+            "abcdefghijklmnopqrstuvwxyz\n"
+        );
+    }
+
+    #[test]
     fn explicit_indent_block_scalar_can_end_at_document_marker() {
         assert_eq!(first_scalar_value("|1\n...\n"), "");
     }
@@ -5430,6 +5531,26 @@ mod test {
         assert_eq!(
             first_scanner_error_info("\"foo\" trailing\n"),
             "invalid trailing content after double-quoted scalar"
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_escape_errors_cover_hex_and_surrogate_edges() {
+        assert_eq!(
+            first_scanner_error_info("\"\\xG0\"\n"),
+            "while parsing a quoted scalar, did not find expected hexadecimal number"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\uD800\\uGGGG\"\n"),
+            "while parsing a quoted scalar, did not find expected hexadecimal number for low surrogate"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\uD800\\u0041\"\n"),
+            "while parsing a quoted scalar, found invalid low surrogate"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\U00110000\"\n"),
+            "while parsing a quoted scalar, found invalid Unicode character escape code"
         );
     }
 

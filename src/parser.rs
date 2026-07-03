@@ -1348,98 +1348,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ParserTrait::try_load(self, recv, multi)
     }
 
-    #[cfg(test)]
-    fn try_load_document<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        first_ev: Event<'input>,
-        span: Span,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        if !matches!(first_ev, Event::DocumentStart(..)) {
-            return Err(TryLoadError::scan(ScanError::new_str(
-                span.start,
-                "did not find expected <document-start>",
-            )));
-        }
-        try_emit(recv, first_ev, span)?;
-
-        let (ev, span) = self.next_event_impl()?;
-        self.try_load_node(ev, span, recv)?;
-
-        // DOCUMENT-END is expected.
-        let (ev, mark) = self.next_event_impl()?;
-        assert_eq!(ev, Event::DocumentEnd);
-        try_emit(recv, ev, mark)?;
-
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn try_load_node<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        first_ev: Event<'input>,
-        span: Span,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        match first_ev {
-            Event::Alias(..) | Event::Scalar(..) => try_emit(recv, first_ev, span),
-            Event::SequenceStart(..) => {
-                try_emit(recv, first_ev, span)?;
-                self.try_load_sequence(recv)
-            }
-            Event::MappingStart(..) => {
-                try_emit(recv, first_ev, span)?;
-                self.try_load_mapping(recv)
-            }
-            _ => {
-                #[cfg(feature = "debug_prints")]
-                std::println!("UNREACHABLE EVENT: {first_ev:?}");
-                unreachable!();
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn try_load_mapping<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        let (mut key_ev, mut key_mark) = self.next_event_impl()?;
-        while key_ev != Event::MappingEnd {
-            // key
-            self.try_load_node(key_ev, key_mark, recv)?;
-
-            // value
-            let (ev, mark) = self.next_event_impl()?;
-            self.try_load_node(ev, mark, recv)?;
-
-            // next event
-            let (ev, mark) = self.next_event_impl()?;
-            key_ev = ev;
-            key_mark = mark;
-        }
-        try_emit(recv, key_ev, key_mark)?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn try_load_sequence<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        let (mut ev, mut mark) = self.next_event_impl()?;
-        while ev != Event::SequenceEnd {
-            self.try_load_node(ev, mark, recv)?;
-
-            // next event
-            let (next_ev, next_mark) = self.next_event_impl()?;
-            ev = next_ev;
-            mark = next_mark;
-        }
-        try_emit(recv, ev, mark)?;
-        Ok(())
-    }
-
     fn state_machine<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -3304,26 +3212,6 @@ a5: *x
 
         assert_eq!(receiver_err.to_string(), "receiver error: receiver failed");
         assert!(receiver_err.source().is_some());
-    }
-
-    #[test]
-    fn test_try_load_document_rejects_non_document_start_event() {
-        let mut parser = Parser::new_from_str("");
-        let span = Span::empty(Marker::new(0, 1, 0));
-        let mut sink = NeverFails { count: 0 };
-
-        let err = parser
-            .try_load_document(
-                Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
-                span,
-                &mut sink,
-            )
-            .unwrap_err();
-
-        let TryLoadError::Scan(err) = err else {
-            panic!("expected scan error");
-        };
-        assert_eq!(err.info(), "did not find expected <document-start>");
     }
 
     #[test]
