@@ -8,6 +8,8 @@
   spelling, including `%TAG` mid-name splits). This generalizes `Tag::core_suffix`, which
   now delegates to it.
 - Add Tag::suffix_in_namespace: resolved type name within an arbitrary namespace
+- Summarizing results of automated fuzzing and static analysis, robustness against malformed (bad intent) 
+  YAML input was further hardened.
 
 ## v0.0.6
 - Added `Tag::core_suffix` and made core-tag helpers match the resolved YAML 1.2.2
