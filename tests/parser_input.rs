@@ -1,0 +1,254 @@
+//! Coverage tests for rarely-exercised parser and input paths.
+//!
+//! These tests target scattered error paths and default trait implementations that the
+//! regular test suite does not reach.
+
+use granit_parser::{
+    input::SkipTabs, BufferedInput, Event, Input, Parser, Placement, ScanError, StrInput,
+    TryEventReceiver, TryLoadError,
+};
+
+fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
+    Parser::new_from_str(input)
+        .map(|event| event.map(|(event, _)| event))
+        .collect()
+}
+
+fn first_error_info(input: &str) -> String {
+    for event in Parser::new_from_str(input) {
+        if let Err(error) = event {
+            return error.info().to_owned();
+        }
+    }
+    panic!("expected parser error");
+}
+
+/// A receiver that rejects the terminal `StreamEnd` event.
+struct RejectStreamEnd;
+
+impl<'input> TryEventReceiver<'input> for RejectStreamEnd {
+    type Error = &'static str;
+
+    fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
+        if matches!(ev, Event::StreamEnd) {
+            Err("stream end rejected")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// A receiver that accepts everything.
+struct AcceptAll;
+
+impl<'input> TryEventReceiver<'input> for AcceptAll {
+    type Error = &'static str;
+
+    fn on_event(&mut self, _ev: Event<'input>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+// --- input.rs: default `Input::skip_ws_to_eol` (only reachable through `BufferedInput`,
+// --- since `StrInput` overrides it and the scanner uses `skip_ws_to_eol_blanks` whenever
+// --- comments are possible).
+
+#[test]
+fn buffered_default_skip_ws_to_eol_consumes_blanks_and_comment() {
+    let mut input = BufferedInput::new("  \t # note\nx".chars());
+
+    let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+
+    // 2 spaces + 1 tab + 1 space + '#' + " note" (5 chars) = 10 characters.
+    assert_eq!(consumed, 10);
+    let skipped = result.expect("whitespace with a comment must be accepted");
+    assert!(skipped.found_tabs());
+    assert!(skipped.has_valid_yaml_ws());
+    // The line break must not be consumed.
+    assert_eq!(input.look_ch(), '\n');
+}
+
+#[test]
+fn buffered_default_skip_ws_to_eol_rejects_comment_without_whitespace() {
+    let mut input = BufferedInput::new("#no-space".chars());
+
+    let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+
+    assert_eq!(consumed, 0);
+    let Err(message) = result else {
+        panic!("expected an error for a comment without leading whitespace");
+    };
+    assert_eq!(
+        message,
+        "comments must be separated from other tokens by whitespace"
+    );
+    // The '#' itself must not be consumed.
+    assert_eq!(input.look_ch(), '#');
+}
+
+#[test]
+fn buffered_default_skip_ws_to_eol_stops_at_tab_when_tabs_disallowed() {
+    let mut input = BufferedInput::new("\tx".chars());
+
+    let (consumed, result) = input.skip_ws_to_eol(SkipTabs::No);
+
+    assert_eq!(consumed, 0);
+    let skipped = result.expect("stopping at a tab is not an error");
+    assert!(!skipped.found_tabs());
+    assert!(!skipped.has_valid_yaml_ws());
+    assert_eq!(input.look_ch(), '\t');
+}
+
+// --- input/buffered.rs
+
+#[test]
+fn buffered_raw_read_ch_pads_after_source_is_exhausted() {
+    let mut input = BufferedInput::new("a".chars());
+
+    assert_eq!(input.raw_read_ch(), 'a');
+    // First EOF read marks the source as exhausted...
+    assert_eq!(input.raw_read_ch(), '\0');
+    // ...and subsequent reads keep returning the EOF padding character.
+    assert_eq!(input.raw_read_ch(), '\0');
+}
+
+#[test]
+fn buffered_raw_read_non_breakz_ch_uses_buffered_front() {
+    let mut input = BufferedInput::new("a\nb".chars());
+
+    // Fill the buffer so `raw_read_non_breakz_ch` takes the buffered-front path.
+    input.lookahead(2);
+    assert_eq!(input.raw_read_non_breakz_ch(), Some('a'));
+    // The buffered front is now the line break: it must be left in place.
+    assert_eq!(input.raw_read_non_breakz_ch(), None);
+    assert_eq!(input.peek(), '\n');
+}
+
+// --- input/str.rs: `skip_ws_to_eol_blanks` with `SkipTabs::No`
+
+#[test]
+fn str_input_skip_ws_to_eol_blanks_stops_before_tab_when_tabs_disallowed() {
+    let mut input = StrInput::new("  \tfoo");
+
+    let (consumed, skipped) = input.skip_ws_to_eol_blanks(SkipTabs::No);
+
+    assert_eq!(consumed, 2);
+    assert!(!skipped.found_tabs());
+    assert!(skipped.has_valid_yaml_ws());
+    assert_eq!(input.look_ch(), '\t');
+}
+
+// --- parser.rs: `parse_node` error reporting per state
+
+#[test]
+fn stray_flow_entry_in_block_sequence_reports_block_sequence_error() {
+    // `,` is tokenized as a flow entry even outside a flow collection; `parse_node`
+    // then rejects it while in `BlockNode` state.
+    assert_eq!(
+        first_error_info("- ,\n"),
+        "unexpected EOF while parsing a block sequence"
+    );
+}
+
+#[test]
+fn stray_flow_entry_in_block_mapping_value_reports_block_mapping_error() {
+    assert_eq!(
+        first_error_info("a: ,\n"),
+        "unexpected EOF while parsing a block mapping"
+    );
+}
+
+// --- parser.rs: comment right after `:` in a flow-sequence explicit key/value pair
+// --- (`FlowSequenceEntryMappingValue` state)
+
+#[test]
+fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
+    let events = parse_events("[? a : # note\n b]\n").unwrap();
+
+    let comment_pos = events
+        .iter()
+        .position(|event| matches!(event, Event::Comment(text, _) if text == " note"))
+        .expect("expected the inline comment event");
+    // The explicit `?` key inside a flow sequence opens a single-pair mapping.
+    assert!(matches!(
+        events[comment_pos - 2],
+        Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None)
+    ));
+    // The comment is emitted between the key and the value of the explicit pair.
+    assert!(matches!(
+        events[comment_pos - 1],
+        Event::Scalar(ref value, ..) if value == "a"
+    ));
+    assert!(matches!(
+        events[comment_pos + 1],
+        Event::Scalar(ref value, ..) if value == "b"
+    ));
+    assert!(matches!(
+        events[comment_pos],
+        Event::Comment(_, Placement::Right)
+    ));
+}
+
+// --- parser.rs: `try_load` returning an error buffered by `peek`
+
+#[test]
+fn try_load_returns_error_buffered_by_peek() {
+    let mut parser = Parser::new_from_str("a: *missing\n");
+
+    // Drive the parser through `peek` until the unknown-alias error is buffered.
+    let buffered_error = loop {
+        match parser.peek() {
+            Some(Ok(_)) => {
+                parser.next_event().unwrap().unwrap();
+            }
+            Some(Err(error)) => break error,
+            None => panic!("expected an unknown alias error"),
+        }
+    };
+    assert_eq!(
+        buffered_error.info(),
+        "while parsing node, found unknown anchor"
+    );
+
+    let mut receiver = AcceptAll;
+    let err = parser.try_load(&mut receiver, true).unwrap_err();
+    assert_eq!(err, TryLoadError::Scan(buffered_error));
+
+    // The buffered error is consumed; the parser is exhausted afterwards.
+    assert!(parser.next_event().is_none());
+}
+
+// --- parser.rs: resuming after a receiver error on `StreamEnd`
+
+#[test]
+fn next_event_after_receiver_error_on_stream_end_returns_stream_end() {
+    let mut parser = Parser::new_from_str("foo\n");
+    let mut receiver = RejectStreamEnd;
+
+    let err = parser.try_load(&mut receiver, true).unwrap_err();
+    assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
+
+    // The parser already reached its terminal state; asking for another event
+    // re-emits `StreamEnd` instead of scanning further.
+    let (event, _) = parser.next_event().expect("stream end event").unwrap();
+    assert_eq!(event, Event::StreamEnd);
+    assert!(parser.next_event().is_none());
+}
+
+#[test]
+fn next_event_after_receiver_error_on_stream_end_with_comments_reports_eof() {
+    // With comments possible, resuming after the scanner is exhausted asks the
+    // scanner for another token and reports an EOF error instead.
+    let mut parser = Parser::new_from_str("# hello\nfoo\n");
+    let mut receiver = RejectStreamEnd;
+
+    let err = parser.try_load(&mut receiver, true).unwrap_err();
+    assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
+
+    let error = parser
+        .next_event()
+        .expect("expected an EOF error")
+        .unwrap_err();
+    assert_eq!(error.info(), "unexpected eof");
+    assert!(parser.next_event().is_none());
+}
