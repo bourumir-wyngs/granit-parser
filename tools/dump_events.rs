@@ -10,7 +10,7 @@ struct EventSink<'a> {
 
 impl<'a> SpannedEventReceiver<'a> for EventSink<'a> {
     fn on_event(&mut self, ev: Event<'a>, span: Span) {
-        eprintln!("      \x1B[;34m\u{21B3} {:?}\x1B[;m", ev);
+        eprintln!("      \x1B[;34m\u{21B3} {ev:?}\x1B[;m");
         self.events.push((ev, span));
     }
 }
