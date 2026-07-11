@@ -5,10 +5,9 @@
 //! YAML objects.
 
 use crate::{
+    error::ScanError,
     input::{str::StrInput, BorrowedInput},
-    scanner::{
-        Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError, Scanner, Span,
-    },
+    scanner::{Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
     BufferedInput,
 };
 
@@ -2518,7 +2517,10 @@ mod test {
     };
     use core::{error::Error as _, fmt};
 
-    use crate::scanner::{Marker, ScalarStyle, ScanError, Span};
+    use crate::{
+        error::ScanError,
+        scanner::{Marker, ScalarStyle, Span},
+    };
 
     use super::{
         Event, EventReceiver, Parser, State, StructureStyle, Tag, TryEventReceiver, TryLoadError,

@@ -86,17 +86,19 @@ extern crate std;
 mod char_traits;
 #[macro_use]
 mod debug;
+mod error;
 pub mod input;
 mod parser;
 /// A stack-based parser implementation.
 pub mod parser_stack;
 mod scanner;
 
+pub use crate::error::ScanError;
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
 pub use crate::parser::{
     Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,
     TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
 pub use crate::scanner::{
-    Comment, Marker, Placement, ScalarStyle, ScanError, Scanner, Span, Token, TokenType,
+    Comment, Marker, Placement, ScalarStyle, Scanner, Span, Token, TokenType,
 };

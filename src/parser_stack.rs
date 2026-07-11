@@ -1,7 +1,8 @@
 use crate::{
+    error::ScanError,
     input::{str::StrInput, BorrowedInput, BufferedInput},
     parser::{Event, ParseResult, Parser, ParserTrait, SpannedEventReceiver},
-    scanner::{ScanError, Span},
+    scanner::Span,
 };
 use alloc::{boxed::Box, string::String, vec::Vec};
 
