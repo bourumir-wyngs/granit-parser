@@ -451,15 +451,15 @@ pub trait Input {
         is_breakz(self.peek())
     }
 
-    /// Check whether the next character is [a z].
+    /// Check whether the input is at its physical end.
     ///
-    /// The character must have previously been fetched through [`lookahead`]
+    /// The default implementation infers end-of-input from the `\0` sentinel returned by
+    /// [`Self::peek`]. Inputs that can distinguish a literal NUL from end-of-input should override
+    /// this method.
+    /// The next position must have previously been fetched through [`Self::lookahead`].
     ///
     /// # Return
-    /// Returns true if the character is [a z], false otherwise.
-    ///
-    /// [`lookahead`]: Input::lookahead
-    /// [a z]: is_z
+    /// Returns true if the input is exhausted, false otherwise.
     #[inline]
     fn next_is_z(&self) -> bool {
         is_z(self.peek())
@@ -507,9 +507,9 @@ pub trait Input {
         is_alpha(self.peek())
     }
 
-    /// Skip characters from the input until a [breakz] is found.
+    /// Skip printable characters until a [breakz] or non-printable character is found.
     ///
-    /// The characters are consumed from the input.
+    /// The stopping character is not consumed.
     ///
     /// # Return
     /// Return the number of characters that were consumed. The number of characters returned can
@@ -519,7 +519,10 @@ pub trait Input {
     #[inline]
     fn skip_while_non_breakz(&mut self) -> usize {
         let mut count = 0;
-        while !is_breakz(self.look_ch()) {
+        while {
+            let c = self.look_ch();
+            !is_breakz(c) && crate::char_traits::is_printable(c)
+        } {
             count += 1;
             self.skip();
         }

@@ -180,6 +180,11 @@ impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
     fn peek_nth(&self, n: usize) -> char {
         self.buffer.get(n).copied().unwrap_or('\0')
     }
+
+    #[inline]
+    fn next_is_z(&self) -> bool {
+        self.source_exhausted && self.real_buffered == 0
+    }
 }
 
 /// `BufferedInput` does not support zero-copy slicing since it's a streaming input

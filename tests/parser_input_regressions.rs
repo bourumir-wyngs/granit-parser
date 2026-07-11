@@ -1,4 +1,34 @@
-use granit_parser::{BufferedInput, Input, Parser, StrInput};
+use granit_parser::{BufferedInput, ErrorKind, Event, Input, Parser, ScanError, StrInput};
+
+fn first_str_error(input: &str) -> ScanError {
+    Parser::new_from_str(input)
+        .find_map(Result::err)
+        .expect("input should fail")
+}
+
+fn first_iter_error(input: &str) -> ScanError {
+    Parser::new_from_iter(input.chars())
+        .find_map(Result::err)
+        .expect("input should fail")
+}
+
+fn first_str_scalar(input: &str) -> String {
+    Parser::new_from_str(input)
+        .find_map(|item| match item.expect("input should parse") {
+            (Event::Scalar(value, ..), _) => Some(value.into_owned()),
+            _ => None,
+        })
+        .expect("input should contain a scalar")
+}
+
+fn first_iter_scalar(input: &str) -> String {
+    Parser::new_from_iter(input.chars())
+        .find_map(|item| match item.expect("input should parse") {
+            (Event::Scalar(value, ..), _) => Some(value.into_owned()),
+            _ => None,
+        })
+        .expect("input should contain a scalar")
+}
 
 #[test]
 fn parser_iterator_terminates_after_scan_error() {
@@ -81,4 +111,39 @@ fn buffered_buflen_matches_str_input_lookahead_window() {
     assert_eq!(buffered.buflen(), str_input.buflen());
     assert_eq!(buffered.buf_is_empty(), str_input.buf_is_empty());
     assert_eq!(buffered.peek(), str_input.peek());
+}
+
+#[test]
+fn non_printable_source_characters_are_rejected_by_both_inputs() {
+    for character in ['\0', '\u{1}'] {
+        let inputs = [
+            format!("key: before{character}after\n"),
+            format!("'before{character}after'\n"),
+            format!("\"before{character}after\"\n"),
+            format!("key: |\n  before{character}after\n"),
+            format!("key: >\n  before{character}after\n"),
+            format!("# before{character}after\nkey: value\n"),
+        ];
+
+        for input in &inputs {
+            assert_eq!(
+                first_str_error(input).kind(),
+                ErrorKind::UnexpectedCharacter { character },
+                "string input accepted {input:?}",
+            );
+            assert_eq!(
+                first_iter_error(input).kind(),
+                ErrorKind::UnexpectedCharacter { character },
+                "iterator input accepted {input:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn escaped_nul_in_double_quoted_scalar_remains_valid() {
+    let input = "\"\\0\"\n";
+
+    assert_eq!(first_str_scalar(input), "\0");
+    assert_eq!(first_iter_scalar(input), "\0");
 }

@@ -366,7 +366,7 @@ impl Input for StrInput<'_> {
 
     #[inline]
     fn next_is_z(&self) -> bool {
-        self.buffer.is_empty() || self.buffer.as_bytes()[0] == 0
+        self.buffer.is_empty()
     }
 
     #[inline]
@@ -398,7 +398,7 @@ impl Input for StrInput<'_> {
         let mut chars_consumed = 0;
 
         for (i, c) in self.buffer.char_indices() {
-            if is_breakz(c) {
+            if is_breakz(c) || !crate::char_traits::is_printable(c) {
                 break;
             }
             byte_pos = i + c.len_utf8();

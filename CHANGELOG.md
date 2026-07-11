@@ -1,6 +1,9 @@
 # Changelog
 
 ## v0.0.8
+- Fixed literal NUL being treated as end-of-input and rejected raw DEL and C0/C1 controls other
+  than TAB, LF, CR, and NEL in scalars and comments. The valid double-quoted `"\0"` escape remains
+  supported.
 - Added the public, non-exhaustive `ErrorKind` enum and `ScanError::kind()` for matching errors
   without relying on human-readable text. Variants carry relevant structured details where needed,
   such as the opening and closing characters for mismatched flow collections. `ScanError` now

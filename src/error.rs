@@ -285,7 +285,7 @@ impl fmt::Display for ErrorKind {
                 f.write_str("a BOM must not appear inside a document")
             }
             Self::UnexpectedCharacter { character } => {
-                write!(f, "unexpected character: `{character}'")
+                write!(f, "unexpected character: `{}'", character.escape_default())
             }
             Self::MissingNextToken => f.write_str("did not find expected next token"),
             Self::TabNotAllowed => f.write_str("tabs disallowed in this context"),

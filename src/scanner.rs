@@ -20,7 +20,7 @@ use core::char;
 use crate::{
     char_traits::{
         as_hex, is_anchor_char, is_blank_or_breakz, is_bom, is_break, is_breakz, is_flow, is_hex,
-        is_tag_char, is_uri_char,
+        is_printable, is_tag_char, is_uri_char,
     },
     error::{ErrorKind, ScanError},
     input::{BorrowedInput, SkipTabs},
@@ -1127,6 +1127,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         ScanError::new(self.mark, kind)
     }
 
+    #[inline]
+    fn ensure_current_char_is_printable(&self) -> ScanResult {
+        let character = self.input.peek();
+        if self.input.next_is_z() || is_printable(character) {
+            Ok(())
+        } else {
+            Err(self.scan_error(ErrorKind::UnexpectedCharacter { character }))
+        }
+    }
+
     #[cold]
     fn stop_after_error(&mut self, error: ScanError) -> Option<Token<'input>> {
         self.error = Some(error);
@@ -1266,12 +1276,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else {
             // Streaming input without stable offsets; collect into an owned string.
             let mut owned = String::new();
-            while !is_breakz(self.input.look_ch()) {
+            while {
+                let character = self.input.look_ch();
+                !is_breakz(character) && is_printable(character)
+            } {
                 owned.push(self.input.peek());
                 self.skip_comment_char();
             }
             Cow::Owned(owned)
         };
+
+        self.ensure_current_char_is_printable()?;
 
         let end_mark = self.mark;
         let span = Span::new(start_mark, end_mark);
@@ -1287,7 +1302,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(())
     }
 
-    fn skip_comment(&mut self) {
+    fn skip_comment(&mut self) -> ScanResult {
         debug_assert_eq!(self.input.peek(), '#');
 
         self.skip_comment_char();
@@ -1295,6 +1310,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.mark.offsets.chars += n;
         self.mark.col += n;
         self.mark.offsets.bytes = self.input.byte_offset();
+        self.ensure_current_char_is_printable()
     }
 
     /// Return whether the [`TokenType::StreamStart`] event has been emitted.
@@ -1407,6 +1423,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.fetch_stream_end()?;
             return Ok(());
         }
+
+        self.ensure_current_char_is_printable()?;
 
         if self.mark.col == 0 {
             if self.input.next_char_is('%') {
@@ -1746,7 +1764,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 }
                 '#' => {
                     if need_whitespace {
-                        self.skip_comment();
+                        self.skip_comment()?;
                     } else {
                         self.push_comment_token()?;
                         if stop_after_comment {
@@ -2741,6 +2759,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Check if we are at the end of the line.
         self.input.lookahead(1);
+        self.ensure_current_char_is_printable()?;
         if !self.input.next_is_breakz() {
             return Err(ScanError::new(
                 start_mark,
@@ -2752,6 +2771,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(2);
             self.read_break(&mut chomping_break);
         }
+
+        self.ensure_current_char_is_printable()?;
 
         if self.input.look_ch() == '\t' {
             return Err(ScanError::new(start_mark, ErrorKind::TabAtBlockScalarStart));
@@ -2771,6 +2792,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else {
             self.skip_block_scalar_indent(indent, &mut trailing_breaks);
         }
+
+        self.ensure_current_char_is_printable()?;
 
         // We have an end-of-stream with no content, e.g.:
         // ```yaml
@@ -2820,6 +2843,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let mut line_buffer = String::with_capacity(100);
         let start_mark = self.mark;
         while self.mark.col == indent && !self.input.next_is_z() {
+            self.ensure_current_char_is_printable()?;
+
             if indent == 0 {
                 self.input.lookahead(4);
                 if self.input.next_is_document_end() {
@@ -2852,11 +2877,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 break;
             }
 
+            self.ensure_current_char_is_printable()?;
+
             self.read_break(&mut leading_break);
 
             // Eat the following indentation spaces and line breaks.
             self.skip_block_scalar_indent(indent, &mut trailing_breaks);
         }
+
+        self.ensure_current_char_is_printable()?;
 
         // Chomp the tail.
         if chomping != Chomping::Strip {
@@ -2871,6 +2900,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         if chomping == Chomping::Keep {
             string.push_str(&trailing_breaks);
+        }
+
+        if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
+            return Err(ScanError::new(
+                start_mark,
+                ErrorKind::UnexpectedCharacter { character },
+            ));
         }
 
         let span = if string.trim().is_empty() {
@@ -3061,6 +3097,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 return Err(ScanError::new(start_mark, ErrorKind::UnclosedQuotedScalar));
             }
 
+            self.ensure_current_char_is_printable()?;
+
             // Do not enforce block indentation inside quoted (flow) scalars.
             // YAML allows line breaks within quoted scalars.
             let mut leading_blanks = false;
@@ -3216,6 +3254,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Ensure there is no invalid trailing content.
         self.skip_ws_to_eol(SkipTabs::Yes)?;
+        self.ensure_current_char_is_printable()?;
         match self.input.peek() {
             // These can be encountered in flow sequences or mappings.
             ',' | '}' | ']' if self.flow_level > 0 => {}
@@ -3287,7 +3326,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         start_mark: &Marker,
     ) -> Result<(), ScanError> {
         self.input.lookahead(2);
-        while !is_blank_or_breakz(self.input.peek()) {
+        while !is_blank_or_breakz(self.input.peek()) && is_printable(self.input.peek()) {
             match self.input.peek() {
                 // Check for an escaped single quote.
                 '\'' if self.input.peek_nth(1) == '\'' && single => {
@@ -3609,6 +3648,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.leading_whitespace {
             self.allow_simple_key();
         }
+
+        if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
+            return Err(ScanError::new(
+                start_mark,
+                ErrorKind::UnexpectedCharacter { character },
+            ));
+        }
+        self.ensure_current_char_is_printable()?;
 
         if string.is_empty() {
             // `fetch_plain_scalar` must absolutely consume at least one byte. Otherwise,
@@ -4524,45 +4571,30 @@ mod test {
         }
     }
 
-    /// Ensure aliases scanned from `StrInput` are returned as `Cow::Borrowed`.
     #[test]
     fn anchor_name_rejects_non_printable_control_chars() {
         let mut scanner = Scanner::new(StrInput::new("&foo\u{0001}\n"));
 
-        loop {
-            let tok = scanner
-                .next_token()
-                .expect("scanning should not fail")
-                .expect("scanner must eventually produce a token");
-            if let TokenType::Anchor(name) = tok.1 {
-                assert!(matches!(name, Cow::Borrowed("foo")));
-                let next = scanner.next_token().expect("scanning should not fail");
-                if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
-                    assert!(rest.starts_with('\u{0001}'));
-                }
-                break;
+        scanner.next_token().unwrap();
+        assert_eq!(
+            scanner.next_token().unwrap_err().kind(),
+            ErrorKind::UnexpectedCharacter {
+                character: '\u{0001}'
             }
-        }
+        );
     }
 
     #[test]
     fn alias_name_rejects_non_printable_control_chars() {
         let mut scanner = Scanner::new(StrInput::new("*foo\u{0001}\n"));
 
-        loop {
-            let tok = scanner
-                .next_token()
-                .expect("scanning should not fail")
-                .expect("scanner must eventually produce a token");
-            if let TokenType::Alias(name) = tok.1 {
-                assert!(matches!(name, Cow::Borrowed("foo")));
-                let next = scanner.next_token().expect("scanning should not fail");
-                if let Some(Token(_, TokenType::Scalar(_, rest))) = next {
-                    assert!(rest.starts_with('\u{0001}'));
-                }
-                break;
+        scanner.next_token().unwrap();
+        assert_eq!(
+            scanner.next_token().unwrap_err().kind(),
+            ErrorKind::UnexpectedCharacter {
+                character: '\u{0001}'
             }
-        }
+        );
     }
 
     #[test]

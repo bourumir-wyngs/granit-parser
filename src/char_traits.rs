@@ -100,7 +100,7 @@ pub fn is_yaml_non_break(c: char) -> bool {
 /// Check whether the character is a YAML printable character (`c-printable`).
 #[inline]
 #[must_use]
-fn is_printable(c: char) -> bool {
+pub(crate) fn is_printable(c: char) -> bool {
     matches!(
         c as u32,
         0x0009
