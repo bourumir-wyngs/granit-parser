@@ -38,3 +38,10 @@ path = "fuzz_targets/duplicate_keys.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "directives_tags"
+path = "fuzz_targets/directives_tags.rs"
+test = false
+doc = false
+bench = false

@@ -1144,8 +1144,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     #[cold]
-    fn simple_key_expected(&self) -> ScanError {
-        ScanError::new_str(self.mark, "simple key expected")
+    fn simple_key_expected(mark: Marker) -> ScanError {
+        ScanError::new_str(mark, "simple key expected ':'")
     }
 
     #[cold]
@@ -1615,7 +1615,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             if sk.possible && (is_line_stale || is_length_stale) {
                 if sk.required {
-                    return Err(ScanError::new_str(self.mark, "simple key expect ':'"));
+                    return Err(Self::simple_key_expected(sk.mark));
                 }
                 sk.possible = false;
             }
@@ -1847,7 +1847,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // had. If one was required, however, that was an error and we must propagate it.
         for sk in &mut self.simple_keys {
             if sk.required && sk.possible {
-                return Err(self.simple_key_expected());
+                return Err(Self::simple_key_expected(sk.mark));
             }
             sk.possible = false;
         }
@@ -2570,6 +2570,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.allow_simple_key();
 
         self.skip_non_blank();
+        let end_mark = self.mark;
 
         if tok == TokenType::FlowMappingStart {
             self.flow_mapping_started.push(true);
@@ -2582,7 +2583,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
-        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, end_mark), tok));
         Ok(())
     }
 
@@ -2626,6 +2627,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
@@ -2638,7 +2640,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.adjacent_value_allowed_at = self.mark.index();
         }
 
-        self.insert_token(token_index, Token(Span::new(start_mark, self.mark), tok));
+        self.insert_token(token_index, Token(Span::new(start_mark, end_mark), tok));
         Ok(())
     }
 
@@ -2654,12 +2656,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, self.mark), TokenType::FlowEntry),
+            Token(Span::new(start_mark, end_mark), TokenType::FlowEntry),
         );
         Ok(())
     }
@@ -2699,18 +2702,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.mark,
                 "block sequence entries are not allowed in this context",
             ));
-        }
-
-        // ???, fixes test G9HC.
-        if let Some(QueuedToken(span, QueuedTokenType::Anchor(..) | QueuedTokenType::Tag(..))) =
-            self.tokens.back()
-        {
-            if self.mark.col == 0 && span.start.col == 0 && self.indent > -1 {
-                return Err(ScanError::new_str(
-                    span.start,
-                    "invalid indentation for anchor",
-                ));
-            }
         }
 
         // Skip over the `-`.
@@ -2888,13 +2879,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Chomping::Strip => String::new(),
                 // There was no newline after the chomping indicator.
                 _ if self.mark.line == start_mark.line() => String::new(),
-                // We clip lines, and there was a newline after the chomping indicator.
-                // All other breaks are ignored.
-                Chomping::Clip => chomping_break,
-                // We keep lines. There was a newline after the chomping indicator but nothing
-                // else.
-                Chomping::Keep if trailing_breaks.is_empty() => chomping_break,
-                // Otherwise, the newline after chomping is ignored.
+                // With no content lines, the header break is not scalar content.
+                Chomping::Clip => String::new(),
+                // An indented whitespace-only line at EOF is an empty content line.
+                Chomping::Keep if trailing_breaks.is_empty() && self.mark.col > 0 => chomping_break,
+                // Keep actual empty content lines, if any, but not the header break.
                 Chomping::Keep => trailing_breaks,
             };
 
@@ -3051,7 +3040,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn skip_block_scalar_indent(&mut self, indent: usize, breaks: &mut String) {
         loop {
             // Consume all spaces. Tabs cannot be used as indentation.
-            if indent < self.input.bufmaxlen() - 2 {
+            if indent < self.input.bufmaxlen().saturating_sub(2) {
                 self.input.lookahead(self.input.bufmaxlen());
                 while self.mark.col < indent && self.input.peek() == ' ' {
                     self.skip_blank();
@@ -3122,9 +3111,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // We need to set the indent to 0 and not 1. In all other cases, the indent must be at
         // least 1. When in the above example, `self.indent` will be set to -1.
         *indent = max_indent.max((self.indent + 1) as usize);
-        if self.indent > 0 {
-            *indent = (*indent).max(1);
-        }
     }
 
     fn fetch_flow_scalar(&mut self, single: bool) -> ScanResult {
@@ -3350,10 +3336,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Inside a flow context, this is allowed.
             ':' if self.flow_level > 0 => {}
             _ => {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "invalid trailing content after double-quoted scalar",
-                ));
+                let message = if single {
+                    "invalid trailing content after single-quoted scalar"
+                } else {
+                    "invalid trailing content after double-quoted scalar"
+                };
+                return Err(ScanError::new_str(self.mark, message));
             }
         }
 
@@ -3681,12 +3669,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 let mut end = false;
                 while !end {
                     // Fill the buffer once and process all characters in the buffer until the next
-                    // fetch. Note that `next_can_be_plain_scalar` needs 2 lookahead characters,
-                    // hence the `for` loop looping `self.input.bufmaxlen() - 1` times.
+                    // fetch. `next_can_be_plain_scalar` needs 2 lookahead characters, so keep one
+                    // spare slot for normal inputs while still forcing progress for very small
+                    // custom buffer lengths.
                     self.input.lookahead(self.input.bufmaxlen());
+                    let chunk_len = self.input.bufmaxlen().saturating_sub(1).max(1);
                     let (stop, chars_consumed) = self.input.fetch_plain_scalar_chunk(
                         &mut string,
-                        self.input.bufmaxlen() - 1,
+                        chunk_len,
                         self.flow_level > 0,
                     );
                     end = stop;
@@ -3807,6 +3797,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         self.skip_non_blank();
+        let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
         let stopped_after_comment = self.skip_yaml_whitespace(true)?;
@@ -3819,7 +3810,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, self.mark), TokenType::Key),
+            Token(Span::new(start_mark, end_mark), TokenType::Key),
         );
         Ok(())
     }
@@ -4064,7 +4055,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn remove_simple_key(&mut self) -> ScanResult {
         let last = self.simple_keys.last_mut().unwrap();
         if last.possible && last.required {
-            return Err(self.simple_key_expected());
+            return Err(Self::simple_key_expected(last.mark));
         }
 
         last.possible = false;
@@ -4137,8 +4128,8 @@ mod test {
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{
-            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
-            TEncoding, Token, TokenType,
+            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError,
+            Scanner, Span, TEncoding, Token, TokenType,
         },
     };
 
@@ -4229,6 +4220,64 @@ mod test {
         }
     }
 
+    struct SmallReportedBufferInput<'input> {
+        inner: StrInput<'input>,
+        reported_bufmaxlen: usize,
+    }
+
+    impl<'input> SmallReportedBufferInput<'input> {
+        fn new(source: &'input str, reported_bufmaxlen: usize) -> Self {
+            Self {
+                inner: StrInput::new(source),
+                reported_bufmaxlen,
+            }
+        }
+    }
+
+    impl Input for SmallReportedBufferInput<'_> {
+        fn lookahead(&mut self, count: usize) {
+            self.inner.lookahead(count);
+        }
+
+        fn buflen(&self) -> usize {
+            self.inner.buflen()
+        }
+
+        fn bufmaxlen(&self) -> usize {
+            self.reported_bufmaxlen
+        }
+
+        fn raw_read_ch(&mut self) -> char {
+            self.inner.raw_read_ch()
+        }
+
+        fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+            self.inner.raw_read_non_breakz_ch()
+        }
+
+        fn skip(&mut self) {
+            self.inner.skip();
+        }
+
+        fn skip_n(&mut self, count: usize) {
+            self.inner.skip_n(count);
+        }
+
+        fn peek(&self) -> char {
+            self.inner.peek()
+        }
+
+        fn peek_nth(&self, n: usize) -> char {
+            self.inner.peek_nth(n)
+        }
+    }
+
+    impl<'input> BorrowedInput<'input> for SmallReportedBufferInput<'input> {
+        fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'input str> {
+            self.inner.slice_borrowed(start, end)
+        }
+    }
+
     #[test]
     fn anchor_character_set_allows_colon_and_rejects_flow_indicators() {
         use super::is_anchor_char;
@@ -4284,6 +4333,105 @@ mod test {
             read.get() <= super::SIMPLE_KEY_MAX_LOOKAHEAD + 128,
             "scanner read {} chars before yielding the first flow scalar",
             read.get()
+        );
+    }
+
+    #[test]
+    fn block_scalar_indent_tolerates_small_reported_bufmaxlen() {
+        let mut scanner = Scanner::new(SmallReportedBufferInput::new("|\n  value\n", 0));
+
+        let scalar = scanner
+            .find_map(|token| match token {
+                Token(_, TokenType::Scalar(ScalarStyle::Literal, value)) => {
+                    Some(value.into_owned())
+                }
+                _ => None,
+            })
+            .expect("expected block scalar token");
+
+        assert_eq!(scalar, "value\n");
+    }
+
+    #[test]
+    fn plain_scalar_chunk_tolerates_small_reported_bufmaxlen() {
+        let mut scanner = Scanner::new(SmallReportedBufferInput::new("plain\n", 0));
+
+        let scalar = scanner
+            .find_map(|token| match token {
+                Token(_, TokenType::Scalar(ScalarStyle::Plain, value)) => Some(value.into_owned()),
+                _ => None,
+            })
+            .expect("expected plain scalar token");
+
+        assert_eq!(scalar, "plain");
+    }
+
+    fn first_token_slice(
+        yaml: &str,
+        matches_token: impl Fn(&TokenType<'_>) -> bool,
+    ) -> Option<String> {
+        let mut scanner = Scanner::new(StrInput::new(yaml));
+
+        loop {
+            let token = scanner
+                .next_token()
+                .expect("scanner should accept the test YAML")?;
+            if matches_token(&token.1) {
+                return token.0.slice(yaml).map(ToOwned::to_owned);
+            }
+        }
+    }
+
+    #[test]
+    fn flow_indicator_token_spans_cover_only_the_indicator() {
+        assert_eq!(
+            first_token_slice("[ # c\n  a]\n", |token| matches!(
+                token,
+                TokenType::FlowSequenceStart
+            ))
+            .as_deref(),
+            Some("[")
+        );
+        assert_eq!(
+            first_token_slice("{ # c\n  a: b}\n", |token| matches!(
+                token,
+                TokenType::FlowMappingStart
+            ))
+            .as_deref(),
+            Some("{")
+        );
+        assert_eq!(
+            first_token_slice("[a] # c\n", |token| matches!(
+                token,
+                TokenType::FlowSequenceEnd
+            ))
+            .as_deref(),
+            Some("]")
+        );
+        assert_eq!(
+            first_token_slice("{a: b} # c\n", |token| matches!(
+                token,
+                TokenType::FlowMappingEnd
+            ))
+            .as_deref(),
+            Some("}")
+        );
+        assert_eq!(
+            first_token_slice("[a, # c\nb]\n", |token| matches!(
+                token,
+                TokenType::FlowEntry
+            ))
+            .as_deref(),
+            Some(",")
+        );
+    }
+
+    #[test]
+    fn explicit_key_token_span_covers_only_the_indicator() {
+        assert_eq!(
+            first_token_slice("? # c\n: value\n", |token| matches!(token, TokenType::Key))
+                .as_deref(),
+            Some("?")
         );
     }
 
@@ -4629,6 +4777,73 @@ mod test {
     }
 
     #[test]
+    fn tag_directive_parts_are_owned_for_buffered_input() {
+        let mut scanner = Scanner::new(BufferedInput::new(
+            "%TAG !e! tag:example.com,2000:app/\n".chars(),
+        ));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+                assert!(matches!(handle, Cow::Owned(_)));
+                assert_eq!(&*handle, "!e!");
+                assert!(matches!(prefix, Cow::Owned(_)));
+                assert_eq!(&*prefix, "tag:example.com,2000:app/");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn buffered_tag_directive_decodes_prefix_escape() {
+        let mut scanner = Scanner::new(BufferedInput::new(
+            "%TAG !e! %74ag:example.com,2000:app/\n".chars(),
+        ));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+                assert_eq!(&*handle, "!e!");
+                assert!(matches!(prefix, Cow::Owned(_)));
+                assert_eq!(&*prefix, "tag:example.com,2000:app/");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn local_tag_combines_handle_text_with_escaped_suffix() {
+        let mut scanner = Scanner::new(StrInput::new("!foo%20bar value\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::Tag(handle, suffix) = tok.1 {
+                assert!(matches!(handle, Cow::Borrowed("!")));
+                assert!(matches!(suffix, Cow::Owned(_)));
+                assert_eq!(&*suffix, "foo bar");
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn secondary_tag_requires_suffix_in_borrowed_and_buffered_paths() {
+        let expected = "while parsing a tag, did not find expected tag URI";
+
+        assert_eq!(first_scanner_error_info("!! value\n"), expected);
+        assert_eq!(first_buffered_scanner_error_info("!! value\n"), expected);
+    }
+
+    #[test]
     fn plain_scalar_is_borrowed_when_whitespace_free_for_str_input() {
         let mut scanner = Scanner::new(StrInput::new("foo\n"));
 
@@ -4897,7 +5112,11 @@ mod test {
     }
 
     fn first_scanner_error_info(input: &str) -> String {
-        let mut scanner = Scanner::new(StrInput::new(input));
+        first_scanner_error(input).info().to_owned()
+    }
+
+    fn first_buffered_scanner_error_info(input: &str) -> String {
+        let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
         loop {
             match scanner.next_token() {
                 Ok(Some(_)) => {}
@@ -4907,8 +5126,30 @@ mod test {
         }
     }
 
+    fn first_scanner_error(input: &str) -> ScanError {
+        let mut scanner = Scanner::new(StrInput::new(input));
+        loop {
+            match scanner.next_token() {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("expected scanner error"),
+                Err(error) => return error,
+            }
+        }
+    }
+
     fn first_scalar_value(input: &str) -> String {
         let mut scanner = Scanner::new(StrInput::new(input));
+        loop {
+            match scanner.next_token().expect("scanner should not error") {
+                Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
+                Some(_) => {}
+                None => panic!("expected scalar token"),
+            }
+        }
+    }
+
+    fn first_buffered_scalar_value(input: &str) -> String {
+        let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
         loop {
             match scanner.next_token().expect("scanner should not error") {
                 Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
@@ -4990,6 +5231,10 @@ mod test {
     fn tag_directive_handle_must_start_with_bang() {
         assert_eq!(
             first_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
+            "while scanning a tag, did not find expected '!'"
+        );
+        assert_eq!(
+            first_buffered_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
             "while scanning a tag, did not find expected '!'"
         );
     }
@@ -5166,8 +5411,19 @@ mod test {
 
     #[test]
     fn empty_block_scalar_at_eof_honors_chomping() {
+        assert_eq!(first_scalar_value("|\n"), "");
         assert_eq!(first_scalar_value("|-\n"), "");
-        assert_eq!(first_scalar_value("|+\n"), "\n");
+        assert_eq!(first_scalar_value("|+\n"), "");
+        assert_eq!(first_scalar_value("|+\n\n"), "\n");
+        assert_eq!(first_scalar_value("|+\n   "), "\n");
+    }
+
+    #[test]
+    fn buffered_block_scalar_reads_content_past_lookahead_window() {
+        assert_eq!(
+            first_buffered_scalar_value("|\n  abcdefghijklmnopqrstuvwxyz\n"),
+            "abcdefghijklmnopqrstuvwxyz\n"
+        );
     }
 
     #[test]
@@ -5208,6 +5464,38 @@ mod test {
     }
 
     #[test]
+    fn quoted_scalar_trailing_content_error_names_quote_style() {
+        assert_eq!(
+            first_scanner_error_info("'foo' trailing\n"),
+            "invalid trailing content after single-quoted scalar"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"foo\" trailing\n"),
+            "invalid trailing content after double-quoted scalar"
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_escape_errors_cover_hex_and_surrogate_edges() {
+        assert_eq!(
+            first_scanner_error_info("\"\\xG0\"\n"),
+            "while parsing a quoted scalar, did not find expected hexadecimal number"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\uD800\\uGGGG\"\n"),
+            "while parsing a quoted scalar, did not find expected hexadecimal number for low surrogate"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\uD800\\u0041\"\n"),
+            "while parsing a quoted scalar, found invalid low surrogate"
+        );
+        assert_eq!(
+            first_scanner_error_info("\"\\U00110000\"\n"),
+            "while parsing a quoted scalar, found invalid Unicode character escape code"
+        );
+    }
+
+    #[test]
     fn indented_flow_scalar_reports_invalid_indentation() {
         assert_eq!(
             first_scanner_error_info("a:\n  [\nfoo]\n"),
@@ -5217,9 +5505,15 @@ mod test {
 
     #[test]
     fn required_simple_key_requires_value_at_stream_end() {
+        let error = first_scanner_error("a:\n&b\n- c\n");
+
+        assert_eq!(error.info(), "simple key expected ':'");
+        assert_eq!(error.marker().index(), 3);
+        assert_eq!(error.marker().line(), 2);
+        assert_eq!(error.marker().col(), 0);
         assert_eq!(
-            first_scanner_error_info("a:\n&b\n- c\n"),
-            "simple key expect ':'"
+            alloc::format!("{error}"),
+            "simple key expected ':' at char 3 line 2 column 1"
         );
     }
 

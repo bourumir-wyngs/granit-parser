@@ -162,6 +162,7 @@ where
 {
     parsers: Vec<AnyParser<'input, I, T>>,
     current: Option<(Event<'input>, Span)>,
+    current_error: Option<ScanError>,
     stream_end_emitted: bool,
     #[allow(clippy::type_complexity)]
     include_resolver: Option<Box<dyn FnMut(&str) -> Result<String, ScanError> + 'input>>,
@@ -178,6 +179,7 @@ where
         Self {
             parsers: Vec::new(),
             current: None,
+            current_error: None,
             stream_end_emitted: false,
             include_resolver: None,
         }
@@ -240,11 +242,19 @@ where
         self.resolve(include_name)
     }
 
+    fn prepare_for_push(&mut self) {
+        if matches!(self.current.as_ref(), Some((Event::StreamEnd, _))) {
+            self.current = None;
+        }
+        self.stream_end_emitted = false;
+    }
+
     /// Push a string parser onto the stack.
     ///
     /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
     /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_str_parser(&mut self, mut parser: Parser<'input, StrInput<'input>>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -260,6 +270,7 @@ where
         mut parser: Parser<'static, BufferedInput<I>>,
         name: String,
     ) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -271,6 +282,7 @@ where
     /// The pushed parser inherits the current anchor offset so anchors remain unique across stacked
     /// sources. `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_custom_parser(&mut self, mut parser: Parser<'input, T>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -282,6 +294,7 @@ where
     /// Replay parsers are used for included content that has already been parsed into events.
     /// `name` is returned by [`Self::stack`] for diagnostics.
     pub fn push_replay_parser(&mut self, mut parser: ReplayParser<'input>, name: String) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             let inherited = parent.get_anchor_offset();
             parser.set_anchor_offset(parser.get_anchor_offset().max(inherited));
@@ -300,6 +313,7 @@ where
         name: String,
         current: (Event<'input>, Span),
     ) {
+        self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.get_anchor_offset());
         }
@@ -334,6 +348,11 @@ where
         }
     }
 
+    fn pop_parser_and_propagate_anchor_offset(&mut self) {
+        let popped = self.parsers.pop().unwrap();
+        self.propagate_anchor_offset_from_popped(&popped);
+    }
+
     fn next_event_impl(&mut self) -> Result<(Event<'input>, Span), ScanError> {
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
@@ -356,8 +375,7 @@ where
                         self.parsers.pop();
                         return Ok((Event::StreamEnd, span));
                     }
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                 }
                 None => {
                     if self.parsers.len() == 1 {
@@ -367,12 +385,10 @@ where
                             Span::empty(crate::scanner::Marker::new(0, 1, 0)),
                         ));
                     }
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                 }
                 Some(Err(e)) => {
-                    let popped = self.parsers.pop().unwrap();
-                    self.propagate_anchor_offset_from_popped(&popped);
+                    self.pop_parser_and_propagate_anchor_offset();
                     return e.into_result();
                 }
                 Some(Ok((Event::DocumentEnd, span))) => {
@@ -390,14 +406,18 @@ where
 
                     match peek_res {
                         Some(Ok((Event::StreamEnd, _))) | None => {
-                            let popped = self.parsers.pop().unwrap();
-                            self.propagate_anchor_offset_from_popped(&popped);
+                            self.pop_parser_and_propagate_anchor_offset();
                         }
-                        _ => {
+                        Some(Ok(_)) => {
+                            self.pop_parser_and_propagate_anchor_offset();
                             return Err(ScanError::new_str(
                                 span.start,
                                 "multiple documents not supported here",
                             ));
+                        }
+                        Some(Err(e)) => {
+                            self.pop_parser_and_propagate_anchor_offset();
+                            return Err(e);
                         }
                     }
                 }
@@ -432,6 +452,8 @@ where
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
         if let Some(ref x) = self.current {
             Some(Ok(x))
+        } else if let Some(error) = &self.current_error {
+            Some(Err(error.clone()))
         } else {
             if self.stream_end_emitted {
                 return None;
@@ -441,12 +463,20 @@ where
                     self.current = Some(token);
                     Some(Ok(self.current.as_ref().unwrap()))
                 }
-                Err(e) => Some(e.into_result()),
+                Err(e) => {
+                    self.current_error = Some(e.clone());
+                    Some(Err(e))
+                }
             }
         }
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        if let Some(error) = self.current_error.take() {
+            self.stream_end_emitted = true;
+            return Some(Err(error));
+        }
+
         if let Some(token) = self.current.take() {
             if let Event::StreamEnd = token.0 {
                 self.stream_end_emitted = true;
@@ -463,7 +493,10 @@ where
                 }
                 Some(Ok(token))
             }
-            Err(e) => Some(e.into_result()),
+            Err(e) => {
+                self.stream_end_emitted = true;
+                Some(Err(e))
+            }
         }
     }
 

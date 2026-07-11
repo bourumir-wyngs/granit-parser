@@ -457,9 +457,15 @@ impl<'input> Event<'input> {
         Event::Scalar("~".into(), ScalarStyle::Plain, 0, None)
     }
 
-    /// Create an empty scalar with the given anchor.
+    /// Create an empty scalar with the given node properties.
     fn empty_scalar_with_anchor(anchor: usize, tag: Option<Cow<'input, Tag>>) -> Self {
-        Event::Scalar(Cow::default(), ScalarStyle::Plain, anchor, tag)
+        let value = if tag.is_some() {
+            Cow::default()
+        } else {
+            "~".into()
+        };
+
+        Event::Scalar(value, ScalarStyle::Plain, anchor, tag)
     }
 }
 
@@ -483,6 +489,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     token: Option<QueuedToken<'input>>,
     /// The next YAML event to emit.
     current: Option<(Event<'input>, Span)>,
+    /// The next parser error to emit after it has been observed by `peek`.
+    current_error: Option<ScanError>,
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
     queued_events: VecDeque<(Event<'input>, Span)>,
 
@@ -498,8 +506,12 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_tag: Option<Cow<'input, Tag>>,
     /// Pending explicit tag token start to attach to a node after an intervening comment.
     pending_node_tag_start: Option<Marker>,
+    /// Pending end marker of the last node-property token before an intervening comment.
+    pending_node_property_end: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
+    /// End marker of the most recently produced event.
+    last_event_end: Option<Marker>,
     /// Pending YAML version captured before comments preceding an explicit document start.
     pending_document_version: Option<YamlVersion>,
     /// Whether document directives were already initialized before comments preceding `---`.
@@ -517,10 +529,11 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     ///
     /// Key is the handle, and value is the prefix.
     tags: BTreeMap<String, String>,
-    /// Whether we have emitted [`Event::StreamEnd`].
+    /// Whether we have emitted a terminal iterator result.
     ///
-    /// Emitted means that it has been returned from [`Self::next`]. If it is stored in
-    /// [`Self::token`], this is set to `false`.
+    /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
+    /// been returned from [`Self::next_event`] or [`Self::next`]. If the terminal result is stored
+    /// in [`Self::current`] or [`Self::current_error`], this is set to `false`.
     stream_end_emitted: bool,
     /// Make tags global across all documents.
     keep_tags: bool,
@@ -856,13 +869,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             state: State::StreamStart,
             token: None,
             current: None,
+            current_error: None,
             queued_events: VecDeque::new(),
 
             pending_key_indent: None,
             pending_node_anchor_id: 0,
             pending_node_tag: None,
             pending_node_tag_start: None,
+            pending_node_property_end: None,
             pending_empty_scalar_span: None,
+            last_event_end: None,
             pending_document_version: None,
             pending_document_directives: false,
             pending_document_tag_handles: BTreeSet::new(),
@@ -908,6 +924,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// Any subsequent call to [`Parser::peek`] will return the same value, until a call to
     /// [`Iterator::next`] or [`Parser::load`].
+    /// If the buffered value is a [`ScanError`], [`Parser::next_event`] returns that error once
+    /// and then the parser is exhausted.
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
@@ -916,6 +934,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     }
 
     /// Try to load the next event and return it, consuming it from `self`.
+    ///
+    /// After this returns a [`ScanError`], subsequent calls return [`None`].
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
@@ -932,7 +952,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        match self.current.take() {
+        let event = match self.current.take() {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
@@ -943,7 +963,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             Some(v) => Ok(v),
-        }
+        }?;
+
+        Ok(self.remember_event_end(event))
     }
 
     fn apply_pending_key_indent<'a>(&mut self, (ev, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
@@ -954,6 +976,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
 
         (ev, span)
+    }
+
+    fn remember_event_end<'a>(&mut self, (event, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
+        self.last_event_end = Some(span.end);
+        (event, span)
     }
 
     /// Peek at the next token from the scanner.
@@ -1320,98 +1347,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ParserTrait::try_load(self, recv, multi)
     }
 
-    #[cfg(test)]
-    fn try_load_document<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        first_ev: Event<'input>,
-        span: Span,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        if !matches!(first_ev, Event::DocumentStart(..)) {
-            return Err(TryLoadError::scan(ScanError::new_str(
-                span.start,
-                "did not find expected <document-start>",
-            )));
-        }
-        try_emit(recv, first_ev, span)?;
-
-        let (ev, span) = self.next_event_impl()?;
-        self.try_load_node(ev, span, recv)?;
-
-        // DOCUMENT-END is expected.
-        let (ev, mark) = self.next_event_impl()?;
-        assert_eq!(ev, Event::DocumentEnd);
-        try_emit(recv, ev, mark)?;
-
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn try_load_node<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        first_ev: Event<'input>,
-        span: Span,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        match first_ev {
-            Event::Alias(..) | Event::Scalar(..) => try_emit(recv, first_ev, span),
-            Event::SequenceStart(..) => {
-                try_emit(recv, first_ev, span)?;
-                self.try_load_sequence(recv)
-            }
-            Event::MappingStart(..) => {
-                try_emit(recv, first_ev, span)?;
-                self.try_load_mapping(recv)
-            }
-            _ => {
-                #[cfg(feature = "debug_prints")]
-                std::println!("UNREACHABLE EVENT: {first_ev:?}");
-                unreachable!();
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn try_load_mapping<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        let (mut key_ev, mut key_mark) = self.next_event_impl()?;
-        while key_ev != Event::MappingEnd {
-            // key
-            self.try_load_node(key_ev, key_mark, recv)?;
-
-            // value
-            let (ev, mark) = self.next_event_impl()?;
-            self.try_load_node(ev, mark, recv)?;
-
-            // next event
-            let (ev, mark) = self.next_event_impl()?;
-            key_ev = ev;
-            key_mark = mark;
-        }
-        try_emit(recv, key_ev, key_mark)?;
-        Ok(())
-    }
-
-    #[cfg(test)]
-    fn try_load_sequence<R: TrySpannedEventReceiver<'input>>(
-        &mut self,
-        recv: &mut R,
-    ) -> Result<(), TryLoadError<R::Error>> {
-        let (mut ev, mut mark) = self.next_event_impl()?;
-        while ev != Event::SequenceEnd {
-            self.try_load_node(ev, mark, recv)?;
-
-            // next event
-            let (next_ev, next_mark) = self.next_event_impl()?;
-            ev = next_ev;
-            mark = next_mark;
-        }
-        try_emit(recv, ev, mark)?;
-        Ok(())
-    }
-
     fn state_machine<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -1481,6 +1416,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    fn has_pending_document_directives(&self) -> bool {
+        self.pending_document_directives
+            || self.pending_document_version.is_some()
+            || !self.pending_document_tag_handles.is_empty()
+    }
+
     fn document_start<'a>(&mut self, implicit: bool) -> ParseResult<'a>
     where
         'input: 'a,
@@ -1491,6 +1432,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         // Anchors are scoped to a single document.
         self.anchors.clear();
+
+        if self.has_pending_document_directives() {
+            return self.explicit_document_start();
+        }
 
         match *self.peek_token()? {
             QueuedToken(span, QueuedTokenType::StreamEnd) => {
@@ -1536,13 +1481,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         loop {
             match self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
-                    // YAML version compatibility is non-fatal here. The scanner validates the
-                    // directive shape, and the parser rejects duplicates below, but it does not
-                    // expose a warning channel for unsupported versions.
                     if version.is_some() {
                         return Err(ScanError::new_str(
                             span.start,
                             "duplicate version directive",
+                        ));
+                    }
+                    if *major != 1 {
+                        return Err(ScanError::new_str(
+                            span.start,
+                            "unsupported YAML major version",
                         ));
                     }
                     version = Some(YamlVersion::new(*major, *minor));
@@ -1612,8 +1560,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.pop_state();
-            // empty scalar
-            Ok((Event::empty_scalar(), mark))
+            let span = self
+                .last_event_end
+                .map_or_else(|| Span::empty(mark.start), Span::empty);
+            Ok((Event::empty_scalar(), span))
         } else {
             self.state = State::BlockNode;
             self.parse_node(true, false)
@@ -1631,7 +1581,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 span
             }
-            QueuedToken(span, _) => span,
+            QueuedToken(span, _) => self
+                .last_event_end
+                .map_or_else(|| Span::empty(span.start), Span::empty),
         };
 
         if self.keep_tags {
@@ -1639,7 +1591,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // or `%TAG ! ...` to leak into following documents lets earlier documents alter how
             // explicit tags are interpreted later on.
             self.tags.remove("!!");
-            self.tags.remove("");
+            self.tags.remove("!");
         } else {
             self.tags.clear();
         }
@@ -1682,10 +1634,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         anchor_id: usize,
         tag: Option<Cow<'input, Tag>>,
         tag_start: Option<Marker>,
+        property_end: Option<Marker>,
     ) {
         self.pending_node_anchor_id = anchor_id;
         self.pending_node_tag = tag;
         self.pending_node_tag_start = tag_start;
+        self.pending_node_property_end = property_end;
     }
 
     fn attach_tag_start(event: Event<'_>, span: Span, start: Option<Marker>) -> (Event<'_>, Span) {
@@ -1704,6 +1658,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
         let mut tag = self.pending_node_tag.take();
         let mut tag_start = self.pending_node_tag_start.take();
+        let mut property_end = self.pending_node_property_end.take();
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
@@ -1723,18 +1678,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(_, QueuedTokenType::Anchor(_)) => {
                 if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
                     anchor_id = self.register_anchor(name, &span)?;
+                    property_end = Some(span.end);
                     if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
                         if let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
                             self.fetch_token()
                         {
                             tag_start = Some(tag_span.start);
                             tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
+                            property_end = Some(tag_span.end);
                         } else {
                             unreachable!()
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                         return Ok(comment);
                     }
                 } else {
@@ -1744,17 +1701,19 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(mark, QueuedTokenType::Tag(..)) => {
                 if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
                     tag_start = Some(mark.start);
+                    property_end = Some(mark.end);
                     tag = Some(self.resolve_tag(mark, &handle, suffix)?);
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
                         {
                             anchor_id = self.register_anchor(name, &mark)?;
+                            property_end = Some(mark.end);
                         } else {
                             unreachable!()
                         }
                     }
                     if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start);
+                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                         return Ok(comment);
                     }
                 } else {
@@ -1846,9 +1805,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // ex 7.2, an empty scalar can follow a secondary tag
             QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
                 self.pop_state();
+                let span = property_end.map_or_else(|| Span::empty(mark.start), Span::empty);
                 Ok(Self::attach_tag_start(
                     Event::empty_scalar_with_anchor(anchor_id, tag),
-                    mark,
+                    span,
                     tag_start,
                 ))
             }
@@ -1902,7 +1862,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             // A missing block-mapping key before `:` is represented as an empty scalar.
             QueuedToken(mark, QueuedTokenType::Value) => {
                 self.state = State::BlockMappingValue;
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
             QueuedToken(mark, QueuedTokenType::BlockEnd) => {
                 self.pop_state();
@@ -1926,7 +1886,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.state = State::BlockMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(
                 State::BlockNodeOrIndentlessSequence,
@@ -1962,8 +1922,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, _) => {
                 self.state = State::BlockMappingKey;
-                // empty scalar
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
         }
     }
@@ -1974,7 +1933,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.block_mapping_value_node_with_empty_span(mark)
     }
@@ -2037,7 +1996,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     }
                     QueuedToken(marker, QueuedTokenType::Value) => {
                         self.state = State::FlowMappingValue;
-                        return Ok((Event::empty_scalar(), marker));
+                        return Ok((Event::empty_scalar(), Span::empty(marker.start)));
                     }
                     QueuedToken(_, QueuedTokenType::FlowMappingEnd) => (),
                     _ => {
@@ -2068,7 +2027,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         ) = *self.peek_token()?
         {
             self.state = State::FlowMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(State::FlowNode, State::FlowMappingValue, false, false)
         }
@@ -2082,7 +2041,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             if empty {
                 let QueuedToken(mark, _) = *self.peek_token()?;
                 self.state = State::FlowMappingKey;
-                return Ok((Event::empty_scalar(), mark));
+                return Ok((Event::empty_scalar(), Span::empty(mark.start)));
             }
             match *self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::Value) => {
@@ -2106,7 +2065,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.state = State::FlowMappingValueNode;
                     return Ok(self.queue_tail_and_return_first(comments));
                 }
-                QueuedToken(marker, _) => marker,
+                QueuedToken(marker, _) => Span::empty(marker.start),
             }
         };
 
@@ -2217,7 +2176,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.indentless_sequence_entry_node_with_empty_span(mark)
     }
@@ -2287,7 +2246,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let mark = match self.pending_empty_scalar_span.take() {
             Some(mark) => mark,
-            None => self.peek_token()?.0,
+            None => Span::empty(self.peek_token()?.0.start),
         };
         self.block_sequence_entry_node_with_empty_span(mark)
     }
@@ -2314,7 +2273,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             *self.peek_token()?
         {
             self.state = State::FlowSequenceEntryMappingValue;
-            Ok((Event::empty_scalar(), mark))
+            Ok((Event::empty_scalar(), Span::empty(mark.start)))
         } else {
             self.defer_parse_node(
                 State::FlowNode,
@@ -2341,7 +2300,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, _) => {
                 self.state = State::FlowSequenceEntryMappingEnd;
-                Ok((Event::empty_scalar(), mark))
+                Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
         }
     }
@@ -2398,7 +2357,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             )
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
-            match self.tags.get("") {
+            match self.tags.get("!") {
                 Some(prefix) => Tag::with_original_handle(prefix.clone(), suffix, original_handle),
                 None => Tag::with_original_handle(String::new(), suffix, original_handle),
             }
@@ -2426,25 +2385,35 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
         if let Some(ref x) = self.current {
             Some(Ok(x))
+        } else if let Some(error) = &self.current_error {
+            Some(Err(error.clone()))
         } else {
             if self.stream_end_emitted {
                 return None;
             }
             match self.next_event_impl() {
                 Ok(token) => self.current = Some(token),
-                Err(e) => return Some(e.into_result()),
+                Err(error) => {
+                    self.current_error = Some(error.clone());
+                    return Some(Err(error));
+                }
             }
             self.current.as_ref().map(Ok)
         }
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
+        if let Some(error) = self.current_error.take() {
+            self.stream_end_emitted = true;
+            return Some(Err(error));
+        }
+
         if self.stream_end_emitted {
             return None;
         }
 
         let tok = self.next_event_impl();
-        if matches!(tok, Ok((Event::StreamEnd, _))) {
+        if matches!(tok, Ok((Event::StreamEnd, _)) | Err(_)) {
             self.stream_end_emitted = true;
         }
         Some(tok)
@@ -2476,21 +2445,31 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
             try_emit(recv, ev, span)?;
         }
 
-        if self.scanner.stream_ended() {
+        let has_buffered_result = self.current.is_some()
+            || self.current_error.is_some()
+            || !self.queued_events.is_empty();
+        if self.scanner.stream_ended() && !has_buffered_result {
             // The scanner has already reached EOF before the document loop, so emit the terminal
             // event and stop.
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
+            self.stream_end_emitted = true;
             return Ok(());
         }
 
         loop {
-            let (ev, span) = self.next_event_impl()?;
+            let (ev, span) = if let Some(error) = self.current_error.take() {
+                self.stream_end_emitted = true;
+                return Err(TryLoadError::scan(error));
+            } else {
+                self.next_event_impl()?
+            };
             let is_doc_end = matches!(ev, Event::DocumentEnd);
             let is_stream_end = matches!(ev, Event::StreamEnd);
 
             try_emit(recv, ev, span)?;
 
             if is_stream_end {
+                self.stream_end_emitted = true;
                 return Ok(());
             }
             if !multi && is_doc_end {
@@ -2929,6 +2908,101 @@ a5: *x
     }
 
     #[test]
+    fn test_iterator_terminates_after_scan_error() {
+        let parser = Parser::new_from_str("foo:\n  bar\ninvalid\n");
+        let mut errors = 0usize;
+        let mut events = 0usize;
+
+        for item in parser {
+            events += 1;
+            if item.is_err() {
+                errors += 1;
+            }
+            assert!(
+                events < 1000,
+                "parser iterator did not terminate after a scan error"
+            );
+        }
+
+        assert_eq!(errors, 1);
+    }
+
+    #[test]
+    fn test_iterator_terminates_after_node_property_error() {
+        let parser = Parser::new_from_str("- *nope\n- 2\n");
+        let mut errors = 0usize;
+        let mut saw_later_node = false;
+        let mut events = 0usize;
+
+        for item in parser {
+            events += 1;
+            match item {
+                Ok((Event::Scalar(value, ..), _)) if value == "2" => saw_later_node = true,
+                Ok(_) => {}
+                Err(error) => {
+                    assert_eq!(error.info(), "while parsing node, found unknown anchor");
+                    errors += 1;
+                }
+            }
+            assert!(
+                events < 1000,
+                "parser iterator did not terminate after a node-property error"
+            );
+        }
+
+        assert_eq!(errors, 1);
+        assert!(!saw_later_node, "parser resumed after the alias error");
+    }
+
+    #[test]
+    fn test_peeked_scan_error_is_returned_once_by_next_event() {
+        let mut parser = Parser::new_from_str("a: [1, 2");
+
+        let first_error = loop {
+            match parser.peek() {
+                Some(Ok(_)) => {
+                    parser.next_event().unwrap().unwrap();
+                }
+                Some(Err(error)) => break error,
+                None => panic!("expected parse error"),
+            }
+        };
+        let Some(Err(second_error)) = parser.peek() else {
+            panic!("expected cached parse error");
+        };
+
+        assert_eq!(first_error, second_error);
+        assert_eq!(parser.next_event().unwrap().unwrap_err(), first_error);
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
+    fn test_peeked_node_property_error_is_stable_and_terminal() {
+        let mut parser = Parser::new_from_str("a: *nope\nb: 2\n");
+
+        for _ in 0..4 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        let Some(Err(first_error)) = parser.peek() else {
+            panic!("expected unknown alias error");
+        };
+        let Some(Err(second_error)) = parser.peek() else {
+            panic!("expected cached unknown alias error");
+        };
+
+        assert_eq!(first_error, second_error);
+        assert_eq!(
+            first_error.info(),
+            "while parsing node, found unknown anchor"
+        );
+        assert_eq!(parser.next_event().unwrap().unwrap_err(), first_error);
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
     fn test_peek_and_next_return_none_after_stream_end() {
         let mut parser = Parser::new_from_str("");
 
@@ -2953,6 +3027,34 @@ a5: *x
         parser.load(&mut sink, true).unwrap();
 
         assert_eq!(sink.events, vec![Event::StreamEnd]);
+    }
+
+    #[test]
+    fn test_load_full_stream_fuses_iterator_after_stream_end() {
+        let mut parser = Parser::new_from_str("a: 1\n");
+        let mut sink = CollectingSink::default();
+
+        parser.load(&mut sink, true).unwrap();
+
+        assert!(matches!(sink.events.last(), Some(Event::StreamEnd)));
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
+    fn test_load_after_peek_delivers_buffered_document_end_before_stream_end() {
+        let mut parser = Parser::new_from_str("a");
+        for _ in 0..3 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::DocumentEnd);
+
+        let mut sink = CollectingSink::default();
+        parser.load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::DocumentEnd, Event::StreamEnd]);
+        assert!(parser.next_event().is_none());
     }
 
     #[test]
@@ -3115,26 +3217,6 @@ a5: *x
     }
 
     #[test]
-    fn test_try_load_document_rejects_non_document_start_event() {
-        let mut parser = Parser::new_from_str("");
-        let span = Span::empty(Marker::new(0, 1, 0));
-        let mut sink = NeverFails { count: 0 };
-
-        let err = parser
-            .try_load_document(
-                Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
-                span,
-                &mut sink,
-            )
-            .unwrap_err();
-
-        let TryLoadError::Scan(err) = err else {
-            panic!("expected scan error");
-        };
-        assert_eq!(err.info(), "did not find expected <document-start>");
-    }
-
-    #[test]
     fn test_try_load_requires_buffered_stream_start() {
         let mut parser = Parser::new_from_str("");
         let span = Span::empty(Marker::new(0, 1, 0));
@@ -3164,6 +3246,34 @@ a5: *x
     }
 
     #[test]
+    fn test_try_load_full_stream_fuses_iterator_after_stream_end() {
+        let mut parser = Parser::new_from_str("a: 1\n");
+        let mut sink = FailingSink { events: Vec::new() };
+
+        parser.try_load(&mut sink, true).unwrap();
+
+        assert!(matches!(sink.events.last(), Some(Event::StreamEnd)));
+        assert!(parser.next_event().is_none());
+        assert!(parser.peek().is_none());
+    }
+
+    #[test]
+    fn test_try_load_after_peek_delivers_buffered_document_end_before_stream_end() {
+        let mut parser = Parser::new_from_str("a");
+        for _ in 0..3 {
+            parser.next_event().unwrap().unwrap();
+        }
+
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::DocumentEnd);
+
+        let mut sink = FailingSink { events: Vec::new() };
+        parser.try_load(&mut sink, true).unwrap();
+
+        assert_eq!(sink.events, vec![Event::DocumentEnd, Event::StreamEnd]);
+        assert!(parser.next_event().is_none());
+    }
+
+    #[test]
     fn test_load_single_document_stops_before_next_document() {
         let mut parser = Parser::new_from_str("a: 1\n---\nb: 2\n");
         let mut sink = CollectingSink::default();
@@ -3190,6 +3300,14 @@ a5: *x
     }
 
     #[test]
+    fn test_unsupported_yaml_major_version_errors() {
+        assert_eq!(
+            first_error_info("%YAML 9.9\n--- a\n"),
+            "unsupported YAML major version"
+        );
+    }
+
+    #[test]
     fn test_document_start_emits_yaml_version() {
         let events = Parser::new_from_str("%YAML 1.2\n---\nvalue\n")
             .map(|event| event.unwrap().0)
@@ -3200,6 +3318,21 @@ a5: *x
             Some(Event::DocumentStart(
                 true,
                 Some(YamlVersion { major: 1, minor: 2 })
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_document_start_allows_supported_major_future_minor_version() {
+        let events = Parser::new_from_str("%YAML 1.9\n---\nvalue\n")
+            .map(|event| event.unwrap().0)
+            .collect::<Vec<_>>();
+
+        assert!(matches!(
+            events.get(1),
+            Some(Event::DocumentStart(
+                true,
+                Some(YamlVersion { major: 1, minor: 9 })
             ))
         ));
     }
@@ -3555,11 +3688,28 @@ baz: "qux"
     }
 
     #[test]
+    fn test_keep_tags_does_not_persist_primary_tag_handle() {
+        let text = "%TAG ! tag:evil,2024:\n--- !int 1\n--- !int 2\n";
+
+        let tags = Parser::new_from_str(text)
+            .keep_tags(true)
+            .filter_map(|event| match event.expect("input should parse").0 {
+                Event::Scalar(_, _, _, Some(tag)) if tag.suffix == "int" => {
+                    Some(tag.handle.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(tags, vec!["tag:evil,2024:", "!"]);
+    }
+
+    #[test]
     fn test_resolve_tag_uses_overridden_local_prefix() {
         let mut parser = Parser::new_from_str("");
         parser
             .tags
-            .insert(String::new(), "tag:local.example,2024:".to_string());
+            .insert("!".to_string(), "tag:local.example,2024:".to_string());
 
         let tag = parser
             .resolve_tag(

@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScalarStyle};
+use granit_parser::{Event, Parser, ScalarStyle, StructureStyle};
 
 fn scalar_value<'a>(ev: &'a Event<'_>) -> Option<&'a str> {
     match ev {
@@ -17,6 +17,10 @@ fn block_scalar_indents(yaml: &str) -> Vec<(String, Option<usize>)> {
             _ => None,
         })
         .collect()
+}
+
+fn first_error_info(yaml: &str) -> Option<String> {
+    Parser::new_from_str(yaml).find_map(|event| event.err().map(|err| err.info().to_owned()))
 }
 
 #[test]
@@ -108,4 +112,52 @@ fn indentation_is_not_reported_for_whitespace_only_block_scalar_content() {
     let yaml = "key: |+\n  \n";
 
     assert_eq!(block_scalar_indents(yaml), vec![("\n".to_string(), None)]);
+}
+
+#[test]
+fn root_block_sequence_can_have_anchor_on_previous_line() {
+    let yaml = "&anchor\n- a\n- b\n";
+    let events = Parser::new_from_str(yaml)
+        .map(|event| event.expect("valid yaml").0)
+        .collect::<Vec<_>>();
+
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::SequenceStart(StructureStyle::Block, 1, None))));
+}
+
+#[test]
+fn indented_mapping_value_sequence_can_have_anchor_and_comment_on_previous_lines() {
+    let yaml = "seq:\n  &anchor\n  # c\n  - a\n  - b\n";
+    let events = Parser::new_from_str(yaml)
+        .map(|event| event.expect("valid yaml").0)
+        .collect::<Vec<_>>();
+
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::SequenceStart(StructureStyle::Block, 1, None))));
+}
+
+#[test]
+fn unindented_mapping_value_sequence_after_anchor_is_rejected() {
+    assert_eq!(
+        first_error_info("seq:\n&anchor\n- a\n- b\n").as_deref(),
+        Some("simple key expected ':'")
+    );
+}
+
+#[test]
+fn unindented_mapping_value_sequence_after_anchor_comment_is_rejected() {
+    assert_eq!(
+        first_error_info("seq:\n&anchor\n# c\n- a\n- b\n").as_deref(),
+        Some("simple key expected ':'")
+    );
+}
+
+#[test]
+fn unindented_mapping_value_sequence_after_tag_comment_is_rejected() {
+    assert_eq!(
+        first_error_info("seq:\n!tag\n# c\n- a\n- b\n").as_deref(),
+        Some("simple key expected ':'")
+    );
 }

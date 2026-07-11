@@ -62,6 +62,18 @@ fn deref_pairs(pairs: &[(String, String)]) -> Vec<(&str, &str)> {
         .collect()
 }
 
+fn first_event_slice(yaml: &str, matches_event: impl Fn(&Event<'_>) -> bool) -> Option<String> {
+    Parser::new_from_str(yaml)
+        .filter_map(Result::ok)
+        .find_map(|(event, span)| {
+            matches_event(&event).then(|| span.slice(yaml).map(str::to_owned))?
+        })
+}
+
+fn event_spans(yaml: &str) -> Vec<(Event<'_>, granit_parser::Span)> {
+    Parser::new_from_str(yaml).map(Result::unwrap).collect()
+}
+
 #[test]
 fn span_helpers_report_length_empty_and_byte_range() {
     let span = granit_parser::Span::new(
@@ -80,6 +92,34 @@ fn span_helpers_report_length_empty_and_byte_range() {
 
     let without_byte_offsets = granit_parser::Span::new(Marker::new(0, 1, 0), Marker::new(1, 1, 1));
     assert_eq!(without_byte_offsets.byte_range(), None);
+}
+
+#[test]
+fn flow_collection_event_spans_cover_only_the_indicators() {
+    assert_eq!(
+        first_event_slice("[ # c\n  a]\n", |event| matches!(
+            event,
+            Event::SequenceStart(..)
+        ))
+        .as_deref(),
+        Some("[")
+    );
+    assert_eq!(
+        first_event_slice("[a] # c\n", |event| matches!(event, Event::SequenceEnd)).as_deref(),
+        Some("]")
+    );
+    assert_eq!(
+        first_event_slice("{ # c\n  a: b}\n", |event| matches!(
+            event,
+            Event::MappingStart(..)
+        ))
+        .as_deref(),
+        Some("{")
+    );
+    assert_eq!(
+        first_event_slice("{a: b} # c\n", |event| matches!(event, Event::MappingEnd)).as_deref(),
+        Some("}")
+    );
 }
 
 #[test]
@@ -211,6 +251,67 @@ fn span_slice_handles_empty_spans() {
     let empty = granit_parser::Span::empty(Marker::new(4, 1, 4).with_byte_offset(Some(4)));
 
     assert_eq!(empty.slice(source), Some(""));
+}
+
+#[test]
+fn tagged_empty_scalar_span_stays_at_tag_end() {
+    let yaml = "a: !!str\nb: c\n";
+    let events = event_spans(yaml);
+    let (_event, span) = events
+        .iter()
+        .find(|(event, _span)| {
+            matches!(
+                event,
+                Event::Scalar(value, _, _, Some(tag))
+                    if value.is_empty() && tag.suffix == "str"
+            )
+        })
+        .expect("expected tagged empty scalar");
+
+    let tag_end = yaml.find('\n').unwrap();
+    let next_key = yaml.find("b:").unwrap();
+
+    assert_eq!(span.start.index(), tag_end);
+    assert_eq!(span.end.index(), tag_end);
+    assert_ne!(span.start.index(), next_key);
+    assert_eq!(span.slice(yaml), Some(""));
+}
+
+#[test]
+fn implicit_document_end_span_stays_at_previous_document_end() {
+    let yaml = "foo\n--- bar\n";
+    let events = event_spans(yaml);
+    let (_event, span) = events
+        .iter()
+        .find(|(event, _span)| matches!(event, Event::DocumentEnd))
+        .expect("expected implicit document end");
+
+    let foo_end = yaml.find('\n').unwrap();
+    let next_marker = yaml.find("---").unwrap();
+
+    assert_eq!(span.start.index(), foo_end);
+    assert_eq!(span.end.index(), foo_end);
+    assert_ne!(span.start.index(), next_marker);
+    assert_eq!(span.slice(yaml), Some(""));
+}
+
+#[test]
+fn block_missing_value_span_is_empty_at_next_token_start() {
+    let yaml = "? foo\nbar: baz\n";
+    let events = event_spans(yaml);
+    let empty_value_spans: Vec<_> = events
+        .iter()
+        .filter_map(|(event, span)| {
+            matches!(event, Event::Scalar(value, ..) if value == "~").then_some(*span)
+        })
+        .collect();
+
+    let next_key = yaml.find("bar").unwrap();
+
+    assert_eq!(empty_value_spans.len(), 1);
+    assert_eq!(empty_value_spans[0].start.index(), next_key);
+    assert_eq!(empty_value_spans[0].end.index(), next_key);
+    assert_eq!(empty_value_spans[0].slice(yaml), Some(""));
 }
 
 #[test]

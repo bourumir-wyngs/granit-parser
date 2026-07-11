@@ -28,6 +28,12 @@ pub struct BufferedInput<T: Iterator<Item = char>> {
     input: T,
     /// Buffer for the next characters to consume.
     buffer: ArrayDeque<char, BUFFER_LEN>,
+    /// Number of front buffer characters that came from the iterator, not EOF padding.
+    real_buffered: usize,
+    /// Largest active lookahead window requested by the scanner.
+    lookahead: usize,
+    /// Whether the wrapped iterator has reported EOF.
+    source_exhausted: bool,
 }
 
 impl<T: Iterator<Item = char>> BufferedInput<T> {
@@ -36,28 +42,86 @@ impl<T: Iterator<Item = char>> BufferedInput<T> {
         Self {
             input,
             buffer: ArrayDeque::default(),
+            real_buffered: 0,
+            lookahead: 0,
+            source_exhausted: false,
         }
+    }
+
+    fn push_source_or_padding(&mut self) {
+        let c = if self.source_exhausted {
+            '\0'
+        } else if let Some(c) = self.input.next() {
+            self.real_buffered += 1;
+            c
+        } else {
+            self.source_exhausted = true;
+            '\0'
+        };
+        self.buffer.push_back(c).unwrap();
+    }
+
+    fn fill_lookahead(&mut self) {
+        while self.buffer.len() < self.lookahead {
+            self.push_source_or_padding();
+        }
+    }
+
+    fn pop_buffered(&mut self) -> Option<(char, bool)> {
+        let c = self.buffer.pop_front()?;
+        let is_real = self.real_buffered > 0;
+        if is_real {
+            self.real_buffered -= 1;
+        }
+        Some((c, is_real))
+    }
+
+    fn read_source_or_eof(&mut self) -> (char, bool) {
+        if self.source_exhausted {
+            ('\0', false)
+        } else if let Some(c) = self.input.next() {
+            (c, true)
+        } else {
+            self.source_exhausted = true;
+            ('\0', false)
+        }
+    }
+
+    fn raw_read_front(&mut self) -> (char, bool) {
+        let read = self
+            .pop_buffered()
+            .unwrap_or_else(|| self.read_source_or_eof());
+        self.fill_lookahead();
+        read
+    }
+
+    fn skip_one(&mut self) -> bool {
+        let skipped = match self.pop_buffered() {
+            Some((_, true)) => true,
+            Some((_, false)) => {
+                self.buffer.push_front('\0').unwrap();
+                false
+            }
+            None => self.read_source_or_eof().1,
+        };
+
+        if skipped {
+            self.fill_lookahead();
+        }
+        skipped
     }
 }
 
 impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
     #[inline]
     fn lookahead(&mut self, count: usize) {
-        let target = count.min(BUFFER_LEN);
-
-        if self.buffer.len() >= target {
-            return;
-        }
-        for _ in 0..(target - self.buffer.len()) {
-            self.buffer
-                .push_back(self.input.next().unwrap_or('\0'))
-                .unwrap();
-        }
+        self.lookahead = self.lookahead.max(count.min(BUFFER_LEN));
+        self.fill_lookahead();
     }
 
     #[inline]
     fn buflen(&self) -> usize {
-        self.buffer.len()
+        self.lookahead
     }
 
     #[inline]
@@ -67,41 +131,54 @@ impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
 
     #[inline]
     fn raw_read_ch(&mut self) -> char {
-        self.input.next().unwrap_or('\0')
+        self.raw_read_front().0
     }
 
     #[inline]
     fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
-        if let Some(c) = self.input.next() {
+        if let Some(c) = self.buffer.front().copied() {
             if is_breakz(c) {
-                self.buffer.push_back(c).unwrap();
                 None
             } else {
-                Some(c)
+                Some(self.raw_read_front().0)
             }
         } else {
-            None
+            let (c, is_real) = self.read_source_or_eof();
+            if !is_real {
+                None
+            } else if is_breakz(c) {
+                self.buffer.push_back(c).unwrap();
+                self.real_buffered += 1;
+                None
+            } else {
+                self.fill_lookahead();
+                Some(c)
+            }
         }
     }
 
     #[inline]
     fn skip(&mut self) {
-        self.buffer.pop_front();
+        self.skip_one();
     }
 
     #[inline]
     fn skip_n(&mut self, count: usize) {
-        self.buffer.drain(0..count);
+        for _ in 0..count {
+            if !self.skip_one() {
+                break;
+            }
+        }
     }
 
     #[inline]
     fn peek(&self) -> char {
-        self.buffer[0]
+        self.buffer.front().copied().unwrap_or('\0')
     }
 
     #[inline]
     fn peek_nth(&self, n: usize) -> char {
-        self.buffer[n]
+        self.buffer.get(n).copied().unwrap_or('\0')
     }
 }
 
@@ -116,6 +193,8 @@ impl<T: Iterator<Item = char>> BorrowedInput<'static> for BufferedInput<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::input::str::StrInput;
+
     use super::*;
 
     #[test]
@@ -132,19 +211,26 @@ mod tests {
     }
 
     #[test]
-    fn raw_reads_bypass_buffer_and_report_eof() {
+    fn raw_reads_use_stream_front_and_report_eof() {
         let mut input = BufferedInput::new("a".chars());
 
         assert_eq!(input.raw_read_ch(), 'a');
         assert_eq!(input.raw_read_ch(), '\0');
+
+        let mut input = BufferedInput::new("ab".chars());
+        input.lookahead(1);
+        assert_eq!(input.raw_read_ch(), 'a');
+        assert_eq!(input.peek(), 'b');
     }
 
     #[test]
-    fn raw_read_non_breakz_pushes_break_back_into_buffer() {
+    fn raw_read_non_breakz_leaves_break_at_stream_front() {
         let mut input = BufferedInput::new("a\n".chars());
 
         assert_eq!(input.raw_read_non_breakz_ch(), Some('a'));
         assert_eq!(input.raw_read_non_breakz_ch(), None);
+        assert_eq!(input.peek(), '\n');
+        input.lookahead(1);
         assert_eq!(input.buflen(), 1);
         assert_eq!(input.peek(), '\n');
 
@@ -153,15 +239,61 @@ mod tests {
     }
 
     #[test]
-    fn skip_n_drains_buffered_characters() {
+    fn skip_n_consumes_stream_front_and_preserves_lookahead_window() {
         let mut input = BufferedInput::new("abcdef".chars());
 
         input.lookahead(5);
         input.skip_n(2);
 
-        assert_eq!(input.buflen(), 3);
+        assert_eq!(input.buflen(), 5);
         assert_eq!(input.peek(), 'c');
-        assert_eq!(input.peek_nth(2), 'e');
+        assert_eq!(input.peek_nth(3), 'f');
+        assert_eq!(input.peek_nth(4), '\0');
+    }
+
+    #[test]
+    fn skip_without_lookahead_consumes_like_str_input() {
+        let mut buffered = BufferedInput::new("ab".chars());
+        buffered.skip();
+        buffered.lookahead(1);
+
+        let mut str_input = StrInput::new("ab");
+        str_input.skip();
+        str_input.lookahead(1);
+
+        assert_eq!(buffered.peek(), str_input.peek());
+    }
+
+    #[test]
+    fn skip_n_saturates_at_eof_like_str_input() {
+        let mut buffered = BufferedInput::new("abc".chars());
+        buffered.lookahead(1);
+        buffered.skip_n(8);
+        buffered.lookahead(1);
+
+        let mut str_input = StrInput::new("abc");
+        str_input.lookahead(1);
+        str_input.skip_n(8);
+        str_input.lookahead(1);
+
+        assert_eq!(buffered.peek(), str_input.peek());
+    }
+
+    #[test]
+    fn buflen_matches_str_input_lookahead_window_after_consumption() {
+        let mut buffered = BufferedInput::new("ab".chars());
+        buffered.lookahead(2);
+        buffered.skip();
+        buffered.skip();
+
+        let mut str_input = StrInput::new("ab");
+        str_input.lookahead(2);
+        str_input.skip();
+        str_input.skip();
+
+        assert_eq!(buffered.buflen(), str_input.buflen());
+        assert_eq!(buffered.buf_is_empty(), str_input.buf_is_empty());
+        assert_eq!(buffered.peek(), str_input.peek());
     }
 
     #[test]

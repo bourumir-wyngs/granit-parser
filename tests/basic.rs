@@ -245,9 +245,48 @@ fn test_github_27() {
         [
             Event::StreamStart,
             Event::DocumentStart(false, None),
-            Event::Scalar("".into(), ScalarStyle::Plain, 1, None),
+            Event::Scalar("~".into(), ScalarStyle::Plain, 1, None),
             Event::DocumentEnd,
             Event::StreamEnd,
+        ]
+    );
+}
+
+#[test]
+fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
+    let scalar_events = |input: &str| -> Vec<(String, ScalarStyle, usize, Option<String>)> {
+        run_parser(input)
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event {
+                Event::Scalar(value, style, anchor, tag) => Some((
+                    value.into_owned(),
+                    style,
+                    anchor,
+                    tag.map(|tag| tag.original()),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+
+    assert_eq!(
+        scalar_events("a: &x\n"),
+        vec![
+            ("a".to_string(), ScalarStyle::Plain, 0, None),
+            ("~".to_string(), ScalarStyle::Plain, 1, None),
+        ]
+    );
+    assert_eq!(
+        scalar_events("a: !!str\n"),
+        vec![
+            ("a".to_string(), ScalarStyle::Plain, 0, None),
+            (
+                String::new(),
+                ScalarStyle::Plain,
+                0,
+                Some("!!str".to_string()),
+            ),
         ]
     );
 }
@@ -295,6 +334,35 @@ foobar";
         ]
     );
 }
+
+#[test]
+fn test_directive_followed_by_comment_then_content_errors() {
+    for yaml in ["%YAML 1.2\n# c\nfoo\n--- bar\n", "%YAML 1.2\n# c\n"] {
+        let error = run_parser(yaml)
+            .expect_err("directives must still be followed by an explicit document start");
+
+        assert_eq!(error.info(), "did not find expected <document start>");
+    }
+}
+
+#[test]
+fn test_empty_block_scalar_value_does_not_depend_on_eof() {
+    fn value_of(yaml: &str) -> String {
+        run_parser(yaml)
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event {
+                Event::Scalar(value, ScalarStyle::Literal, _, _) => Some(value.into_owned()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    assert_eq!(value_of("a: |\nb: c\n"), value_of("a: |\n"));
+    assert_eq!(value_of("a: |+\nb: c\n"), value_of("a: |+\n"));
+    assert_eq!(value_of("a: |+\n\n"), "\n");
+}
+
 #[test]
 fn test_large_block_scalar_indent() {
     // https://github.com/Ethiraric/yaml-rust2/issues/29

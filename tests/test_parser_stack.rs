@@ -141,6 +141,28 @@ fn test_two_parsers_second_has_two_docs_error() {
 }
 
 #[test]
+fn nested_parser_scan_error_after_document_end_is_propagated_verbatim() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
+    stack.push_str_parser(
+        Parser::new_from_str("child: value\n...\n[\n"),
+        "child".to_string(),
+    );
+
+    loop {
+        match stack.next_event() {
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                assert_eq!(stack.stack(), vec!["parent".to_string()]);
+                break;
+            }
+            None => panic!("expected nested scan error"),
+        }
+    }
+}
+
+#[test]
 fn test_two_parsers_first_has_multiple_docs_fine() {
     let mut stack: MyStack = ParserStack::new();
     // p1 is bottom. It can have multiple documents.
@@ -814,6 +836,55 @@ fn default_empty_stack_peek_and_next_emit_stream_end_once() {
 }
 
 #[test]
+fn parser_stack_push_str_after_exhaustion_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+
+    while stack.next_event().is_some() {}
+    assert!(stack.peek().is_none());
+
+    stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
+fn parser_stack_push_after_peeked_empty_stream_end_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+
+    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+
+    stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
 fn parser_stack_resolve_without_resolver_reports_error() {
     let mut stack: MyStack = ParserStack::new();
 
@@ -856,6 +927,74 @@ fn parser_stack_push_include_resolves_included_content() {
             "DocEnd",
             "StreamEnd"
         ]
+    );
+}
+
+#[test]
+fn parser_stack_push_include_after_exhaustion_reactivates_stack() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.set_resolver(|name| match name {
+        "child" => Ok("b: 2".to_string()),
+        _ => Err(ScanError::new(
+            Marker::new(0, 1, 0),
+            "Not found".to_string(),
+        )),
+    });
+
+    while stack.next_event().is_some() {}
+    assert!(stack.peek().is_none());
+
+    stack.push_include("child").unwrap();
+
+    let events = collect_events(&mut stack).unwrap();
+    assert_eq!(
+        format_events(&events),
+        vec![
+            "StreamStart",
+            "DocStart",
+            "MapStart",
+            "Scalar(b)",
+            "Scalar(2)",
+            "MapEnd",
+            "DocEnd",
+            "StreamEnd"
+        ]
+    );
+}
+
+#[test]
+fn multi_document_include_does_not_splice_into_parent() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("root:\n  inc: !include two.yaml\n  after: tail\n"),
+        "root".to_string(),
+    );
+    stack.set_resolver(|_| Ok("x: 1\n---\ny: 2\n".to_string()));
+
+    let mut saw_error = false;
+    let mut spliced = false;
+
+    while let Some(result) = stack.next_event() {
+        match result {
+            Ok((Event::Scalar(value, _, _, Some(_)), _)) if value.as_ref() == "two.yaml" => {
+                stack.push_include(value.as_ref()).unwrap();
+            }
+            Ok((Event::Scalar(value, ..), _)) if value.as_ref() == "y" => {
+                spliced = true;
+            }
+            Err(err) => {
+                assert_eq!(err.info(), "multiple documents not supported here");
+                assert_eq!(stack.stack(), vec!["root".to_string()]);
+                saw_error = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_error);
+    assert!(
+        !spliced,
+        "second include document leaked into parent stream"
     );
 }
 
@@ -1005,6 +1144,53 @@ fn parser_stack_peek_surfaces_parse_error() {
             None => panic!("expected parse error before the stream ended"),
         }
     }
+}
+
+#[test]
+fn parser_stack_error_survives_peek_until_next_event() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: [1, 2"), "bad".to_string());
+
+    loop {
+        match stack.peek() {
+            Some(Ok(_)) => {
+                stack.next_event().unwrap().unwrap();
+            }
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                break;
+            }
+            None => panic!("expected parse error before the stream ended"),
+        }
+    }
+
+    let second_peek_error = stack.peek().unwrap().unwrap_err();
+    assert_eq!(second_peek_error.info(), "unclosed bracket '['");
+
+    let next_error = stack.next_event().unwrap().unwrap_err();
+    assert_eq!(next_error.info(), "unclosed bracket '['");
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
+}
+
+#[test]
+fn parser_stack_next_event_error_is_terminal() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("a: [1, 2"), "bad".to_string());
+
+    loop {
+        match stack.next_event() {
+            Some(Ok(_)) => {}
+            Some(Err(err)) => {
+                assert_eq!(err.info(), "unclosed bracket '['");
+                break;
+            }
+            None => panic!("expected parse error before the stream ended"),
+        }
+    }
+
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
 }
 
 #[test]
