@@ -154,7 +154,8 @@ where
 /// Included parser events, including [`Event::Comment`] events, are replayed through the same
 /// event stream as parent events. Their [`Span`] values remain local to the included source, just
 /// like every other event span from an included parser. `ParserStack` does not attach file names,
-/// source IDs, or other include provenance to events or spans.
+/// source IDs, or other include provenance to events or spans. Errors do retain the nested source
+/// names through [`ScanError::source_stack`].
 pub struct ParserStack<'input, I = core::iter::Empty<char>, T = StrInput<'input>>
 where
     I: Iterator<Item = char>,
@@ -205,15 +206,19 @@ where
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
     /// included content cannot be parsed.
     pub fn resolve(&mut self, include_str: &str) -> Result<(), ScanError> {
+        let mut source_stack = self.stack();
+        source_stack.push(include_str.into());
+
         if let Some(resolver) = &mut self.include_resolver {
-            let content = resolver(include_str)?;
+            let content = resolver(include_str)
+                .map_err(|error| error.with_source_stack(source_stack.clone()))?;
             let mut parser = Parser::new_from_iter(content.chars().collect::<Vec<_>>().into_iter());
             if let Some(parent) = self.parsers.last() {
                 parser.set_anchor_offset(parent.get_anchor_offset());
             }
             let mut events = Vec::new();
             while let Some(event) = parser.next_event() {
-                events.push(event?);
+                events.push(event.map_err(|error| error.with_source_stack(source_stack.clone()))?);
             }
 
             self.push_replay_parser(
@@ -222,10 +227,11 @@ where
             );
             Ok(())
         } else {
-            Err(ScanError::new(
+            Err(ScanError::from_kind(
                 crate::scanner::Marker::new(0, 1, 0),
                 ErrorKind::MissingIncludeResolver,
-            ))
+            )
+            .with_source_stack(source_stack))
         }
     }
 
@@ -341,6 +347,14 @@ where
             .collect()
     }
 
+    fn contextualize_error(&self, error: ScanError) -> ScanError {
+        if self.parsers.len() > 1 {
+            error.with_source_stack(self.stack())
+        } else {
+            error
+        }
+    }
+
     fn propagate_anchor_offset_from_popped(&mut self, popped: &AnyParser<'input, I, T>) {
         if let Some(parent) = self.parsers.last_mut() {
             let next_offset = parent.get_anchor_offset().max(popped.get_anchor_offset());
@@ -388,6 +402,7 @@ where
                     self.pop_parser_and_propagate_anchor_offset();
                 }
                 Some(Err(e)) => {
+                    let e = self.contextualize_error(e);
                     self.pop_parser_and_propagate_anchor_offset();
                     return e.into_result();
                 }
@@ -409,13 +424,15 @@ where
                             self.pop_parser_and_propagate_anchor_offset();
                         }
                         Some(Ok(_)) => {
-                            self.pop_parser_and_propagate_anchor_offset();
-                            return Err(ScanError::new(
+                            let error = self.contextualize_error(ScanError::from_kind(
                                 span.start,
                                 ErrorKind::MultipleDocumentsUnsupported,
                             ));
+                            self.pop_parser_and_propagate_anchor_offset();
+                            return Err(error);
                         }
                         Some(Err(e)) => {
+                            let e = self.contextualize_error(e);
                             self.pop_parser_and_propagate_anchor_offset();
                             return Err(e);
                         }

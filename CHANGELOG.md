@@ -8,8 +8,11 @@
   without relying on human-readable text. Variants carry relevant structured details where needed,
   such as the opening and closing characters for mismatched flow collections. `ScanError` now
   stores its marker and `ErrorKind`, while descriptions are rendered by `ErrorKind`'s `Display`
-  implementation. 
-- BREAKING CHANGE: ScanError is no longer user constructable (and we think should not be)
+  implementation.
+- `ScanError::new(marker, message)` constructs externally supplied errors for parser adapters and
+  `ParserStack` include resolvers, copying the message into `ErrorKind::Custom(String)`.
+- `ParserStack` errors now retain their nested source names in `ScanError::source_stack()` and
+  include that context in human-readable error messages.
 - Added the default `error_messages` feature. Disabling default features removes human-readable
   error text: `ErrorKind`'s `Display` implementation and `ScanError::info()` return an empty string,
   while structured error kinds and source markers remain available.

@@ -932,10 +932,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return Ok(());
         };
 
-        let slice = self
-            .input
-            .slice_bytes(start, end)
-            .ok_or_else(|| ScanError::new(*start_mark, ErrorKind::InputOffsetsWithoutSlice))?;
+        let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
+            ScanError::from_kind(*start_mark, ErrorKind::InputOffsetsWithoutSlice)
+        })?;
         *buf = FlowScalarBuf::Owned(slice.to_owned());
         Ok(())
     }
@@ -962,7 +961,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
+            return Err(ScanError::from_kind(*mark, ErrorKind::ExpectedTagBang));
         }
 
         // Consume the leading '!'.
@@ -991,15 +990,21 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let slice = self
                 .input
                 .slice_bytes(start, end)
-                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
+                .ok_or_else(|| ScanError::from_kind(*mark, ErrorKind::InputSlicingUnavailable))?;
             if !slice.ends_with('!') && slice != "!" {
-                return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
+                return Err(ScanError::from_kind(
+                    *mark,
+                    ErrorKind::ExpectedTagDirectiveBang,
+                ));
             }
             return Ok(Cow::Owned(slice.to_owned()));
         };
 
         if !slice.ends_with('!') && slice != "!" {
-            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
+            return Err(ScanError::from_kind(
+                *mark,
+                ErrorKind::ExpectedTagDirectiveBang,
+            ));
         }
 
         Ok(Cow::Borrowed(slice))
@@ -1021,7 +1026,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.look_ch() == '!' {
             self.skip_non_blank();
         } else if !is_tag_char(self.input.peek()) {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 *start_mark,
                 ErrorKind::InvalidGlobalTagCharacter,
             ));
@@ -1068,10 +1073,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let Some(slice) = self.try_borrow_slice(start, end) else {
             // Fall back to allocating if zero-copy borrow is not available.
-            let slice = self
-                .input
-                .slice_bytes(start, end)
-                .ok_or_else(|| ScanError::new(*start_mark, ErrorKind::InputSlicingUnavailable))?;
+            let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
+                ScanError::from_kind(*start_mark, ErrorKind::InputSlicingUnavailable)
+            })?;
             return Ok(Cow::Owned(slice.to_owned()));
         };
 
@@ -1124,7 +1128,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     #[cold]
     fn scan_error(&self, kind: ErrorKind) -> ScanError {
-        ScanError::new(self.mark, kind)
+        ScanError::from_kind(self.mark, kind)
     }
 
     #[inline]
@@ -1145,12 +1149,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     #[cold]
     fn simple_key_expected(mark: Marker) -> ScanError {
-        ScanError::new(mark, ErrorKind::SimpleKeyExpected)
+        ScanError::from_kind(mark, ErrorKind::SimpleKeyExpected)
     }
 
     #[cold]
     fn unclosed_bracket(mark: Marker, bracket: char) -> ScanError {
-        ScanError::new(mark, ErrorKind::UnclosedFlowCollection { open: bracket })
+        ScanError::from_kind(mark, ErrorKind::UnclosedFlowCollection { open: bracket })
     }
 
     /// Consume the next character. It is assumed the next character is a blank.
@@ -1268,7 +1272,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 // Defensive fallback for third-party inputs that expose offsets but cannot borrow.
                 Cow::Owned(slice.to_owned())
             } else {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     start_mark,
                     ErrorKind::InputOffsetsWithoutSlice,
                 ));
@@ -1373,10 +1377,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     fn simple_key_token_index(&self, sk: &SimpleKey, mark: Marker) -> Result<usize, ScanError> {
         let Some(index) = sk.token_number.checked_sub(self.tokens_parsed) else {
-            return Err(ScanError::new(mark, ErrorKind::InvalidSimpleKey));
+            return Err(ScanError::from_kind(mark, ErrorKind::InvalidSimpleKey));
         };
         if index > self.tokens.len() {
-            return Err(ScanError::new(mark, ErrorKind::InvalidSimpleKey));
+            return Err(ScanError::from_kind(mark, ErrorKind::InvalidSimpleKey));
         }
         Ok(index)
     }
@@ -1727,7 +1731,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     && !self.input.next_is_document_indicator()
                     && self.input.next_can_be_plain_scalar(false)
                 {
-                    return Err(ScanError::new(
+                    return Err(ScanError::from_kind(
                         err_mark,
                         ErrorKind::CommentInterceptedScalar,
                     ));
@@ -1903,7 +1907,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_linebreak();
             Ok(tok)
         } else {
-            Err(ScanError::new(
+            Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::InvalidDirectiveTerminator,
             ))
@@ -1919,7 +1923,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let major = self.scan_version_directive_number(mark)?;
 
         if self.input.peek() != '.' {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 *mark,
                 ErrorKind::MissingYamlVersionSeparator,
             ));
@@ -1944,11 +1948,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.mark.offsets.bytes = self.input.byte_offset();
 
         if string.is_empty() {
-            return Err(ScanError::new(start_mark, ErrorKind::MissingDirectiveName));
+            return Err(ScanError::from_kind(
+                start_mark,
+                ErrorKind::MissingDirectiveName,
+            ));
         }
 
         if !is_blank_or_breakz(self.input.peek()) {
-            return Err(ScanError::new(start_mark, ErrorKind::InvalidDirectiveName));
+            return Err(ScanError::from_kind(
+                start_mark,
+                ErrorKind::InvalidDirectiveName,
+            ));
         }
 
         Ok(string)
@@ -1959,7 +1969,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let mut length = 0usize;
         while let Some(digit) = self.input.look_ch().to_digit(10) {
             if length + 1 > 9 {
-                return Err(ScanError::new(*mark, ErrorKind::YamlVersionTooLong));
+                return Err(ScanError::from_kind(*mark, ErrorKind::YamlVersionTooLong));
             }
             length += 1;
             val = val * 10 + digit;
@@ -1967,7 +1977,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if length == 0 {
-            return Err(ScanError::new(*mark, ErrorKind::MissingYamlVersion));
+            return Err(ScanError::from_kind(*mark, ErrorKind::MissingYamlVersion));
         }
 
         Ok(val)
@@ -1996,7 +2006,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::TagDirective(handle, prefix),
             ))
         } else {
-            Err(ScanError::new(
+            Err(ScanError::from_kind(
                 *mark,
                 ErrorKind::InvalidTagDirectiveTerminator,
             ))
@@ -2083,7 +2093,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::Tag(handle, suffix),
             ))
         } else {
-            Err(ScanError::new(start_mark, ErrorKind::InvalidTagTerminator))
+            Err(ScanError::from_kind(
+                start_mark,
+                ErrorKind::InvalidTagTerminator,
+            ))
         }
     }
 
@@ -2125,7 +2138,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::Tag(handle.into(), suffix.into()),
             ))
         } else {
-            Err(ScanError::new(*start_mark, ErrorKind::InvalidTagTerminator))
+            Err(ScanError::from_kind(
+                *start_mark,
+                ErrorKind::InvalidTagTerminator,
+            ))
         }
     }
 
@@ -2139,7 +2155,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
+            return Err(ScanError::from_kind(*mark, ErrorKind::ExpectedTagBang));
         }
 
         // Consume the leading '!'.
@@ -2167,7 +2183,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let slice = self
                 .input
                 .slice_bytes(start, end)
-                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
+                .ok_or_else(|| ScanError::from_kind(*mark, ErrorKind::InputSlicingUnavailable))?;
             Ok(Cow::Owned(slice.to_owned()))
         }
     }
@@ -2221,7 +2237,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if require_non_empty && start == end {
-            return Err(ScanError::new(*mark, ErrorKind::MissingTagUri));
+            return Err(ScanError::from_kind(*mark, ErrorKind::MissingTagUri));
         }
 
         if let Some(slice) = self.try_borrow_slice(start, end) {
@@ -2230,7 +2246,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let slice = self
                 .input
                 .slice_bytes(start, end)
-                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
+                .ok_or_else(|| ScanError::from_kind(*mark, ErrorKind::InputSlicingUnavailable))?;
             Ok(Cow::Owned(slice.to_owned()))
         }
     }
@@ -2238,7 +2254,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_tag_handle(&mut self, directive: bool, mark: &Marker) -> Result<String, ScanError> {
         let mut string = String::new();
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
+            return Err(ScanError::from_kind(*mark, ErrorKind::ExpectedTagBang));
         }
 
         string.push(self.input.peek());
@@ -2257,7 +2273,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // It's either the '!' tag or not really a tag handle.  If it's a %TAG
             // directive, it's an error.  If it's a tag token, it must be a part of
             // URI.
-            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
+            return Err(ScanError::from_kind(
+                *mark,
+                ErrorKind::ExpectedTagDirectiveBang,
+            ));
         }
         Ok(string)
     }
@@ -2276,7 +2295,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_non_blank();
         } else if !is_tag_char(self.input.peek()) {
             // Otherwise, check if the first global tag character is valid.
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 *start_mark,
                 ErrorKind::InvalidGlobalTagCharacter,
             ));
@@ -2320,11 +2339,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if string.is_empty() {
-            return Err(ScanError::new(*start_mark, ErrorKind::MissingTagUri));
+            return Err(ScanError::from_kind(*start_mark, ErrorKind::MissingTagUri));
         }
 
         if self.input.peek() != '>' {
-            return Err(ScanError::new(*start_mark, ErrorKind::UnclosedVerbatimTag));
+            return Err(ScanError::from_kind(
+                *start_mark,
+                ErrorKind::UnclosedVerbatimTag,
+            ));
         }
         self.skip_non_blank();
 
@@ -2360,7 +2382,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if length == 0 {
-            return Err(ScanError::new(*mark, ErrorKind::MissingTagUri));
+            return Err(ScanError::from_kind(*mark, ErrorKind::MissingTagUri));
         }
 
         Ok(string)
@@ -2377,7 +2399,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let nc = self.input.peek_nth(2);
 
             if !(self.input.peek() == '%' && is_hex(c) && is_hex(nc)) {
-                return Err(ScanError::new(*mark, ErrorKind::InvalidTagEscape));
+                return Err(ScanError::from_kind(*mark, ErrorKind::InvalidTagEscape));
             }
 
             let byte = u8::try_from((as_hex(c) << 4) + as_hex(nc))
@@ -2389,11 +2411,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     _ if byte & 0xF0 == 0xE0 => 3,
                     _ if byte & 0xF8 == 0xF0 => 4,
                     _ => {
-                        return Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8LeadingByte));
+                        return Err(ScanError::from_kind(
+                            *mark,
+                            ErrorKind::InvalidTagUtf8LeadingByte,
+                        ));
                     }
                 };
             } else if byte & 0xc0 != 0x80 {
-                return Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8TrailingByte));
+                return Err(ScanError::from_kind(
+                    *mark,
+                    ErrorKind::InvalidTagUtf8TrailingByte,
+                ));
             }
 
             bytes[bytes_len] = byte;
@@ -2408,12 +2436,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let s = core::str::from_utf8(&bytes[..bytes_len])
-            .map_err(|_| ScanError::new(*mark, ErrorKind::InvalidTagUtf8))?;
+            .map_err(|_| ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8))?;
 
         let mut chars = s.chars();
         match (chars.next(), chars.next()) {
             (Some(ch), None) => Ok(ch),
-            _ => Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8)),
+            _ => Err(ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8)),
         }
     }
 
@@ -2446,7 +2474,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 .expect("byte_offset() must remain available once enabled");
 
             if start == end {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     start_mark,
                     ErrorKind::MissingAnchorOrAliasName,
                 ));
@@ -2457,7 +2485,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             } else if let Some(slice) = self.input.slice_bytes(start, end) {
                 Cow::Owned(slice.to_owned())
             } else {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     start_mark,
                     ErrorKind::InputSlicingUnavailable,
                 ));
@@ -2478,7 +2506,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if string.is_empty() {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::MissingAnchorOrAliasName,
             ));
@@ -2540,7 +2568,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if open_ch != expected_open {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 open_mark,
                 ErrorKind::MismatchedFlowCollectionEnd {
                     open: open_ch,
@@ -2670,7 +2698,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     fn fetch_document_indicator(&mut self, t: TokenType<'input>) -> ScanResult {
         if let Some((mark, bracket)) = self.flow_markers.pop() {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 mark,
                 ErrorKind::UnclosedFlowCollection { open: bracket },
             ));
@@ -2732,14 +2760,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(1);
             if self.input.next_is_digit() {
                 if self.input.peek() == '0' {
-                    return Err(ScanError::new(start_mark, ErrorKind::ZeroBlockScalarIndent));
+                    return Err(ScanError::from_kind(
+                        start_mark,
+                        ErrorKind::ZeroBlockScalarIndent,
+                    ));
                 }
                 increment = (self.input.peek() as usize) - ('0' as usize);
                 self.skip_non_blank();
             }
         } else if self.input.next_is_digit() {
             if self.input.peek() == '0' {
-                return Err(ScanError::new(start_mark, ErrorKind::ZeroBlockScalarIndent));
+                return Err(ScanError::from_kind(
+                    start_mark,
+                    ErrorKind::ZeroBlockScalarIndent,
+                ));
             }
 
             increment = (self.input.peek() as usize) - ('0' as usize);
@@ -2761,7 +2795,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.input.lookahead(1);
         self.ensure_current_char_is_printable()?;
         if !self.input.next_is_breakz() {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::InvalidBlockScalarHeader,
             ));
@@ -2775,7 +2809,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.ensure_current_char_is_printable()?;
 
         if self.input.look_ch() == '\t' {
-            return Err(ScanError::new(start_mark, ErrorKind::TabAtBlockScalarStart));
+            return Err(ScanError::from_kind(
+                start_mark,
+                ErrorKind::TabAtBlockScalarStart,
+            ));
         }
 
         if increment > 0 {
@@ -2903,7 +2940,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedCharacter { character },
             ));
@@ -3087,14 +3124,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(4);
 
             if self.mark.col == 0 && self.input.next_is_document_indicator() {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     start_mark,
                     ErrorKind::DocumentIndicatorInQuotedScalar,
                 ));
             }
 
             if self.input.next_is_z() {
-                return Err(ScanError::new(start_mark, ErrorKind::UnclosedQuotedScalar));
+                return Err(ScanError::from_kind(
+                    start_mark,
+                    ErrorKind::UnclosedQuotedScalar,
+                ));
             }
 
             self.ensure_current_char_is_printable()?;
@@ -3297,7 +3337,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     Cow::Borrowed(slice)
                 } else {
                     let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                        ScanError::new(start_mark, ErrorKind::InputOffsetsWithoutSlice)
+                        ScanError::from_kind(start_mark, ErrorKind::InputOffsetsWithoutSlice)
                     })?;
                     Cow::Owned(slice.to_owned())
                 }
@@ -3428,7 +3468,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             'u' => code_length = 4,
             'U' => code_length = 8,
             _ => {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     *start_mark,
                     ErrorKind::UnknownQuotedScalarEscape,
                 ))
@@ -3443,7 +3483,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             for i in 0..code_length {
                 let c = self.input.peek_nth(i);
                 if !is_hex(c) {
-                    return Err(ScanError::new(
+                    return Err(ScanError::from_kind(
                         *start_mark,
                         ErrorKind::InvalidQuotedScalarHexEscape,
                     ));
@@ -3463,7 +3503,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     for i in 0..4 {
                         let c = self.input.peek_nth(i);
                         if !is_hex(c) {
-                            return Err(ScanError::new(
+                            return Err(ScanError::from_kind(
                                 *start_mark,
                                 ErrorKind::InvalidLowSurrogateHexEscape,
                             ));
@@ -3474,17 +3514,29 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         value = 0x10000 + (((value - 0xD800) << 10) | (low_value - 0xDC00));
                         self.skip_n_non_blank(4);
                     } else {
-                        return Err(ScanError::new(*start_mark, ErrorKind::InvalidLowSurrogate));
+                        return Err(ScanError::from_kind(
+                            *start_mark,
+                            ErrorKind::InvalidLowSurrogate,
+                        ));
                     }
                 } else {
-                    return Err(ScanError::new(*start_mark, ErrorKind::MissingLowSurrogate));
+                    return Err(ScanError::from_kind(
+                        *start_mark,
+                        ErrorKind::MissingLowSurrogate,
+                    ));
                 }
             } else if code_length == 4 && (0xDC00..=0xDFFF).contains(&value) {
-                return Err(ScanError::new(*start_mark, ErrorKind::UnpairedLowSurrogate));
+                return Err(ScanError::from_kind(
+                    *start_mark,
+                    ErrorKind::UnpairedLowSurrogate,
+                ));
             }
 
             let Some(ch) = char::from_u32(value) else {
-                return Err(ScanError::new(*start_mark, ErrorKind::InvalidUnicodeEscape));
+                return Err(ScanError::from_kind(
+                    *start_mark,
+                    ErrorKind::InvalidUnicodeEscape,
+                ));
             };
             ret = ch;
         }
@@ -3513,7 +3565,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let start_mark = self.mark;
 
         if self.flow_level > 0 && (start_mark.col as isize) < indent {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::InvalidFlowScalarIndent,
             ));
@@ -3619,7 +3671,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         // empty. Skip to the end of the line.
                         self.skip_ws_to_eol(SkipTabs::Yes)?;
                         if !self.input.next_is_breakz() {
-                            return Err(ScanError::new(start_mark, ErrorKind::TabInPlainScalar));
+                            return Err(ScanError::from_kind(
+                                start_mark,
+                                ErrorKind::TabInPlainScalar,
+                            ));
                         }
                     } else {
                         self.skip_blank();
@@ -3650,7 +3705,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
-            return Err(ScanError::new(
+            return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedCharacter { character },
             ));
@@ -3661,7 +3716,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // `fetch_plain_scalar` must absolutely consume at least one byte. Otherwise,
             // `fetch_next_token` will never stop calling it. An empty plain scalar may happen with
             // erroneous inputs such as "{...".
-            Err(ScanError::new(
+            Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedEndOfPlainScalar,
             ))
@@ -3794,7 +3849,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.insert_token(token_index, tok);
             if is_implicit_flow_mapping {
                 if sk.mark.line < start_mark.line {
-                    return Err(ScanError::new(start_mark, ErrorKind::InvalidColonPlacement));
+                    return Err(ScanError::from_kind(
+                        start_mark,
+                        ErrorKind::InvalidColonPlacement,
+                    ));
                 }
                 self.insert_token(
                     token_index,
@@ -3821,7 +3879,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
                 if !self.simple_key_allowed {
-                    return Err(ScanError::new(
+                    return Err(ScanError::from_kind(
                         start_mark,
                         ErrorKind::MappingValueNotAllowed,
                     ));

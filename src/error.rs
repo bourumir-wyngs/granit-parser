@@ -1,12 +1,15 @@
 //! Parser and scanner error types.
 
-use alloc::string::{String, ToString};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::fmt;
 
 use crate::scanner::Marker;
 
 /// Machine-readable category for a [`ScanError`].
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
+#[derive(Clone, PartialEq, Debug, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
     /// Too many consecutive comments were buffered before a collection entry.
@@ -53,6 +56,8 @@ pub enum ErrorKind {
     UndeclaredTagHandle,
     /// No include resolver was configured for a parser stack.
     MissingIncludeResolver,
+    /// An error supplied by an external parser adapter or resolver.
+    Custom(String),
     /// A parser-stack entry contained multiple documents where only one is supported.
     MultipleDocumentsUnsupported,
     /// An input advertised byte offsets but did not provide the requested slice.
@@ -259,6 +264,7 @@ impl fmt::Display for ErrorKind {
             Self::MissingIncludeResolver => {
                 f.write_str("No include resolver set for parser stack.")
             }
+            Self::Custom(message) => f.write_str(message),
             Self::MultipleDocumentsUnsupported => {
                 f.write_str("multiple documents not supported here")
             }
@@ -449,14 +455,36 @@ pub struct ScanError {
     mark: Marker,
     /// Machine-readable error category.
     kind: ErrorKind,
+    /// Source names captured by a parser stack before its failing entry is removed.
+    source_stack: Vec<String>,
 }
 
 impl ScanError {
-    /// Create a new error from a location and category.
+    /// Create an externally supplied error from a location and message.
+    ///
+    /// The message is copied into [`ErrorKind::Custom`]. This is useful for adapters that
+    /// participate in parser APIs, such as a custom [`ParserTrait`](crate::ParserTrait)
+    /// implementation or a [`ParserStack`](crate::parser_stack::ParserStack) include resolver.
     #[must_use]
     #[cold]
-    pub(crate) fn new(loc: Marker, kind: ErrorKind) -> ScanError {
-        ScanError { mark: loc, kind }
+    pub fn new(loc: Marker, message: &str) -> ScanError {
+        Self::from_kind(loc, ErrorKind::Custom(String::from(message)))
+    }
+
+    #[must_use]
+    #[cold]
+    pub(crate) fn from_kind(loc: Marker, kind: ErrorKind) -> ScanError {
+        ScanError {
+            mark: loc,
+            kind,
+            source_stack: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn with_source_stack(mut self, source_stack: Vec<String>) -> Self {
+        self.source_stack = source_stack;
+        self
     }
 
     #[cold]
@@ -470,16 +498,30 @@ impl ScanError {
         &self.mark
     }
 
-    /// Return the machine-readable error category.
+    /// Return a clone of the machine-readable error category.
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
-        self.kind
+        self.kind.clone()
     }
 
-    /// Render the error category as a human-readable description.
+    /// Return source names captured by a parser stack, from bottom to top.
+    #[must_use]
+    pub fn source_stack(&self) -> &[String] {
+        &self.source_stack
+    }
+
+    /// Render the error as a human-readable description.
+    ///
+    /// Parser-stack errors include their nested source names. The result remains
+    /// empty when the `error_messages` feature is disabled.
     #[must_use]
     pub fn info(&self) -> String {
-        self.kind.to_string()
+        let mut info = self.kind.to_string();
+        if !info.is_empty() && self.source_stack().len() > 1 {
+            info.push_str("\nwhile parsing ");
+            info.push_str(&self.source_stack().join(" -> "));
+        }
+        info
     }
 }
 
@@ -502,6 +544,8 @@ impl core::error::Error for ScanError {}
 mod tests {
     #[cfg(feature = "error_messages")]
     use alloc::format;
+    #[cfg(feature = "error_messages")]
+    use alloc::string::String;
     use alloc::string::ToString;
 
     use super::{ErrorKind, ScanError};
@@ -511,7 +555,7 @@ mod tests {
     #[test]
     fn constructor_retains_kind_and_derives_info() {
         let marker = Marker::new(3, 2, 1);
-        let error = ScanError::new(marker, ErrorKind::ExpectedWhitespace);
+        let error = ScanError::from_kind(marker, ErrorKind::ExpectedWhitespace);
 
         assert_eq!(error.kind(), ErrorKind::ExpectedWhitespace);
         assert_eq!(error.kind().to_string(), "expected whitespace");
@@ -522,7 +566,7 @@ mod tests {
     #[test]
     fn parameterized_kind_constructs_info() {
         let marker = Marker::new(3, 2, 1);
-        let error = ScanError::new(
+        let error = ScanError::from_kind(
             marker,
             ErrorKind::MismatchedFlowCollectionEnd {
                 open: '[',
@@ -537,11 +581,26 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "error_messages")]
+    #[test]
+    fn public_constructor_copies_custom_message() {
+        let marker = Marker::new(3, 2, 1);
+        let mut message = String::from("adapter failed");
+        let error = ScanError::new(marker, &message);
+        message.clear();
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::Custom(String::from("adapter failed"))
+        );
+        assert_eq!(error.info(), "adapter failed");
+    }
+
     #[cfg(not(feature = "error_messages"))]
     #[test]
     fn disabled_error_messages_are_empty() {
         let marker = Marker::new(3, 2, 1);
-        let error = ScanError::new(
+        let error = ScanError::from_kind(
             marker,
             ErrorKind::MismatchedFlowCollectionEnd {
                 open: '[',

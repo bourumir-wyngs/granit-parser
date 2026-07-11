@@ -8,8 +8,9 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
-    BorrowedInput, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle, Span,
-    SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver, TryLoadError,
+    BorrowedInput, ErrorKind, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle,
+    ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
+    TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -141,7 +142,7 @@ fn test_two_parsers_second_has_two_docs_error() {
 }
 
 #[test]
-fn nested_parser_scan_error_after_document_end_is_propagated_verbatim() {
+fn nested_parser_scan_error_after_document_end_preserves_kind_and_adds_source_stack() {
     let mut stack: MyStack = ParserStack::new();
     stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
     stack.push_str_parser(
@@ -153,7 +154,12 @@ fn nested_parser_scan_error_after_document_end_is_propagated_verbatim() {
         match stack.next_event() {
             Some(Ok(_)) => {}
             Some(Err(err)) => {
-                assert_eq!(err.info(), "unclosed bracket '['");
+                assert_eq!(err.kind(), ErrorKind::UnclosedFlowCollection { open: '[' });
+                assert_eq!(
+                    err.info(),
+                    "unclosed bracket '['\nwhile parsing parent -> child"
+                );
+                assert_eq!(err.source_stack(), ["parent", "child"]);
                 assert_eq!(stack.stack(), vec!["parent".to_string()]);
                 break;
             }
@@ -893,6 +899,25 @@ fn parser_stack_resolve_without_resolver_reports_error() {
 }
 
 #[test]
+fn parser_stack_resolver_can_construct_a_scan_error() {
+    let mut stack: MyStack = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("root: value"), "root".to_string());
+    stack.set_resolver(|_| Err(ScanError::new(Marker::new(0, 1, 0), "include not found")));
+
+    let err = stack.resolve("missing").unwrap_err();
+
+    assert_eq!(
+        err.kind(),
+        ErrorKind::Custom("include not found".to_string())
+    );
+    assert_eq!(
+        err.info(),
+        "include not found\nwhile parsing root -> missing"
+    );
+    assert_eq!(err.source_stack(), ["root", "missing"]);
+}
+
+#[test]
 fn parser_stack_push_include_resolves_included_content() {
     let mut stack: MyStack = ParserStack::new();
     stack.push_str_parser(Parser::new_from_str("a: 1"), "parent".to_string());
@@ -974,7 +999,12 @@ fn multi_document_include_does_not_splice_into_parent() {
                 spliced = true;
             }
             Err(err) => {
-                assert_eq!(err.info(), "multiple documents not supported here");
+                assert_eq!(err.kind(), ErrorKind::MultipleDocumentsUnsupported);
+                assert_eq!(
+                    err.info(),
+                    "multiple documents not supported here\nwhile parsing root -> two.yaml"
+                );
+                assert_eq!(err.source_stack(), ["root", "two.yaml"]);
                 assert_eq!(stack.stack(), vec!["root".to_string()]);
                 saw_error = true;
             }

@@ -1060,7 +1060,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
 
             if events.len() == MAX_BUFFERED_COMMENT_EVENTS {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     self.peek_token()?.0.start,
                     ErrorKind::TooManyComments,
                 ));
@@ -1185,7 +1185,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
             _ => ErrorKind::UnexpectedEof,
         };
-        ScanError::new(self.scanner.mark(), kind)
+        ScanError::from_kind(self.scanner.mark(), kind)
     }
 
     fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
@@ -1407,7 +1407,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::StreamStart, span))
             }
-            QueuedToken(span, _) => Err(ScanError::new(span.start, ErrorKind::ExpectedStreamStart)),
+            QueuedToken(span, _) => Err(ScanError::from_kind(
+                span.start,
+                ErrorKind::ExpectedStreamStart,
+            )),
         }
     }
 
@@ -1477,13 +1480,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
                     if version.is_some() {
-                        return Err(ScanError::new(
+                        return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::DuplicateVersionDirective,
                         ));
                     }
                     if *major != 1 {
-                        return Err(ScanError::new(
+                        return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::UnsupportedYamlMajorVersion,
                         ));
@@ -1492,7 +1495,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
                 QueuedToken(mark, QueuedTokenType::TagDirective(handle, prefix)) => {
                     if !document_tag_handles.insert(handle.to_string()) {
-                        return Err(ScanError::new(mark.start, ErrorKind::DuplicateTagDirective));
+                        return Err(ScanError::from_kind(
+                            mark.start,
+                            ErrorKind::DuplicateTagDirective,
+                        ));
                     }
                     tags.insert(handle.to_string(), prefix.to_string());
                 }
@@ -1533,9 +1539,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::DocumentStart(true, version), mark))
             }
-            QueuedToken(span, _) => {
-                Err(ScanError::new(span.start, ErrorKind::ExpectedDocumentStart))
-            }
+            QueuedToken(span, _) => Err(ScanError::from_kind(
+                span.start,
+                ErrorKind::ExpectedDocumentStart,
+            )),
         }
     }
 
@@ -1599,7 +1606,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 | QueuedTokenType::ReservedDirective(..),
             ) = *self.peek_token()?
             {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     span.start,
                     ErrorKind::MissingDocumentEndBeforeDirective,
                 ));
@@ -1616,7 +1623,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.anchor_id_count = self
             .anchor_id_count
             .checked_add(1)
-            .ok_or_else(|| ScanError::new(mark.start, ErrorKind::AnchorCountOverflow))?;
+            .ok_or_else(|| ScanError::from_kind(mark.start, ErrorKind::AnchorCountOverflow))?;
         self.anchors.insert(name, new_id);
         Ok(new_id)
     }
@@ -1656,7 +1663,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.pop_state();
                 if let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() {
                     match self.anchors.get(&*name) {
-                        None => return Err(ScanError::new(span.start, ErrorKind::UnknownAnchor)),
+                        None => {
+                            return Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor))
+                        }
                         Some(id) => return Ok((Event::Alias(*id), span)),
                     }
                 }
@@ -1821,7 +1830,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
                     _ => ErrorKind::ExpectedNodeContent,
                 };
-                Err(ScanError::new(span.start, kind))
+                Err(ScanError::from_kind(span.start, kind))
             }
         }
     }
@@ -1854,7 +1863,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::MappingEnd, mark))
             }
-            QueuedToken(span, _) => Err(ScanError::new(
+            QueuedToken(span, _) => Err(ScanError::from_kind(
                 span.start,
                 ErrorKind::ExpectedBlockMappingKey,
             )),
@@ -1962,7 +1971,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                             }
                         }
                         QueuedToken(span, _) => {
-                            return Err(ScanError::new(
+                            return Err(ScanError::from_kind(
                                 span.start,
                                 ErrorKind::ExpectedFlowMappingSeparator,
                             ))
@@ -2100,7 +2109,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             QueuedToken(span, _) if !first => {
-                return Err(ScanError::new(
+                return Err(ScanError::from_kind(
                     span.start,
                     ErrorKind::ExpectedFlowSequenceSeparator,
                 ));
@@ -2218,7 +2227,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_tail_and_return_first(comments))
                 }
             }
-            QueuedToken(span, _) => Err(ScanError::new(
+            QueuedToken(span, _) => Err(ScanError::from_kind(
                 span.start,
                 ErrorKind::ExpectedBlockSequenceEntry,
             )),
@@ -2357,7 +2366,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 // If the handle is of the form "!foo!", this cannot be a local handle and we need
                 // to error.
                 if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
-                    return Err(ScanError::new(span.start, ErrorKind::UndeclaredTagHandle));
+                    return Err(ScanError::from_kind(
+                        span.start,
+                        ErrorKind::UndeclaredTagHandle,
+                    ));
                 }
                 Tag::with_original_handle(handle.to_string(), suffix, original_handle)
             }
@@ -2422,7 +2434,7 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         if !self.scanner.stream_started() || stream_start_buffered {
             let (ev, span) = self.next_event_impl()?;
             if ev != Event::StreamStart {
-                return Err(TryLoadError::scan(ScanError::new(
+                return Err(TryLoadError::scan(ScanError::from_kind(
                     span.start,
                     ErrorKind::ExpectedStreamStart,
                 )));
@@ -3199,7 +3211,7 @@ a5: *x
     #[cfg(feature = "error_messages")]
     #[test]
     fn test_try_load_error_display_and_source_cover_both_variants() {
-        let scan = ScanError::new(Marker::new(3, 1, 3), ErrorKind::UnexpectedEof);
+        let scan = ScanError::from_kind(Marker::new(3, 1, 3), ErrorKind::UnexpectedEof);
         let scan_err: TryLoadError<ReceiverFailure> = scan.into();
 
         assert!(scan_err
