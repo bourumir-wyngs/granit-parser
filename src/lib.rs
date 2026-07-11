@@ -63,6 +63,11 @@
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
 //!
+//! #### `error_messages` (enabled by default)
+//! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and
+//! [`ScanError::info`]. Disabling this feature makes both render an empty string while retaining
+//! machine-readable error kinds and source markers.
+//!
 //! #### `debug_prints`
 //! Enables the `debug` module and usage of debug prints in the scanner and the parser. Do not
 //! enable if you are consuming the crate rather than working on it as this can significantly
@@ -77,7 +82,6 @@
 #![warn(missing_docs, clippy::pedantic)]
 #![no_std]
 
-#[macro_use]
 extern crate alloc;
 
 #[cfg(feature = "debug_prints")]
@@ -93,7 +97,7 @@ mod parser;
 pub mod parser_stack;
 mod scanner;
 
-pub use crate::error::ScanError;
+pub use crate::error::{ErrorKind, ScanError};
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
 pub use crate::parser::{
     Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,

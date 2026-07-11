@@ -11,13 +11,10 @@ root:
   after: &after_anchor after-include
 ";
 
-fn resolve_include(name: &str) -> Result<String, ScanError> {
+fn resolve_include(name: &str) -> String {
     match name {
-        "something.yaml" => Ok("included: &included_anchor from-include\n".to_string()),
-        _ => Err(ScanError::new_str(
-            granit_parser::Marker::new(0, 1, 0),
-            "include not found",
-        )),
+        "something.yaml" => "included: &included_anchor from-include\n".to_string(),
+        _ => unreachable!("the example only resolves its static include"),
     }
 }
 
@@ -28,7 +25,7 @@ fn is_include_tag(tag: &Tag) -> bool {
 fn main() -> Result<(), ScanError> {
     let mut stack: IncludeStack = ParserStack::new();
     stack.push_str_parser(Parser::new_from_str(ROOT_YAML), "root.yaml".to_string());
-    stack.set_resolver(resolve_include);
+    stack.set_resolver(|name| Ok(resolve_include(name)));
 
     let mut anchored_scalars = Vec::new();
 

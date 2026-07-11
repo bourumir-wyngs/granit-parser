@@ -5,6 +5,8 @@
 
 use alloc::string::String;
 
+use crate::error::ErrorKind;
+
 pub(crate) mod buffered;
 pub(crate) mod str;
 
@@ -285,10 +287,10 @@ pub trait Input {
     /// See [`SkipTabs`] for more details on the success variant.
     ///
     /// # Errors
-    /// Errors if a comment is encountered but it was not preceded by a whitespace. In that event,
-    /// the first tuple element will contain the number of characters consumed prior to reaching
-    /// the `#`.
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, &'static str>) {
+    /// Returns [`ErrorKind::CommentNotSeparated`] if a comment is encountered without preceding
+    /// whitespace. In that event, the first tuple element contains the number of characters
+    /// consumed prior to reaching the `#`.
+    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
         let mut encountered_tab = false;
         let mut has_yaml_ws = false;
         let mut chars_consumed = 0;
@@ -304,10 +306,7 @@ pub trait Input {
                 }
                 // YAML comments must be preceded by whitespace.
                 '#' if !encountered_tab && !has_yaml_ws => {
-                    return (
-                        chars_consumed,
-                        Err("comments must be separated from other tokens by whitespace"),
-                    );
+                    return (chars_consumed, Err(ErrorKind::CommentNotSeparated));
                 }
                 '#' => {
                     self.skip(); // Skip over '#'
@@ -649,6 +648,7 @@ impl SkipTabs {
 #[cfg(test)]
 mod tests {
     use super::{Input, SkipTabs};
+    use crate::error::ErrorKind;
 
     struct MinimalInput;
 
@@ -708,10 +708,7 @@ mod tests {
         let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
 
         assert_eq!(consumed, 0);
-        assert_eq!(
-            result.err(),
-            Some("comments must be separated from other tokens by whitespace")
-        );
+        assert_eq!(result.err(), Some(ErrorKind::CommentNotSeparated));
         assert_eq!(input.peek(), '#');
     }
 }

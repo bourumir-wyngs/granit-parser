@@ -4,8 +4,8 @@
 //! regular test suite does not reach.
 
 use granit_parser::{
-    input::SkipTabs, BufferedInput, Event, Input, Parser, Placement, ScanError, StrInput,
-    TryEventReceiver, TryLoadError,
+    input::SkipTabs, BufferedInput, ErrorKind, Event, Input, Parser, Placement, ScanError,
+    StrInput, TryEventReceiver, TryLoadError,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -17,7 +17,7 @@ fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
 fn first_error_info(input: &str) -> String {
     for event in Parser::new_from_str(input) {
         if let Err(error) = event {
-            return error.info().to_owned();
+            return error.info();
         }
     }
     panic!("expected parser error");
@@ -75,13 +75,10 @@ fn buffered_default_skip_ws_to_eol_rejects_comment_without_whitespace() {
     let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
 
     assert_eq!(consumed, 0);
-    let Err(message) = result else {
+    let Err(kind) = result else {
         panic!("expected an error for a comment without leading whitespace");
     };
-    assert_eq!(
-        message,
-        "comments must be separated from other tokens by whitespace"
-    );
+    assert_eq!(kind, ErrorKind::CommentNotSeparated);
     // The '#' itself must not be consumed.
     assert_eq!(input.look_ch(), '#');
 }

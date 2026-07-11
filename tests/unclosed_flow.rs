@@ -1,4 +1,4 @@
-use granit_parser::{Event, EventReceiver, Parser};
+use granit_parser::{ErrorKind, Event, EventReceiver, Parser, ScanError};
 
 struct Collector(Vec<Event<'static>>);
 impl EventReceiver<'static> for Collector {
@@ -67,23 +67,38 @@ fn test_unclosed_quoted_scalar_at_eof() {
     assert_eq!(err.marker().index(), 5);
 }
 
-fn first_error(input: &str) -> (String, usize) {
-    let err = Parser::new_from_str(input)
+fn first_error(input: &str) -> ScanError {
+    Parser::new_from_str(input)
         .find_map(Result::err)
-        .expect("input should fail");
-    (err.info().to_owned(), err.marker().index())
+        .expect("input should fail")
 }
 
 #[test]
 fn mismatched_sequence_closed_by_mapping_brace_reports_mismatch() {
-    let (err, index) = first_error("[}");
-    assert_eq!(err, "mismatched bracket '[' closed by '}'");
-    assert_eq!(index, 0);
+    let error = first_error("[}");
+
+    assert_eq!(
+        error.kind(),
+        ErrorKind::MismatchedFlowCollectionEnd {
+            open: '[',
+            close: '}',
+        }
+    );
+    assert_eq!(error.info(), "mismatched bracket '[' closed by '}'");
+    assert_eq!(error.marker().index(), 0);
 }
 
 #[test]
 fn mismatched_mapping_closed_by_sequence_bracket_reports_mismatch() {
-    let (err, index) = first_error("{]");
-    assert_eq!(err, "mismatched bracket '{' closed by ']'");
-    assert_eq!(index, 0);
+    let error = first_error("{]");
+
+    assert_eq!(
+        error.kind(),
+        ErrorKind::MismatchedFlowCollectionEnd {
+            open: '{',
+            close: ']',
+        }
+    );
+    assert_eq!(error.info(), "mismatched bracket '{' closed by ']'");
+    assert_eq!(error.marker().index(), 0);
 }

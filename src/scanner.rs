@@ -22,7 +22,7 @@ use crate::{
         as_hex, is_anchor_char, is_blank_or_breakz, is_bom, is_break, is_breakz, is_flow, is_hex,
         is_tag_char, is_uri_char,
     },
-    error::ScanError,
+    error::{ErrorKind, ScanError},
     input::{BorrowedInput, SkipTabs},
 };
 
@@ -932,12 +932,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return Ok(());
         };
 
-        let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-            ScanError::new_str(
-                *start_mark,
-                "internal error: input advertised offsets but did not provide a slice",
-            )
-        })?;
+        let slice = self
+            .input
+            .slice_bytes(start, end)
+            .ok_or_else(|| ScanError::new(*start_mark, ErrorKind::InputOffsetsWithoutSlice))?;
         *buf = FlowScalarBuf::Owned(slice.to_owned());
         Ok(())
     }
@@ -964,10 +962,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new_str(
-                *mark,
-                "while scanning a tag, did not find expected '!'",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
         }
 
         // Consume the leading '!'.
@@ -993,26 +988,18 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let Some(slice) = self.try_borrow_slice(start, end) else {
             // Fall back to allocating if zero-copy borrow is not available.
-            let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                ScanError::new_str(
-                    *mark,
-                    "internal error: input advertised slicing but did not provide a slice",
-                )
-            })?;
+            let slice = self
+                .input
+                .slice_bytes(start, end)
+                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
             if !slice.ends_with('!') && slice != "!" {
-                return Err(ScanError::new_str(
-                    *mark,
-                    "while parsing a tag directive, did not find expected '!'",
-                ));
+                return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
             }
             return Ok(Cow::Owned(slice.to_owned()));
         };
 
         if !slice.ends_with('!') && slice != "!" {
-            return Err(ScanError::new_str(
-                *mark,
-                "while parsing a tag directive, did not find expected '!'",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
         }
 
         Ok(Cow::Borrowed(slice))
@@ -1034,9 +1021,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.look_ch() == '!' {
             self.skip_non_blank();
         } else if !is_tag_char(self.input.peek()) {
-            return Err(ScanError::new_str(
+            return Err(ScanError::new(
                 *start_mark,
-                "invalid global tag character",
+                ErrorKind::InvalidGlobalTagCharacter,
             ));
         } else if self.input.peek() == '%' {
             // Needs decoding. Fall back to allocating path below.
@@ -1081,12 +1068,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let Some(slice) = self.try_borrow_slice(start, end) else {
             // Fall back to allocating if zero-copy borrow is not available.
-            let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                ScanError::new_str(
-                    *start_mark,
-                    "internal error: input advertised slicing but did not provide a slice",
-                )
-            })?;
+            let slice = self
+                .input
+                .slice_bytes(start, end)
+                .ok_or_else(|| ScanError::new(*start_mark, ErrorKind::InputSlicingUnavailable))?;
             return Ok(Cow::Owned(slice.to_owned()));
         };
 
@@ -1138,6 +1123,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     #[cold]
+    fn scan_error(&self, kind: ErrorKind) -> ScanError {
+        ScanError::new(self.mark, kind)
+    }
+
+    #[cold]
     fn stop_after_error(&mut self, error: ScanError) -> Option<Token<'input>> {
         self.error = Some(error);
         None
@@ -1145,12 +1135,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     #[cold]
     fn simple_key_expected(mark: Marker) -> ScanError {
-        ScanError::new_str(mark, "simple key expected ':'")
+        ScanError::new(mark, ErrorKind::SimpleKeyExpected)
     }
 
     #[cold]
     fn unclosed_bracket(mark: Marker, bracket: char) -> ScanError {
-        ScanError::new(mark, format!("unclosed bracket '{bracket}'"))
+        ScanError::new(mark, ErrorKind::UnclosedFlowCollection { open: bracket })
     }
 
     /// Consume the next character. It is assumed the next character is a blank.
@@ -1268,9 +1258,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 // Defensive fallback for third-party inputs that expose offsets but cannot borrow.
                 Cow::Owned(slice.to_owned())
             } else {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     start_mark,
-                    "internal error: input advertised offsets but did not provide a slice",
+                    ErrorKind::InputOffsetsWithoutSlice,
                 ));
             }
         } else {
@@ -1367,10 +1357,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     fn simple_key_token_index(&self, sk: &SimpleKey, mark: Marker) -> Result<usize, ScanError> {
         let Some(index) = sk.token_number.checked_sub(self.tokens_parsed) else {
-            return Err(ScanError::new_str(mark, "simple key is no longer valid"));
+            return Err(ScanError::new(mark, ErrorKind::InvalidSimpleKey));
         };
         if index > self.tokens.len() {
-            return Err(ScanError::new_str(mark, "simple key is no longer valid"));
+            return Err(ScanError::new(mark, ErrorKind::InvalidSimpleKey));
         }
         Ok(index)
     }
@@ -1427,10 +1417,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.fetch_document_indicator(TokenType::DocumentEnd)?;
                 self.skip_ws_to_eol(SkipTabs::Yes)?;
                 if !self.input.next_is_breakz() {
-                    return Err(ScanError::new_str(
-                        self.mark,
-                        "invalid content after document end marker",
-                    ));
+                    return Err(self.scan_error(ErrorKind::InvalidDocumentEnd));
                 }
                 return Ok(());
             }
@@ -1444,7 +1431,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(1);
             let c = self.input.peek();
             if self.flow_level == 0 || !matches!(c, ']' | '}' | ',') {
-                return Err(ScanError::new_str(self.mark, "invalid indentation"));
+                return Err(self.scan_error(ErrorKind::InvalidIndentation));
             }
         }
 
@@ -1480,14 +1467,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ':' | '?' if !is_blank_or_breakz(nc) && self.flow_level == 0 => {
                 self.fetch_plain_scalar()
             }
-            c if is_bom(c) => Err(ScanError::new_str(
-                self.mark,
-                "a BOM must not appear inside a document",
-            )),
-            '%' | '@' | '`' => Err(ScanError::new(
-                self.mark,
-                format!("unexpected character: `{c}'"),
-            )),
+            c if is_bom(c) => Err(self.scan_error(ErrorKind::BomInsideDocument)),
+            '%' | '@' | '`' => {
+                Err(self.scan_error(ErrorKind::UnexpectedCharacter { character: c }))
+            }
             _ => self.fetch_plain_scalar(),
         }
     }
@@ -1526,10 +1509,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
         let Some(t) = self.tokens.pop_front() else {
-            return Err(ScanError::new_str(
-                self.mark,
-                "did not find expected next token",
-            ));
+            return Err(self.scan_error(ErrorKind::MissingNextToken));
         };
         self.token_available = false;
         self.tokens_parsed += 1;
@@ -1648,10 +1628,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.explicit_key_tab_check_pending {
                 match ch {
                     '\t' => {
-                        return Err(ScanError::new_str(
-                            self.mark(),
-                            "tabs disallowed in this context",
-                        ));
+                        return Err(self.scan_error(ErrorKind::TabNotAllowed));
                     }
                     ' ' | '\n' | '\r' | '#' => {}
                     _ => self.explicit_key_tab_check_pending = false,
@@ -1669,10 +1646,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
                         // If we have content on that line with a tab, return an error.
                         if !self.input.next_is_breakz() {
-                            return Err(ScanError::new_str(
-                                self.mark,
-                                "tabs disallowed within this context (block indentation)",
-                            ));
+                            return Err(self.scan_error(ErrorKind::TabInBlockIndentation));
                         }
 
                         // Micro-opt: if we stopped on a line break, consume it now (avoids another loop trip).
@@ -1735,9 +1709,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     && !self.input.next_is_document_indicator()
                     && self.input.next_can_be_plain_scalar(false)
                 {
-                    return Err(ScanError::new_str(
+                    return Err(ScanError::new(
                         err_mark,
-                        "comment intercepting the multiline text",
+                        ErrorKind::CommentInterceptedScalar,
                     ));
                 }
             }
@@ -1785,7 +1759,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if need_whitespace {
-            Err(ScanError::new_str(self.mark(), "expected whitespace"))
+            Err(self.scan_error(ErrorKind::ExpectedWhitespace))
         } else {
             Ok(false)
         }
@@ -1799,7 +1773,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.mark.col += chars_consumed;
             self.mark.offsets.chars += chars_consumed;
             self.mark.offsets.bytes = self.input.byte_offset();
-            return result.map_err(|msg| ScanError::new_str(self.mark, msg));
+            return result.map_err(|kind| self.scan_error(kind));
         }
 
         let (chars_consumed, whitespace) = self.input.skip_ws_to_eol_blanks(skip_tabs);
@@ -1812,10 +1786,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if !whitespace.found_tabs() && !whitespace.has_valid_yaml_ws() {
-            return Err(ScanError::new_str(
-                self.mark,
-                "comments must be separated from other tokens by whitespace",
-            ));
+            return Err(self.scan_error(ErrorKind::CommentNotSeparated));
         }
 
         self.push_comment_token()?;
@@ -1914,9 +1885,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_linebreak();
             Ok(tok)
         } else {
-            Err(ScanError::new_str(
+            Err(ScanError::new(
                 start_mark,
-                "while scanning a directive, did not find expected comment or line break",
+                ErrorKind::InvalidDirectiveTerminator,
             ))
         }
     }
@@ -1930,9 +1901,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let major = self.scan_version_directive_number(mark)?;
 
         if self.input.peek() != '.' {
-            return Err(ScanError::new_str(
+            return Err(ScanError::new(
                 *mark,
-                "while scanning a YAML directive, did not find expected digit or '.' character",
+                ErrorKind::MissingYamlVersionSeparator,
             ));
         }
         self.skip_non_blank();
@@ -1955,17 +1926,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.mark.offsets.bytes = self.input.byte_offset();
 
         if string.is_empty() {
-            return Err(ScanError::new_str(
-                start_mark,
-                "while scanning a directive, could not find expected directive name",
-            ));
+            return Err(ScanError::new(start_mark, ErrorKind::MissingDirectiveName));
         }
 
         if !is_blank_or_breakz(self.input.peek()) {
-            return Err(ScanError::new_str(
-                start_mark,
-                "while scanning a directive, found unexpected non-alphabetical character",
-            ));
+            return Err(ScanError::new(start_mark, ErrorKind::InvalidDirectiveName));
         }
 
         Ok(string)
@@ -1976,10 +1941,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let mut length = 0usize;
         while let Some(digit) = self.input.look_ch().to_digit(10) {
             if length + 1 > 9 {
-                return Err(ScanError::new_str(
-                    *mark,
-                    "while scanning a YAML directive, found extremely long version number",
-                ));
+                return Err(ScanError::new(*mark, ErrorKind::YamlVersionTooLong));
             }
             length += 1;
             val = val * 10 + digit;
@@ -1987,10 +1949,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if length == 0 {
-            return Err(ScanError::new_str(
-                *mark,
-                "while scanning a YAML directive, did not find expected version number",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::MissingYamlVersion));
         }
 
         Ok(val)
@@ -2019,9 +1978,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::TagDirective(handle, prefix),
             ))
         } else {
-            Err(ScanError::new_str(
+            Err(ScanError::new(
                 *mark,
-                "while scanning TAG, did not find expected whitespace or line break",
+                ErrorKind::InvalidTagDirectiveTerminator,
             ))
         }
     }
@@ -2106,10 +2065,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::Tag(handle, suffix),
             ))
         } else {
-            Err(ScanError::new_str(
-                start_mark,
-                "while scanning a tag, did not find expected whitespace or line break",
-            ))
+            Err(ScanError::new(start_mark, ErrorKind::InvalidTagTerminator))
         }
     }
 
@@ -2151,10 +2107,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 TokenType::Tag(handle.into(), suffix.into()),
             ))
         } else {
-            Err(ScanError::new_str(
-                *start_mark,
-                "while scanning a tag, did not find expected whitespace or line break",
-            ))
+            Err(ScanError::new(*start_mark, ErrorKind::InvalidTagTerminator))
         }
     }
 
@@ -2168,10 +2121,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new_str(
-                *mark,
-                "while scanning a tag, did not find expected '!'",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
         }
 
         // Consume the leading '!'.
@@ -2196,12 +2146,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if let Some(slice) = self.try_borrow_slice(start, end) {
             Ok(Cow::Borrowed(slice))
         } else {
-            let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                ScanError::new_str(
-                    *mark,
-                    "internal error: input advertised slicing but did not provide a slice",
-                )
-            })?;
+            let slice = self
+                .input
+                .slice_bytes(start, end)
+                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
             Ok(Cow::Owned(slice.to_owned()))
         }
     }
@@ -2255,21 +2203,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         if require_non_empty && start == end {
-            return Err(ScanError::new_str(
-                *mark,
-                "while parsing a tag, did not find expected tag URI",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::MissingTagUri));
         }
 
         if let Some(slice) = self.try_borrow_slice(start, end) {
             Ok(Cow::Borrowed(slice))
         } else {
-            let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                ScanError::new_str(
-                    *mark,
-                    "internal error: input advertised slicing but did not provide a slice",
-                )
-            })?;
+            let slice = self
+                .input
+                .slice_bytes(start, end)
+                .ok_or_else(|| ScanError::new(*mark, ErrorKind::InputSlicingUnavailable))?;
             Ok(Cow::Owned(slice.to_owned()))
         }
     }
@@ -2277,10 +2220,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_tag_handle(&mut self, directive: bool, mark: &Marker) -> Result<String, ScanError> {
         let mut string = String::new();
         if self.input.look_ch() != '!' {
-            return Err(ScanError::new_str(
-                *mark,
-                "while scanning a tag, did not find expected '!'",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagBang));
         }
 
         string.push(self.input.peek());
@@ -2299,10 +2239,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // It's either the '!' tag or not really a tag handle.  If it's a %TAG
             // directive, it's an error.  If it's a tag token, it must be a part of
             // URI.
-            return Err(ScanError::new_str(
-                *mark,
-                "while parsing a tag directive, did not find expected '!'",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::ExpectedTagDirectiveBang));
         }
         Ok(string)
     }
@@ -2321,9 +2258,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_non_blank();
         } else if !is_tag_char(self.input.peek()) {
             // Otherwise, check if the first global tag character is valid.
-            return Err(ScanError::new_str(
+            return Err(ScanError::new(
                 *start_mark,
-                "invalid global tag character",
+                ErrorKind::InvalidGlobalTagCharacter,
             ));
         } else if self.input.peek() == '%' {
             // If it is valid and an escape sequence, escape it.
@@ -2365,17 +2302,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if string.is_empty() {
-            return Err(ScanError::new_str(
-                *start_mark,
-                "while parsing a tag, did not find expected tag URI",
-            ));
+            return Err(ScanError::new(*start_mark, ErrorKind::MissingTagUri));
         }
 
         if self.input.peek() != '>' {
-            return Err(ScanError::new_str(
-                *start_mark,
-                "while scanning a verbatim tag, did not find the expected '>'",
-            ));
+            return Err(ScanError::new(*start_mark, ErrorKind::UnclosedVerbatimTag));
         }
         self.skip_non_blank();
 
@@ -2411,10 +2342,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if length == 0 {
-            return Err(ScanError::new_str(
-                *mark,
-                "while parsing a tag, did not find expected tag URI",
-            ));
+            return Err(ScanError::new(*mark, ErrorKind::MissingTagUri));
         }
 
         Ok(string)
@@ -2431,10 +2359,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let nc = self.input.peek_nth(2);
 
             if !(self.input.peek() == '%' && is_hex(c) && is_hex(nc)) {
-                return Err(ScanError::new_str(
-                    *mark,
-                    "while parsing a tag, found an invalid escape sequence",
-                ));
+                return Err(ScanError::new(*mark, ErrorKind::InvalidTagEscape));
             }
 
             let byte = u8::try_from((as_hex(c) << 4) + as_hex(nc))
@@ -2446,17 +2371,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     _ if byte & 0xF0 == 0xE0 => 3,
                     _ if byte & 0xF8 == 0xF0 => 4,
                     _ => {
-                        return Err(ScanError::new_str(
-                            *mark,
-                            "while parsing a tag, found an incorrect leading UTF-8 byte",
-                        ));
+                        return Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8LeadingByte));
                     }
                 };
             } else if byte & 0xc0 != 0x80 {
-                return Err(ScanError::new_str(
-                    *mark,
-                    "while parsing a tag, found an incorrect trailing UTF-8 byte",
-                ));
+                return Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8TrailingByte));
             }
 
             bytes[bytes_len] = byte;
@@ -2470,20 +2389,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        let s = core::str::from_utf8(&bytes[..bytes_len]).map_err(|_| {
-            ScanError::new_str(
-                *mark,
-                "while parsing a tag, found an invalid UTF-8 codepoint",
-            )
-        })?;
+        let s = core::str::from_utf8(&bytes[..bytes_len])
+            .map_err(|_| ScanError::new(*mark, ErrorKind::InvalidTagUtf8))?;
 
         let mut chars = s.chars();
         match (chars.next(), chars.next()) {
             (Some(ch), None) => Ok(ch),
-            _ => Err(ScanError::new_str(
-                *mark,
-                "while parsing a tag, found an invalid UTF-8 codepoint",
-            )),
+            _ => Err(ScanError::new(*mark, ErrorKind::InvalidTagUtf8)),
         }
     }
 
@@ -2516,7 +2428,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 .expect("byte_offset() must remain available once enabled");
 
             if start == end {
-                return Err(ScanError::new_str(start_mark, "while scanning an anchor or alias, did not find expected alphabetic or numeric character"));
+                return Err(ScanError::new(
+                    start_mark,
+                    ErrorKind::MissingAnchorOrAliasName,
+                ));
             }
 
             let cow = if let Some(slice) = self.try_borrow_slice(start, end) {
@@ -2524,9 +2439,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             } else if let Some(slice) = self.input.slice_bytes(start, end) {
                 Cow::Owned(slice.to_owned())
             } else {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     start_mark,
-                    "internal error: input advertised slicing but did not provide a slice",
+                    ErrorKind::InputSlicingUnavailable,
                 ));
             };
 
@@ -2545,7 +2460,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if string.is_empty() {
-            return Err(ScanError::new_str(start_mark, "while scanning an anchor or alias, did not find expected alphabetic or numeric character"));
+            return Err(ScanError::new(
+                start_mark,
+                ErrorKind::MissingAnchorOrAliasName,
+            ));
         }
 
         let tok = if alias {
@@ -2590,11 +2508,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn fetch_flow_collection_end(&mut self, tok: TokenType<'input>) -> ScanResult {
         // A closing bracket without a corresponding opening is invalid YAML.
         if self.flow_level == 0 {
-            return Err(ScanError::new_str(self.mark, "misplaced bracket"));
+            return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
         }
 
         let Some((open_mark, open_ch)) = self.flow_markers.pop() else {
-            return Err(ScanError::new_str(self.mark, "misplaced bracket"));
+            return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
         };
 
         let (expected_open, actual_close) = match tok {
@@ -2606,7 +2524,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if open_ch != expected_open {
             return Err(ScanError::new(
                 open_mark,
-                format!("mismatched bracket '{open_ch}' closed by '{actual_close}'"),
+                ErrorKind::MismatchedFlowCollectionEnd {
+                    open: open_ch,
+                    close: actual_close,
+                },
             ));
         }
 
@@ -2672,7 +2593,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.flow_level = self
             .flow_level
             .checked_add(1)
-            .ok_or_else(|| ScanError::new_str(self.mark, "recursion limit exceeded"))?;
+            .ok_or_else(|| self.scan_error(ErrorKind::RecursionLimitExceeded))?;
         Ok(())
     }
 
@@ -2691,17 +2612,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn fetch_block_entry(&mut self) -> ScanResult {
         if self.flow_level > 0 {
             // - * only allowed in block
-            return Err(ScanError::new_str(
-                self.mark,
-                r#""-" is only valid inside a block"#,
-            ));
+            return Err(self.scan_error(ErrorKind::BlockEntryInFlowCollection));
         }
         // Check if we are allowed to start a new entry.
         if !self.simple_key_allowed {
-            return Err(ScanError::new_str(
-                self.mark,
-                "block sequence entries are not allowed in this context",
-            ));
+            return Err(self.scan_error(ErrorKind::BlockSequenceEntryNotAllowed));
         }
 
         // Skip over the `-`.
@@ -2715,10 +2630,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.input.lookahead(2);
         if found_tabs && self.input.next_char_is('-') && is_blank_or_breakz(self.input.peek_nth(1))
         {
-            return Err(ScanError::new_str(
-                self.mark,
-                "'-' must be followed by a valid YAML whitespace",
-            ));
+            return Err(self.scan_error(ErrorKind::InvalidBlockEntryWhitespace));
         }
 
         self.skip_ws_to_eol(SkipTabs::No)?;
@@ -2742,7 +2654,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if let Some((mark, bracket)) = self.flow_markers.pop() {
             return Err(ScanError::new(
                 mark,
-                format!("unclosed bracket '{bracket}'"),
+                ErrorKind::UnclosedFlowCollection { open: bracket },
             ));
         }
 
@@ -2802,20 +2714,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(1);
             if self.input.next_is_digit() {
                 if self.input.peek() == '0' {
-                    return Err(ScanError::new_str(
-                        start_mark,
-                        "while scanning a block scalar, found an indentation indicator equal to 0",
-                    ));
+                    return Err(ScanError::new(start_mark, ErrorKind::ZeroBlockScalarIndent));
                 }
                 increment = (self.input.peek() as usize) - ('0' as usize);
                 self.skip_non_blank();
             }
         } else if self.input.next_is_digit() {
             if self.input.peek() == '0' {
-                return Err(ScanError::new_str(
-                    start_mark,
-                    "while scanning a block scalar, found an indentation indicator equal to 0",
-                ));
+                return Err(ScanError::new(start_mark, ErrorKind::ZeroBlockScalarIndent));
             }
 
             increment = (self.input.peek() as usize) - ('0' as usize);
@@ -2836,9 +2742,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // Check if we are at the end of the line.
         self.input.lookahead(1);
         if !self.input.next_is_breakz() {
-            return Err(ScanError::new_str(
+            return Err(ScanError::new(
                 start_mark,
-                "while scanning a block scalar, did not find expected comment or line break",
+                ErrorKind::InvalidBlockScalarHeader,
             ));
         }
 
@@ -2848,10 +2754,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if self.input.look_ch() == '\t' {
-            return Err(ScanError::new_str(
-                start_mark,
-                "a block scalar content cannot start with a tab",
-            ));
+            return Err(ScanError::new(start_mark, ErrorKind::TabAtBlockScalarStart));
         }
 
         if increment > 0 {
@@ -2907,16 +2810,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     // empty scalar when the next line is a document marker or comment.
                     // In this case, the scalar is terminated rather than under-indented.
                 } else {
-                    return Err(ScanError::new_str(
-                        self.mark,
-                        "wrongly indented line in block scalar",
-                    ));
+                    return Err(self.scan_error(ErrorKind::InvalidBlockScalarIndent));
                 }
             } else {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "wrongly indented line in block scalar",
-                ));
+                return Err(self.scan_error(ErrorKind::InvalidBlockScalarIndent));
             }
         }
 
@@ -3154,14 +3051,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.input.lookahead(4);
 
             if self.mark.col == 0 && self.input.next_is_document_indicator() {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     start_mark,
-                    "while scanning a quoted scalar, found unexpected document indicator",
+                    ErrorKind::DocumentIndicatorInQuotedScalar,
                 ));
             }
 
             if self.input.next_is_z() {
-                return Err(ScanError::new_str(start_mark, "unclosed quote"));
+                return Err(ScanError::new(start_mark, ErrorKind::UnclosedQuotedScalar));
             }
 
             // Do not enforce block indentation inside quoted (flow) scalars.
@@ -3208,10 +3105,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     // Consume a space or a tab character.
                     if leading_blanks {
                         if self.input.peek() == '\t' && (self.mark.col as isize) < self.indent {
-                            return Err(ScanError::new_str(
-                                self.mark,
-                                "tab cannot be used as indentation",
-                            ));
+                            return Err(self.scan_error(ErrorKind::TabInIndentation));
                         }
                         self.skip_blank();
                     } else {
@@ -3290,10 +3184,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 let next_ch = self.input.peek();
                 let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
                 if !is_closing_quote && (self.mark.col as isize) <= self.indent {
-                    return Err(ScanError::new_str(
-                        self.mark,
-                        "invalid indentation in multiline quoted scalar",
-                    ));
+                    return Err(self.scan_error(ErrorKind::InvalidQuotedScalarIndent));
                 }
             }
 
@@ -3336,12 +3227,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Inside a flow context, this is allowed.
             ':' if self.flow_level > 0 => {}
             _ => {
-                let message = if single {
-                    "invalid trailing content after single-quoted scalar"
+                let kind = if single {
+                    ErrorKind::InvalidTrailingSingleQuotedScalar
                 } else {
-                    "invalid trailing content after double-quoted scalar"
+                    ErrorKind::InvalidTrailingDoubleQuotedScalar
                 };
-                return Err(ScanError::new_str(self.mark, message));
+                return Err(self.scan_error(kind));
             }
         }
 
@@ -3367,10 +3258,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     Cow::Borrowed(slice)
                 } else {
                     let slice = self.input.slice_bytes(start, end).ok_or_else(|| {
-                        ScanError::new_str(
-                            start_mark,
-                            "internal error: input advertised offsets but did not provide a slice",
-                        )
+                        ScanError::new(start_mark, ErrorKind::InputOffsetsWithoutSlice)
                     })?;
                     Cow::Owned(slice.to_owned())
                 }
@@ -3501,9 +3389,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             'u' => code_length = 4,
             'U' => code_length = 8,
             _ => {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     *start_mark,
-                    "while parsing a quoted scalar, found unknown escape character",
+                    ErrorKind::UnknownQuotedScalarEscape,
                 ))
             }
         }
@@ -3516,9 +3404,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             for i in 0..code_length {
                 let c = self.input.peek_nth(i);
                 if !is_hex(c) {
-                    return Err(ScanError::new_str(
+                    return Err(ScanError::new(
                         *start_mark,
-                        "while parsing a quoted scalar, did not find expected hexadecimal number",
+                        ErrorKind::InvalidQuotedScalarHexEscape,
                     ));
                 }
                 value = (value << 4) + as_hex(c);
@@ -3536,9 +3424,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     for i in 0..4 {
                         let c = self.input.peek_nth(i);
                         if !is_hex(c) {
-                            return Err(ScanError::new_str(
+                            return Err(ScanError::new(
                                 *start_mark,
-                                "while parsing a quoted scalar, did not find expected hexadecimal number for low surrogate",
+                                ErrorKind::InvalidLowSurrogateHexEscape,
                             ));
                         }
                         low_value = (low_value << 4) + as_hex(c);
@@ -3547,29 +3435,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         value = 0x10000 + (((value - 0xD800) << 10) | (low_value - 0xDC00));
                         self.skip_n_non_blank(4);
                     } else {
-                        return Err(ScanError::new_str(
-                            *start_mark,
-                            "while parsing a quoted scalar, found invalid low surrogate",
-                        ));
+                        return Err(ScanError::new(*start_mark, ErrorKind::InvalidLowSurrogate));
                     }
                 } else {
-                    return Err(ScanError::new_str(
-                        *start_mark,
-                        "while parsing a quoted scalar, found high surrogate without following low surrogate",
-                    ));
+                    return Err(ScanError::new(*start_mark, ErrorKind::MissingLowSurrogate));
                 }
             } else if code_length == 4 && (0xDC00..=0xDFFF).contains(&value) {
-                return Err(ScanError::new_str(
-                    *start_mark,
-                    "while parsing a quoted scalar, found unpaired low surrogate",
-                ));
+                return Err(ScanError::new(*start_mark, ErrorKind::UnpairedLowSurrogate));
             }
 
             let Some(ch) = char::from_u32(value) else {
-                return Err(ScanError::new_str(
-                    *start_mark,
-                    "while parsing a quoted scalar, found invalid Unicode character escape code",
-                ));
+                return Err(ScanError::new(*start_mark, ErrorKind::InvalidUnicodeEscape));
             };
             ret = ch;
         }
@@ -3598,9 +3474,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let start_mark = self.mark;
 
         if self.flow_level > 0 && (start_mark.col as isize) < indent {
-            return Err(ScanError::new_str(
+            return Err(ScanError::new(
                 start_mark,
-                "invalid indentation in flow construct",
+                ErrorKind::InvalidFlowScalarIndent,
             ));
         }
 
@@ -3630,10 +3506,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
 
             if self.flow_level > 0 && self.input.peek() == '-' && is_flow(self.input.peek_nth(1)) {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "plain scalar cannot start with '-' followed by ,[]{}",
-                ));
+                return Err(self.scan_error(ErrorKind::PlainScalarStartsWithDashFlowIndicator));
             }
 
             if !self.input.next_is_blank_or_breakz()
@@ -3707,10 +3580,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         // empty. Skip to the end of the line.
                         self.skip_ws_to_eol(SkipTabs::Yes)?;
                         if !self.input.next_is_breakz() {
-                            return Err(ScanError::new_str(
-                                start_mark,
-                                "while scanning a plain scalar, found a tab",
-                            ));
+                            return Err(ScanError::new(start_mark, ErrorKind::TabInPlainScalar));
                         }
                     } else {
                         self.skip_blank();
@@ -3744,9 +3614,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // `fetch_plain_scalar` must absolutely consume at least one byte. Otherwise,
             // `fetch_next_token` will never stop calling it. An empty plain scalar may happen with
             // erroneous inputs such as "{...".
-            Err(ScanError::new_str(
+            Err(ScanError::new(
                 start_mark,
-                "unexpected end of plain scalar",
+                ErrorKind::UnexpectedEndOfPlainScalar,
             ))
         } else {
             let contents = if let (Some(start), Some(end)) =
@@ -3772,10 +3642,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.flow_level == 0 {
             // Check if we are allowed to start a new key (not necessarily simple).
             if !self.simple_key_allowed {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "mapping keys are not allowed in this context",
-                ));
+                return Err(self.scan_error(ErrorKind::MappingKeyNotAllowed));
             }
             self.roll_indent(
                 start_mark.col,
@@ -3802,10 +3669,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.explicit_key_tab_check_pending = false;
         let stopped_after_comment = self.skip_yaml_whitespace(true)?;
         if self.input.peek() == '\t' {
-            return Err(ScanError::new_str(
-                self.mark(),
-                "tabs disallowed in this context",
-            ));
+            return Err(self.scan_error(ErrorKind::TabNotAllowed));
         }
         self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
@@ -3837,10 +3701,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // flow character), but the ']' is not the value. The value is an invisible empty
         // space which is represented as null ('~').
         if self.mark.index() != self.adjacent_value_allowed_at && (nc == '[' || nc == '{') {
-            return Err(ScanError::new_str(
-                self.mark,
-                "':' may not precede any of `[{` in flow mapping",
-            ));
+            return Err(self.scan_error(ErrorKind::FlowMappingValueAdjacentCollection));
         }
 
         self.fetch_value()
@@ -3875,10 +3736,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if !whitespace.has_valid_yaml_ws()
                 && (self.input.peek() == '-' || self.input.next_is_alpha())
             {
-                return Err(ScanError::new_str(
-                    self.mark,
-                    "':' must be followed by a valid YAML whitespace",
-                ));
+                return Err(self.scan_error(ErrorKind::InvalidMappingValueWhitespace));
             }
         }
 
@@ -3889,10 +3747,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.insert_token(token_index, tok);
             if is_implicit_flow_mapping {
                 if sk.mark.line < start_mark.line {
-                    return Err(ScanError::new_str(
-                        start_mark,
-                        "illegal placement of ':' indicator",
-                    ));
+                    return Err(ScanError::new(start_mark, ErrorKind::InvalidColonPlacement));
                 }
                 self.insert_token(
                     token_index,
@@ -3919,9 +3774,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
                 if !self.simple_key_allowed {
-                    return Err(ScanError::new_str(
+                    return Err(ScanError::new(
                         start_mark,
-                        "mapping values are not allowed in this context",
+                        ErrorKind::MappingValueNotAllowed,
                     ));
                 }
 
@@ -4121,15 +3976,17 @@ mod test {
         borrow::{Cow, ToOwned},
         rc::Rc,
         string::String,
+        vec,
         vec::Vec,
     };
     use core::cell::Cell;
 
+    use crate::error::{ErrorKind, ScanError};
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{
-            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, ScanError,
-            Scanner, Span, TEncoding, Token, TokenType,
+            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
+            TEncoding, Token, TokenType,
         },
     };
 
@@ -4471,10 +4328,7 @@ mod test {
 
         let error = scanner.scan_comment_token().unwrap_err();
 
-        assert_eq!(
-            error.info(),
-            "internal error: input advertised offsets but did not provide a slice"
-        );
+        assert_eq!(error.kind(), ErrorKind::InputOffsetsWithoutSlice);
     }
 
     #[test]
@@ -4647,7 +4501,10 @@ mod test {
 
         let error = scanner.next_token().unwrap_err();
 
-        assert!(error.info().contains("unexpected character"));
+        assert_eq!(
+            error.kind(),
+            ErrorKind::UnexpectedCharacter { character: '@' }
+        );
     }
 
     /// Ensure anchors scanned from `StrInput` are returned as `Cow::Borrowed`.
@@ -4837,10 +4694,14 @@ mod test {
 
     #[test]
     fn secondary_tag_requires_suffix_in_borrowed_and_buffered_paths() {
-        let expected = "while parsing a tag, did not find expected tag URI";
-
-        assert_eq!(first_scanner_error_info("!! value\n"), expected);
-        assert_eq!(first_buffered_scanner_error_info("!! value\n"), expected);
+        assert_eq!(
+            first_scanner_error_kind("!! value\n"),
+            ErrorKind::MissingTagUri
+        );
+        assert_eq!(
+            first_buffered_scanner_error_kind("!! value\n"),
+            ErrorKind::MissingTagUri
+        );
     }
 
     #[test]
@@ -5111,17 +4972,17 @@ mod test {
         assert!(matches!(owned, super::FlowScalarBuf::Owned(ref s) if s == "owned"));
     }
 
-    fn first_scanner_error_info(input: &str) -> String {
-        first_scanner_error(input).info().to_owned()
+    fn first_scanner_error_kind(input: &str) -> ErrorKind {
+        first_scanner_error(input).kind()
     }
 
-    fn first_buffered_scanner_error_info(input: &str) -> String {
+    fn first_buffered_scanner_error_kind(input: &str) -> ErrorKind {
         let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
         loop {
             match scanner.next_token() {
                 Ok(Some(_)) => {}
                 Ok(None) => panic!("expected scanner error"),
-                Err(error) => return error.info().to_owned(),
+                Err(error) => return error.kind(),
             }
         }
     }
@@ -5168,7 +5029,7 @@ mod test {
         let error = scanner
             .get_error()
             .expect("scanner should retain the error");
-        assert_eq!(error.info(), "unclosed quote");
+        assert_eq!(error.kind(), ErrorKind::UnclosedQuotedScalar);
         assert!(scanner.next().is_none());
     }
 
@@ -5190,68 +5051,68 @@ mod test {
     #[test]
     fn directive_name_must_be_present() {
         assert_eq!(
-            first_scanner_error_info("%\n"),
-            "while scanning a directive, could not find expected directive name"
+            first_scanner_error_kind("%\n"),
+            ErrorKind::MissingDirectiveName
         );
     }
 
     #[test]
     fn yaml_directive_requires_dot_between_version_numbers() {
         assert_eq!(
-            first_scanner_error_info("%YAML 1\n"),
-            "while scanning a YAML directive, did not find expected digit or '.' character"
+            first_scanner_error_kind("%YAML 1\n"),
+            ErrorKind::MissingYamlVersionSeparator
         );
     }
 
     #[test]
     fn yaml_directive_requires_major_version_number() {
         assert_eq!(
-            first_scanner_error_info("%YAML .2\n"),
-            "while scanning a YAML directive, did not find expected version number"
+            first_scanner_error_kind("%YAML .2\n"),
+            ErrorKind::MissingYamlVersion
         );
     }
 
     #[test]
     fn yaml_directive_rejects_extremely_long_version_number() {
         assert_eq!(
-            first_scanner_error_info("%YAML 1234567890.2\n"),
-            "while scanning a YAML directive, found extremely long version number"
+            first_scanner_error_kind("%YAML 1234567890.2\n"),
+            ErrorKind::YamlVersionTooLong
         );
     }
 
     #[test]
     fn tag_directive_handle_must_end_with_bang() {
         assert_eq!(
-            first_scanner_error_info("%TAG !bad tag:example.com,2024:\n"),
-            "while parsing a tag directive, did not find expected '!'"
+            first_scanner_error_kind("%TAG !bad tag:example.com,2024:\n"),
+            ErrorKind::ExpectedTagDirectiveBang
         );
     }
 
     #[test]
     fn tag_directive_handle_must_start_with_bang() {
         assert_eq!(
-            first_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
-            "while scanning a tag, did not find expected '!'"
+            first_scanner_error_kind("%TAG bad! tag:example.com,2024:\n"),
+            ErrorKind::ExpectedTagBang
         );
         assert_eq!(
-            first_buffered_scanner_error_info("%TAG bad! tag:example.com,2024:\n"),
-            "while scanning a tag, did not find expected '!'"
+            first_buffered_scanner_error_kind("%TAG bad! tag:example.com,2024:\n"),
+            ErrorKind::ExpectedTagBang
         );
     }
 
     #[test]
     fn tag_directive_prefix_must_start_with_tag_character() {
         assert_eq!(
-            first_scanner_error_info("%TAG !e! `bad\n"),
-            "invalid global tag character"
+            first_scanner_error_kind("%TAG !e! `bad\n"),
+            ErrorKind::InvalidGlobalTagCharacter
         );
     }
 
     #[test]
     fn tag_directive_prefix_must_end_before_invalid_content() {
         assert_eq!(
-            first_scanner_error_info("%TAG !e! tag:example.com^suffix\n"),
-            "while scanning TAG, did not find expected whitespace or line break"
+            first_scanner_error_kind("%TAG !e! tag:example.com^suffix\n"),
+            ErrorKind::InvalidTagDirectiveTerminator
         );
     }
 
@@ -5294,119 +5155,133 @@ mod test {
     #[test]
     fn tag_requires_separation_after_suffix() {
         assert_eq!(
-            first_scanner_error_info("!foo,bar\n"),
-            "while scanning a tag, did not find expected whitespace or line break"
+            first_scanner_error_kind("!foo,bar\n"),
+            ErrorKind::InvalidTagTerminator
         );
     }
 
     #[test]
     fn verbatim_tag_requires_uri() {
         assert_eq!(
-            first_scanner_error_info("!<> foo\n"),
-            "while parsing a tag, did not find expected tag URI"
+            first_scanner_error_kind("!<> foo\n"),
+            ErrorKind::MissingTagUri
         );
     }
 
     #[test]
     fn verbatim_tag_requires_closing_angle_bracket() {
         assert_eq!(
-            first_scanner_error_info("!<tag:yaml.org,2002:str foo\n"),
-            "while scanning a verbatim tag, did not find the expected '>'"
+            first_scanner_error_kind("!<tag:yaml.org,2002:str foo\n"),
+            ErrorKind::UnclosedVerbatimTag
         );
     }
 
     #[test]
     fn tag_uri_escape_requires_hex_digits() {
         assert_eq!(
-            first_scanner_error_info("!!bad%zz foo\n"),
-            "while parsing a tag, found an invalid escape sequence"
+            first_scanner_error_kind("!!bad%zz foo\n"),
+            ErrorKind::InvalidTagEscape
         );
     }
 
     #[test]
     fn tag_uri_escape_rejects_bad_leading_utf8_byte() {
         assert_eq!(
-            first_scanner_error_info("!!bad%80 foo\n"),
-            "while parsing a tag, found an incorrect leading UTF-8 byte"
+            first_scanner_error_kind("!!bad%80 foo\n"),
+            ErrorKind::InvalidTagUtf8LeadingByte
         );
     }
 
     #[test]
     fn tag_uri_escape_rejects_bad_trailing_utf8_byte() {
         assert_eq!(
-            first_scanner_error_info("!!bad%C2%41 foo\n"),
-            "while parsing a tag, found an incorrect trailing UTF-8 byte"
+            first_scanner_error_kind("!!bad%C2%41 foo\n"),
+            ErrorKind::InvalidTagUtf8TrailingByte
         );
     }
 
     #[test]
     fn tag_uri_escape_rejects_invalid_utf8_codepoint() {
         assert_eq!(
-            first_scanner_error_info("!!bad%F4%90%80%80 foo\n"),
-            "while parsing a tag, found an invalid UTF-8 codepoint"
+            first_scanner_error_kind("!!bad%F4%90%80%80 foo\n"),
+            ErrorKind::InvalidTagUtf8
         );
     }
 
     #[test]
     fn anchors_and_aliases_require_names() {
-        let expected =
-            "while scanning an anchor or alias, did not find expected alphabetic or numeric character";
-
-        assert_eq!(first_scanner_error_info("& \n"), expected);
-        assert_eq!(first_scanner_error_info("* \n"), expected);
+        assert_eq!(
+            first_scanner_error_kind("& \n"),
+            ErrorKind::MissingAnchorOrAliasName
+        );
+        assert_eq!(
+            first_scanner_error_kind("* \n"),
+            ErrorKind::MissingAnchorOrAliasName
+        );
     }
 
     #[test]
     fn document_end_marker_rejects_trailing_content() {
         assert_eq!(
-            first_scanner_error_info("... trailing\n"),
-            "invalid content after document end marker"
+            first_scanner_error_kind("... trailing\n"),
+            ErrorKind::InvalidDocumentEnd
         );
     }
 
     #[test]
     fn reserved_indicators_are_rejected_outside_directives() {
+        let error = first_scanner_error(" @\n");
+
         assert_eq!(
-            first_scanner_error_info(" @\n"),
-            "unexpected character: `@'"
+            error.kind(),
+            ErrorKind::UnexpectedCharacter { character: '@' }
         );
     }
 
     #[test]
     fn flow_block_entry_indicator_is_rejected() {
         assert_eq!(
-            first_scanner_error_info("[- ]\n"),
-            r#""-" is only valid inside a block"#
+            first_scanner_error_kind("[- ]\n"),
+            ErrorKind::BlockEntryInFlowCollection
         );
     }
 
     #[test]
     fn block_entry_after_tabbed_separator_reports_specific_error() {
         assert_eq!(
-            first_scanner_error_info("-\t- value\n"),
-            "'-' must be followed by a valid YAML whitespace"
+            first_scanner_error_kind("-\t- value\n"),
+            ErrorKind::InvalidBlockEntryWhitespace
         );
     }
 
     #[test]
     fn document_indicator_reports_unclosed_flow_collection() {
-        assert_eq!(first_scanner_error_info("[\n---\n"), "unclosed bracket '['");
+        let error = first_scanner_error("[\n---\n");
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::UnclosedFlowCollection { open: '[' }
+        );
     }
 
     #[test]
     fn block_scalar_header_rejects_trailing_content() {
         assert_eq!(
-            first_scanner_error_info("|+ trailing\n"),
-            "while scanning a block scalar, did not find expected comment or line break"
+            first_scanner_error_kind("|+ trailing\n"),
+            ErrorKind::InvalidBlockScalarHeader
         );
     }
 
     #[test]
     fn block_scalar_rejects_zero_indent_indicator() {
-        let expected = "while scanning a block scalar, found an indentation indicator equal to 0";
-
-        assert_eq!(first_scanner_error_info("|0\n"), expected);
-        assert_eq!(first_scanner_error_info("|+0\n"), expected);
+        assert_eq!(
+            first_scanner_error_kind("|0\n"),
+            ErrorKind::ZeroBlockScalarIndent
+        );
+        assert_eq!(
+            first_scanner_error_kind("|+0\n"),
+            ErrorKind::ZeroBlockScalarIndent
+        );
     }
 
     #[test]
@@ -5434,72 +5309,72 @@ mod test {
     #[test]
     fn root_explicit_indent_block_scalar_rejects_underindented_content() {
         assert_eq!(
-            first_scanner_error_info("|2\nx\n"),
-            "wrongly indented line in block scalar"
+            first_scanner_error_kind("|2\nx\n"),
+            ErrorKind::InvalidBlockScalarIndent
         );
     }
 
     #[test]
     fn quoted_scalar_rejects_document_indicator_at_line_start() {
         assert_eq!(
-            first_scanner_error_info("\"one\n---\ntwo\"\n"),
-            "while scanning a quoted scalar, found unexpected document indicator"
+            first_scanner_error_kind("\"one\n---\ntwo\"\n"),
+            ErrorKind::DocumentIndicatorInQuotedScalar
         );
     }
 
     #[test]
     fn quoted_scalar_rejects_tab_indentation_after_line_break() {
         assert_eq!(
-            first_scanner_error_info("a: \"one\n\tbad\"\n"),
-            "tab cannot be used as indentation"
+            first_scanner_error_kind("a: \"one\n\tbad\"\n"),
+            ErrorKind::TabInIndentation
         );
     }
 
     #[test]
     fn quoted_scalar_rejects_underindented_continuation() {
         assert_eq!(
-            first_scanner_error_info("a: \"one\nbad\"\n"),
-            "invalid indentation in multiline quoted scalar"
+            first_scanner_error_kind("a: \"one\nbad\"\n"),
+            ErrorKind::InvalidQuotedScalarIndent
         );
     }
 
     #[test]
     fn quoted_scalar_trailing_content_error_names_quote_style() {
         assert_eq!(
-            first_scanner_error_info("'foo' trailing\n"),
-            "invalid trailing content after single-quoted scalar"
+            first_scanner_error_kind("'foo' trailing\n"),
+            ErrorKind::InvalidTrailingSingleQuotedScalar
         );
         assert_eq!(
-            first_scanner_error_info("\"foo\" trailing\n"),
-            "invalid trailing content after double-quoted scalar"
+            first_scanner_error_kind("\"foo\" trailing\n"),
+            ErrorKind::InvalidTrailingDoubleQuotedScalar
         );
     }
 
     #[test]
     fn quoted_scalar_escape_errors_cover_hex_and_surrogate_edges() {
         assert_eq!(
-            first_scanner_error_info("\"\\xG0\"\n"),
-            "while parsing a quoted scalar, did not find expected hexadecimal number"
+            first_scanner_error_kind("\"\\xG0\"\n"),
+            ErrorKind::InvalidQuotedScalarHexEscape
         );
         assert_eq!(
-            first_scanner_error_info("\"\\uD800\\uGGGG\"\n"),
-            "while parsing a quoted scalar, did not find expected hexadecimal number for low surrogate"
+            first_scanner_error_kind("\"\\uD800\\uGGGG\"\n"),
+            ErrorKind::InvalidLowSurrogateHexEscape
         );
         assert_eq!(
-            first_scanner_error_info("\"\\uD800\\u0041\"\n"),
-            "while parsing a quoted scalar, found invalid low surrogate"
+            first_scanner_error_kind("\"\\uD800\\u0041\"\n"),
+            ErrorKind::InvalidLowSurrogate
         );
         assert_eq!(
-            first_scanner_error_info("\"\\U00110000\"\n"),
-            "while parsing a quoted scalar, found invalid Unicode character escape code"
+            first_scanner_error_kind("\"\\U00110000\"\n"),
+            ErrorKind::InvalidUnicodeEscape
         );
     }
 
     #[test]
     fn indented_flow_scalar_reports_invalid_indentation() {
         assert_eq!(
-            first_scanner_error_info("a:\n  [\nfoo]\n"),
-            "invalid indentation"
+            first_scanner_error_kind("a:\n  [\nfoo]\n"),
+            ErrorKind::InvalidIndentation
         );
     }
 
@@ -5507,45 +5382,41 @@ mod test {
     fn required_simple_key_requires_value_at_stream_end() {
         let error = first_scanner_error("a:\n&b\n- c\n");
 
-        assert_eq!(error.info(), "simple key expected ':'");
+        assert_eq!(error.kind(), ErrorKind::SimpleKeyExpected);
         assert_eq!(error.marker().index(), 3);
         assert_eq!(error.marker().line(), 2);
         assert_eq!(error.marker().col(), 0);
-        assert_eq!(
-            alloc::format!("{error}"),
-            "simple key expected ':' at char 3 line 2 column 1"
-        );
     }
 
     #[test]
     fn plain_scalar_rejects_dash_before_flow_indicator() {
         assert_eq!(
-            first_scanner_error_info("[-]\n"),
-            "plain scalar cannot start with '-' followed by ,[]{}"
+            first_scanner_error_kind("[-]\n"),
+            ErrorKind::PlainScalarStartsWithDashFlowIndicator
         );
     }
 
     #[test]
     fn explicit_key_rejects_tab_after_indicator() {
         assert_eq!(
-            first_scanner_error_info("? \tfoo\n"),
-            "tabs disallowed in this context"
+            first_scanner_error_kind("? \tfoo\n"),
+            ErrorKind::TabNotAllowed
         );
     }
 
     #[test]
     fn flow_mapping_rejects_adjacent_collection_value_after_plain_key() {
         assert_eq!(
-            first_scanner_error_info("[a:[]]\n"),
-            "':' may not precede any of `[{` in flow mapping"
+            first_scanner_error_kind("[a:[]]\n"),
+            ErrorKind::FlowMappingValueAdjacentCollection
         );
     }
 
     #[test]
     fn implicit_flow_mapping_colon_cannot_move_to_next_line() {
         assert_eq!(
-            first_scanner_error_info("[foo\n: bar]\n"),
-            "illegal placement of ':' indicator"
+            first_scanner_error_kind("[foo\n: bar]\n"),
+            ErrorKind::InvalidColonPlacement
         );
     }
 
@@ -5566,7 +5437,7 @@ mod test {
         let error = scanner
             .fetch_value()
             .expect_err("stale simple key should be reported as a scan error");
-        assert_eq!(error.info(), "simple key is no longer valid");
+        assert_eq!(error.kind(), ErrorKind::InvalidSimpleKey);
     }
 
     #[test]

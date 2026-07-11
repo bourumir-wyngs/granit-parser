@@ -1,5 +1,6 @@
 use crate::{
     char_traits::{is_blank_or_breakz, is_breakz, is_flow},
+    error::ErrorKind,
     input::{BorrowedInput, Input, SkipTabs},
 };
 use alloc::string::String;
@@ -237,7 +238,7 @@ impl Input for StrInput<'_> {
         }
     }
 
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, &'static str>) {
+    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
         assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
 
         let mut new_str = self.buffer;
@@ -270,10 +271,7 @@ impl Input for StrInput<'_> {
 
         if !new_str.is_empty() && new_str.as_bytes()[0] == b'#' {
             if !encountered_tab && !has_yaml_ws {
-                return (
-                    chars_consumed,
-                    Err("comments must be separated from other tokens by whitespace"),
-                );
+                return (chars_consumed, Err(ErrorKind::CommentNotSeparated));
             }
 
             // Skip remaining characters until we hit a breakz.
@@ -583,7 +581,10 @@ fn split_first_char(s: &str) -> Option<(char, &str)> {
 mod test {
     use alloc::string::String;
 
-    use crate::input::{BorrowedInput, Input, SkipTabs};
+    use crate::{
+        error::ErrorKind,
+        input::{BorrowedInput, Input, SkipTabs},
+    };
 
     use super::StrInput;
 
@@ -701,10 +702,7 @@ mod test {
         let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
 
         assert_eq!(consumed, 0);
-        assert_eq!(
-            result.err(),
-            Some("comments must be separated from other tokens by whitespace")
-        );
+        assert_eq!(result.err(), Some(ErrorKind::CommentNotSeparated));
         assert_eq!(input.peek(), '#');
     }
 

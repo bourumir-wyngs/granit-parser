@@ -8,7 +8,7 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     parser_stack::{ParserStack, ReplayParser},
-    BorrowedInput, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle, ScanError, Span,
+    BorrowedInput, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle, Span,
     SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver, TryLoadError,
 };
 
@@ -477,10 +477,7 @@ fn test_include_resolver() {
         if name == "inc1" {
             Ok("b: 2".to_string())
         } else {
-            Err(granit_parser::ScanError::new(
-                granit_parser::Marker::new(0, 1, 0),
-                "Not found".to_string(),
-            ))
+            unreachable!("this test only resolves inc1")
         }
     });
 
@@ -901,10 +898,7 @@ fn parser_stack_push_include_resolves_included_content() {
     stack.push_str_parser(Parser::new_from_str("a: 1"), "parent".to_string());
     stack.set_resolver(|name| match name {
         "child" => Ok("b: 2".to_string()),
-        _ => Err(ScanError::new(
-            Marker::new(0, 1, 0),
-            "Not found".to_string(),
-        )),
+        _ => unreachable!("this test only resolves child"),
     });
 
     stack.push_include("child").unwrap();
@@ -935,10 +929,7 @@ fn parser_stack_push_include_after_exhaustion_reactivates_stack() {
     let mut stack: MyStack = ParserStack::new();
     stack.set_resolver(|name| match name {
         "child" => Ok("b: 2".to_string()),
-        _ => Err(ScanError::new(
-            Marker::new(0, 1, 0),
-            "Not found".to_string(),
-        )),
+        _ => unreachable!("this test only resolves child"),
     });
 
     while stack.next_event().is_some() {}

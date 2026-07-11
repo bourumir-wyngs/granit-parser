@@ -1,5 +1,5 @@
 use crate::{
-    error::ScanError,
+    error::{ErrorKind, ScanError},
     input::{str::StrInput, BorrowedInput, BufferedInput},
     parser::{Event, ParseResult, Parser, ParserTrait, SpannedEventReceiver},
     scanner::Span,
@@ -224,7 +224,7 @@ where
         } else {
             Err(ScanError::new(
                 crate::scanner::Marker::new(0, 1, 0),
-                String::from("No include resolver set for parser stack."),
+                ErrorKind::MissingIncludeResolver,
             ))
         }
     }
@@ -410,9 +410,9 @@ where
                         }
                         Some(Ok(_)) => {
                             self.pop_parser_and_propagate_anchor_offset();
-                            return Err(ScanError::new_str(
+                            return Err(ScanError::new(
                                 span.start,
-                                "multiple documents not supported here",
+                                ErrorKind::MultipleDocumentsUnsupported,
                             ));
                         }
                         Some(Err(e)) => {

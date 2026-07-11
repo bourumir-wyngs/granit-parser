@@ -20,7 +20,7 @@ fn block_scalar_indents(yaml: &str) -> Vec<(String, Option<usize>)> {
 }
 
 fn first_error_info(yaml: &str) -> Option<String> {
-    Parser::new_from_str(yaml).find_map(|event| event.err().map(|err| err.info().to_owned()))
+    Parser::new_from_str(yaml).find_map(|event| event.err().map(|err| err.info()))
 }
 
 #[test]

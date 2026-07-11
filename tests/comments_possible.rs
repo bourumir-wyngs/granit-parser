@@ -1,5 +1,6 @@
 use granit_parser::{
-    input::SkipTabs, BorrowedInput, Event, Input, Parser, ScanError, Scanner, Span, StrInput, Token,
+    input::SkipTabs, BorrowedInput, ErrorKind, Event, Input, Parser, ScanError, Scanner, Span,
+    StrInput, Token,
 };
 
 struct CommentEnabledStrInput<'input> {
@@ -64,7 +65,7 @@ impl Input for CommentEnabledStrInput<'_> {
         true
     }
 
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, &'static str>) {
+    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
         self.inner.skip_ws_to_eol(skip_tabs)
     }
 

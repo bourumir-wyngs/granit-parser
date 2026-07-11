@@ -26,7 +26,7 @@ fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
 fn first_error_info(input: &str) -> String {
     for event in Parser::new_from_str(input) {
         if let Err(error) = event {
-            return error.info().to_owned();
+            return error.info();
         }
     }
     panic!("expected parser error");

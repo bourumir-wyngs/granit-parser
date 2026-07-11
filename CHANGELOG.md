@@ -1,4 +1,17 @@
 # Changelog
+
+## v0.0.8
+- Added the public, non-exhaustive `ErrorKind` enum and `ScanError::kind()` for matching errors
+  without relying on human-readable text. Variants carry relevant structured details where needed,
+  such as the opening and closing characters for mismatched flow collections. `ScanError` now
+  stores its marker and `ErrorKind`, while descriptions are rendered by `ErrorKind`'s `Display`
+  implementation. 
+- BREAKING CHANGE: ScanError is no longer user constructable (and we think should not be)
+- Added the default `error_messages` feature. Disabling default features removes human-readable
+  error text: `ErrorKind`'s `Display` implementation and `ScanError::info()` return an empty string,
+  while structured error kinds and source markers remain available.
+
+
 ## v0.0.7
 - Added `YamlVersion` and changed `Event::DocumentStart` to
   `DocumentStart(bool, Option<YamlVersion>)`, emitting the `%YAML` directive

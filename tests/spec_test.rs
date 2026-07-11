@@ -113,7 +113,7 @@ fn str_to_test_error_info(docs: &str) -> String {
     assert_eq!(str_error.info(), iter_error.info());
     assert_eq!(str_error.marker(), iter_error.marker());
 
-    str_error.info().to_owned()
+    str_error.info()
 }
 
 macro_rules! assert_next {

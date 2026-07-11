@@ -61,7 +61,7 @@ fn chars_pulled_until_error(source: &str) -> (usize, String) {
             .expect("parser should emit an event before EOF")
         {
             Ok(_) => {}
-            Err(error) => return (read.get(), error.info().to_owned()),
+            Err(error) => return (read.get(), error.info()),
         }
     }
 }

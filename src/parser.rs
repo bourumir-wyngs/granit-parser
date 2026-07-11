@@ -5,7 +5,7 @@
 //! YAML objects.
 
 use crate::{
-    error::ScanError,
+    error::{ErrorKind, ScanError},
     input::{str::StrInput, BorrowedInput},
     scanner::{Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
     BufferedInput,
@@ -1060,9 +1060,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
 
             if events.len() == MAX_BUFFERED_COMMENT_EVENTS {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     self.peek_token()?.0.start,
-                    "too many consecutive comments before resolving collection entry",
+                    ErrorKind::TooManyComments,
                 ));
             }
 
@@ -1164,30 +1164,28 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
     #[cold]
     fn unexpected_eof(&self) -> ScanError {
-        let info = match self.state {
+        let kind = match self.state {
             State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
-                "unexpected EOF while parsing a flow sequence"
+                ErrorKind::UnexpectedEofFlowSequence
             }
             State::FlowMappingFirstKey
             | State::FlowMappingKey
             | State::FlowMappingValue
-            | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
+            | State::FlowMappingEmptyValue => ErrorKind::UnexpectedEofFlowMapping,
             State::FlowSequenceEntryMappingKey
             | State::FlowSequenceEntryMappingValue
             | State::FlowSequenceEntryMappingEnd
-            | State::FlowNode => "unexpected EOF while parsing an implicit flow mapping",
+            | State::FlowNode => ErrorKind::UnexpectedEofImplicitFlowMapping,
             State::BlockSequenceFirstEntry | State::BlockSequenceEntry | State::BlockNode => {
-                "unexpected EOF while parsing a block sequence"
+                ErrorKind::UnexpectedEofBlockSequence
             }
             State::BlockMappingFirstKey
             | State::BlockMappingKey
             | State::BlockMappingValue
-            | State::BlockNodeOrIndentlessSequence => {
-                "unexpected EOF while parsing a block mapping"
-            }
-            _ => "unexpected eof",
+            | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
+            _ => ErrorKind::UnexpectedEof,
         };
-        ScanError::new_str(self.scanner.mark(), info)
+        ScanError::new(self.scanner.mark(), kind)
     }
 
     fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
@@ -1409,10 +1407,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::StreamStart, span))
             }
-            QueuedToken(span, _) => Err(ScanError::new_str(
-                span.start,
-                "did not find expected <stream-start>",
-            )),
+            QueuedToken(span, _) => Err(ScanError::new(span.start, ErrorKind::ExpectedStreamStart)),
         }
     }
 
@@ -1482,22 +1477,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
                     if version.is_some() {
-                        return Err(ScanError::new_str(
+                        return Err(ScanError::new(
                             span.start,
-                            "duplicate version directive",
+                            ErrorKind::DuplicateVersionDirective,
                         ));
                     }
                     if *major != 1 {
-                        return Err(ScanError::new_str(
+                        return Err(ScanError::new(
                             span.start,
-                            "unsupported YAML major version",
+                            ErrorKind::UnsupportedYamlMajorVersion,
                         ));
                     }
                     version = Some(YamlVersion::new(*major, *minor));
                 }
                 QueuedToken(mark, QueuedTokenType::TagDirective(handle, prefix)) => {
                     if !document_tag_handles.insert(handle.to_string()) {
-                        return Err(ScanError::new_str(mark.start, "the TAG directive must only be given at most once per handle in the same document"));
+                        return Err(ScanError::new(mark.start, ErrorKind::DuplicateTagDirective));
                     }
                     tags.insert(handle.to_string(), prefix.to_string());
                 }
@@ -1538,10 +1533,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::DocumentStart(true, version), mark))
             }
-            QueuedToken(span, _) => Err(ScanError::new_str(
-                span.start,
-                "did not find expected <document start>",
-            )),
+            QueuedToken(span, _) => {
+                Err(ScanError::new(span.start, ErrorKind::ExpectedDocumentStart))
+            }
         }
     }
 
@@ -1605,9 +1599,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 | QueuedTokenType::ReservedDirective(..),
             ) = *self.peek_token()?
             {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     span.start,
-                    "missing explicit document end marker before directive",
+                    ErrorKind::MissingDocumentEndBeforeDirective,
                 ));
             }
             self.state = State::DocumentStart;
@@ -1619,12 +1613,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     fn register_anchor(&mut self, name: Cow<'input, str>, mark: &Span) -> Result<usize, ScanError> {
         // YAML permits anchor names to be reused. Aliases resolve to the most recent definition.
         let new_id = self.anchor_id_count;
-        self.anchor_id_count = self.anchor_id_count.checked_add(1).ok_or_else(|| {
-            ScanError::new_str(
-                mark.start,
-                "while parsing anchor, anchor count exceeded supported limit",
-            )
-        })?;
+        self.anchor_id_count = self
+            .anchor_id_count
+            .checked_add(1)
+            .ok_or_else(|| ScanError::new(mark.start, ErrorKind::AnchorCountOverflow))?;
         self.anchors.insert(name, new_id);
         Ok(new_id)
     }
@@ -1664,12 +1656,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.pop_state();
                 if let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() {
                     match self.anchors.get(&*name) {
-                        None => {
-                            return Err(ScanError::new_str(
-                                span.start,
-                                "while parsing node, found unknown anchor",
-                            ))
-                        }
+                        None => return Err(ScanError::new(span.start, ErrorKind::UnknownAnchor)),
                         Some(id) => return Ok((Event::Alias(*id), span)),
                     }
                 }
@@ -1813,30 +1800,28 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             QueuedToken(span, _) => {
-                let info = match self.state {
+                let kind = match self.state {
                     State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
-                        "unexpected EOF while parsing a flow sequence"
+                        ErrorKind::UnexpectedEofFlowSequence
                     }
                     State::FlowMappingFirstKey
                     | State::FlowMappingKey
                     | State::FlowMappingValue
-                    | State::FlowMappingEmptyValue => "unexpected EOF while parsing a flow mapping",
+                    | State::FlowMappingEmptyValue => ErrorKind::UnexpectedEofFlowMapping,
                     State::FlowSequenceEntryMappingKey
                     | State::FlowSequenceEntryMappingValue
                     | State::FlowSequenceEntryMappingEnd
-                    | State::FlowNode => "unexpected EOF while parsing an implicit flow mapping",
+                    | State::FlowNode => ErrorKind::UnexpectedEofImplicitFlowMapping,
                     State::BlockSequenceFirstEntry
                     | State::BlockSequenceEntry
-                    | State::BlockNode => "unexpected EOF while parsing a block sequence",
+                    | State::BlockNode => ErrorKind::UnexpectedEofBlockSequence,
                     State::BlockMappingFirstKey
                     | State::BlockMappingKey
                     | State::BlockMappingValue
-                    | State::BlockNodeOrIndentlessSequence => {
-                        "unexpected EOF while parsing a block mapping"
-                    }
-                    _ => "while parsing a node, did not find expected node content",
+                    | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
+                    _ => ErrorKind::ExpectedNodeContent,
                 };
-                Err(ScanError::new_str(span.start, info))
+                Err(ScanError::new(span.start, kind))
             }
         }
     }
@@ -1869,9 +1854,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 self.skip();
                 Ok((Event::MappingEnd, mark))
             }
-            QueuedToken(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new(
                 span.start,
-                "while parsing a block mapping, did not find expected key",
+                ErrorKind::ExpectedBlockMappingKey,
             )),
         }
     }
@@ -1977,9 +1962,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                             }
                         }
                         QueuedToken(span, _) => {
-                            return Err(ScanError::new_str(
+                            return Err(ScanError::new(
                                 span.start,
-                                "while parsing a flow mapping, did not find expected ',' or '}'",
+                                ErrorKind::ExpectedFlowMappingSeparator,
                             ))
                         }
                     }
@@ -2115,9 +2100,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             QueuedToken(span, _) if !first => {
-                return Err(ScanError::new_str(
+                return Err(ScanError::new(
                     span.start,
-                    "while parsing a flow sequence, expected ',' or ']'",
+                    ErrorKind::ExpectedFlowSequenceSeparator,
                 ));
             }
             _ => { /* next */ }
@@ -2233,9 +2218,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Ok(self.queue_tail_and_return_first(comments))
                 }
             }
-            QueuedToken(span, _) => Err(ScanError::new_str(
+            QueuedToken(span, _) => Err(ScanError::new(
                 span.start,
-                "while parsing a block collection, did not find expected '-' indicator",
+                ErrorKind::ExpectedBlockSequenceEntry,
             )),
         }
     }
@@ -2372,7 +2357,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 // If the handle is of the form "!foo!", this cannot be a local handle and we need
                 // to error.
                 if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
-                    return Err(ScanError::new_str(span.start, "the handle wasn't declared"));
+                    return Err(ScanError::new(span.start, ErrorKind::UndeclaredTagHandle));
                 }
                 Tag::with_original_handle(handle.to_string(), suffix, original_handle)
             }
@@ -2437,9 +2422,9 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         if !self.scanner.stream_started() || stream_start_buffered {
             let (ev, span) = self.next_event_impl()?;
             if ev != Event::StreamStart {
-                return Err(TryLoadError::scan(ScanError::new_str(
+                return Err(TryLoadError::scan(ScanError::new(
                     span.start,
-                    "did not find expected <stream-start>",
+                    ErrorKind::ExpectedStreamStart,
                 )));
             }
             try_emit(recv, ev, span)?;
@@ -2489,17 +2474,15 @@ impl<'input, T: BorrowedInput<'input>> Iterator for Parser<'input, T> {
 
 #[cfg(test)]
 mod test {
-    use alloc::{
-        borrow::{Cow, ToOwned},
-        string::{String, ToString},
-        vec::Vec,
-    };
+    use alloc::{borrow::Cow, string::ToString, vec, vec::Vec};
+    #[cfg(feature = "error_messages")]
+    use alloc::{format, string::String};
+    #[cfg(feature = "error_messages")]
     use core::{error::Error as _, fmt};
 
-    use crate::{
-        error::ScanError,
-        scanner::{Marker, ScalarStyle, Span},
-    };
+    #[cfg(feature = "error_messages")]
+    use crate::error::{ErrorKind, ScanError};
+    use crate::scanner::{Marker, ScalarStyle, Span};
 
     use super::{
         Event, EventReceiver, Parser, State, StructureStyle, Tag, TryEventReceiver, TryLoadError,
@@ -2517,10 +2500,11 @@ mod test {
         }
     }
 
+    #[cfg(feature = "error_messages")]
     fn first_error_info(input: &str) -> String {
         for event in Parser::new_from_str(input) {
             if let Err(err) = event {
-                return err.info().to_owned();
+                return err.info();
             }
         }
         panic!("expected parser error")
@@ -2889,6 +2873,7 @@ a5: *x
         assert_eq!(first_peek, next);
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_peek_surfaces_scan_error_without_consuming_stream_end_state() {
         let mut parser = Parser::new_from_str("a: [1, 2");
@@ -2927,6 +2912,7 @@ a5: *x
         assert_eq!(errors, 1);
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_iterator_terminates_after_node_property_error() {
         let parser = Parser::new_from_str("- *nope\n- 2\n");
@@ -2977,6 +2963,7 @@ a5: *x
         assert!(parser.peek().is_none());
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_peeked_node_property_error_is_stable_and_terminal() {
         let mut parser = Parser::new_from_str("a: *nope\nb: 2\n");
@@ -3093,15 +3080,18 @@ a5: *x
         ForbiddenValue,
     }
 
+    #[cfg(feature = "error_messages")]
     #[derive(Debug)]
     struct ReceiverFailure;
 
+    #[cfg(feature = "error_messages")]
     impl fmt::Display for ReceiverFailure {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "receiver failed")
         }
     }
 
+    #[cfg(feature = "error_messages")]
     impl core::error::Error for ReceiverFailure {}
 
     struct FailingSink<'input> {
@@ -3176,10 +3166,12 @@ a5: *x
         assert!(!span.is_empty());
     }
 
+    #[cfg(feature = "error_messages")]
     struct NeverFails {
         count: usize,
     }
 
+    #[cfg(feature = "error_messages")]
     impl<'input> TryEventReceiver<'input> for NeverFails {
         type Error = ValidationError;
 
@@ -3189,6 +3181,7 @@ a5: *x
         }
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_try_load_returns_scan_error() {
         let mut parser = Parser::new_from_str("%YAML 1.2\n%YAML 1.2\n---\n");
@@ -3199,15 +3192,19 @@ a5: *x
         let TryLoadError::Scan(err) = err else {
             panic!("expected scan error");
         };
+        assert_eq!(err.kind(), ErrorKind::DuplicateVersionDirective);
         assert_eq!(err.info(), "duplicate version directive");
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_try_load_error_display_and_source_cover_both_variants() {
-        let scan = ScanError::new_str(Marker::new(3, 1, 3), "bad yaml");
+        let scan = ScanError::new(Marker::new(3, 1, 3), ErrorKind::UnexpectedEof);
         let scan_err: TryLoadError<ReceiverFailure> = scan.into();
 
-        assert!(scan_err.to_string().starts_with("parser error: bad yaml"));
+        assert!(scan_err
+            .to_string()
+            .starts_with("parser error: unexpected eof"));
         assert!(scan_err.source().is_some());
 
         let receiver_err = TryLoadError::Receiver(ReceiverFailure);
@@ -3216,6 +3213,7 @@ a5: *x
         assert!(receiver_err.source().is_some());
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_try_load_requires_buffered_stream_start() {
         let mut parser = Parser::new_from_str("");
@@ -3291,6 +3289,7 @@ a5: *x
         assert!(matches!(sink.events.last(), Some(Event::DocumentEnd)));
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_duplicate_version_directive_errors() {
         assert_eq!(
@@ -3299,6 +3298,7 @@ a5: *x
         );
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_unsupported_yaml_major_version_errors() {
         assert_eq!(
@@ -3386,6 +3386,7 @@ a5: *x
         );
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_duplicate_tag_directive_errors() {
         assert_eq!(
@@ -3394,6 +3395,7 @@ a5: *x
         );
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn duplicate_tag_directive_across_comment_is_rejected() {
         let input = concat!(
@@ -3437,6 +3439,7 @@ a5: *x
         );
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_directive_after_implicit_document_requires_explicit_end() {
         assert_eq!(
@@ -3445,6 +3448,7 @@ a5: *x
         );
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_anchor_offset_overflow_reports_error() {
         let mut parser = Parser::new_from_str("&a value");
@@ -3584,6 +3588,7 @@ second: !b!y bar
         assert!(seen_b);
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_tags_are_cleared_when_next_document_has_no_directives() {
         let text = r"
@@ -3611,6 +3616,7 @@ bar
         assert!(format!("{err}").contains("the handle wasn't declared"));
     }
 
+    #[cfg(feature = "error_messages")]
     #[test]
     fn test_pull_parser_clears_anchors_between_documents() {
         let mut parser = Parser::new_from_str(
