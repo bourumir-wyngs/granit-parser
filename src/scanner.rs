@@ -5511,23 +5511,26 @@ mod test {
     }
 
     #[test]
-    fn stale_simple_key_token_position_is_a_scan_error() {
-        let mut scanner = Scanner::new(StrInput::new(": value\n"));
-        scanner.fetch_stream_start();
-        scanner.tokens.clear();
-        scanner.tokens_parsed = 1;
+    fn invalid_simple_key_token_positions_are_scan_errors() {
+        for (tokens_parsed, token_number) in [(1, 0), (0, 1)] {
+            let mut scanner = Scanner::new(StrInput::new(": value\n"));
+            scanner.fetch_stream_start();
+            scanner.tokens.clear();
+            scanner.tokens_parsed = tokens_parsed;
 
-        let simple_key = scanner
-            .simple_keys
-            .last_mut()
-            .expect("stream start should create a simple key slot");
-        simple_key.possible = true;
-        simple_key.token_number = 0;
+            let simple_key = scanner
+                .simple_keys
+                .last_mut()
+                .expect("stream start should create a simple key slot");
+            simple_key.possible = true;
+            simple_key.token_number = token_number;
 
-        let error = scanner
-            .fetch_value()
-            .expect_err("stale simple key should be reported as a scan error");
-        assert_eq!(error.kind(), ErrorKind::InvalidSimpleKey);
+            let error = scanner
+                .fetch_value()
+                .expect_err("invalid simple key position should be reported as a scan error");
+            assert_eq!(error.kind(), ErrorKind::InvalidSimpleKey);
+            assert_eq!(error.marker(), &Marker::new(0, 1, 0));
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use granit_parser::{BufferedInput, ErrorKind, Event, Input, Parser, ScanError, StrInput};
+use granit_parser::{BufferedInput, ErrorKind, Event, Input, Marker, Parser, ScanError, StrInput};
 
 fn first_str_error(input: &str) -> ScanError {
     Parser::new_from_str(input)
@@ -138,6 +138,21 @@ fn non_printable_source_characters_are_rejected_by_both_inputs() {
             );
         }
     }
+}
+
+#[test]
+fn invalid_indentation_diagnostics_match_between_input_backends() {
+    let input = "a:\n  [\nfoo]\n";
+    let str_error = first_str_error(input);
+    let iter_error = first_iter_error(input);
+
+    for error in [&str_error, &iter_error] {
+        assert_eq!(error.kind(), ErrorKind::InvalidIndentation);
+        assert_eq!(error.marker(), &Marker::new(7, 3, 0));
+    }
+
+    assert_eq!(str_error.marker().byte_offset(), Some(7));
+    assert_eq!(iter_error.marker().byte_offset(), None);
 }
 
 #[test]

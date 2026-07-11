@@ -2492,8 +2492,9 @@ mod test {
     #[cfg(feature = "error_messages")]
     use core::{error::Error as _, fmt};
 
+    use crate::error::ErrorKind;
     #[cfg(feature = "error_messages")]
-    use crate::error::{ErrorKind, ScanError};
+    use crate::error::ScanError;
     use crate::scanner::{Marker, ScalarStyle, Span};
 
     use super::{
@@ -2594,6 +2595,39 @@ mod test {
         let (event, _) = parser.state_machine().unwrap();
 
         assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
+    }
+
+    #[test]
+    fn unexpected_eof_kind_tracks_parser_state() {
+        let mut parser = Parser::new_from_str("");
+        let cases = [
+            (
+                State::FlowSequenceEntry,
+                ErrorKind::UnexpectedEofFlowSequence,
+            ),
+            (State::FlowMappingValue, ErrorKind::UnexpectedEofFlowMapping),
+            (
+                State::FlowSequenceEntryMappingEnd,
+                ErrorKind::UnexpectedEofImplicitFlowMapping,
+            ),
+            (
+                State::BlockSequenceEntry,
+                ErrorKind::UnexpectedEofBlockSequence,
+            ),
+            (
+                State::BlockMappingValue,
+                ErrorKind::UnexpectedEofBlockMapping,
+            ),
+            (State::DocumentContent, ErrorKind::UnexpectedEof),
+        ];
+
+        for (state, expected) in cases {
+            parser.state = state;
+            let error = parser.unexpected_eof();
+
+            assert_eq!(error.kind(), expected, "unexpected kind for {state:?}");
+            assert_eq!(error.marker(), &Marker::new(0, 1, 0));
+        }
     }
 
     #[test]
