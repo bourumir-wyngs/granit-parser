@@ -162,7 +162,8 @@ is `infallible`.
 
 ## Key differences from saphyr-parser
 
-All changes are intentionally scoped around correctness, compliance, and interoperability.
+All changes are intentionally scoped around correctness, compliance, and interoperability. This list summarizes 
+differences done from the time of forking (0.0.6). Saphyr-parser may also have changes in its later releases.
 
 ### YAML compliance fixes
 
@@ -233,6 +234,11 @@ This parser supports explicit handling for JSON-style Unicode surrogate pairs in
 * **Parser stack support**
 
   Enables features such as `!include` by exposing additional internal capabilities.
+
+### Error handling without grepping message text
+  
+  Granit-parser uses the [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) enum to encode the error kind, and this enum may carry additional metadata. This is useful when messages need to be translated (built-in messages are English), or when the using code needs to handle some error specifically without greping for message text.
+
 
 
 ### Security
