@@ -474,9 +474,9 @@ hash:
         .zip(one_space.iter())
         .zip(mixed_spaces.iter())
     {
-        assert!(a == b);
-        assert!(a == c);
-        assert!(a == d);
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+        assert_eq!(a, d);
     }
 }
 
