@@ -610,6 +610,23 @@ pub trait Input {
         }
         (false, chars_consumed)
     }
+
+    /// Consume a chunk of plain-scalar characters without materializing them.
+    ///
+    /// Stable inputs use this while the scanner retains the source as a borrowed slice and only
+    /// promotes it to an owned buffer if YAML folding changes the scalar contents.
+    fn skip_plain_scalar_chunk(&mut self, count: usize, flow_level_gt_0: bool) -> (bool, usize) {
+        let mut chars_consumed = 0;
+        for _ in 0..count {
+            self.lookahead(1);
+            if self.next_is_blank_or_breakz() || !self.next_can_be_plain_scalar(flow_level_gt_0) {
+                return (true, chars_consumed);
+            }
+            self.skip();
+            chars_consumed += 1;
+        }
+        (false, chars_consumed)
+    }
 }
 
 /// Behavior to adopt regarding treating tabs as whitespace.

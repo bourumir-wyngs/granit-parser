@@ -45,6 +45,45 @@ impl<'a> StrInput<'a> {
     fn consumed_bytes(&self) -> usize {
         self.original.len() - self.buffer.len()
     }
+
+    /// Find the end of the next plain-scalar chunk in the current input buffer.
+    ///
+    /// Returns its byte length and character count. This keeps the existing batched scanner in one
+    /// place so callers can either materialize the chunk or retain it as a borrowed source slice.
+    fn plain_scalar_chunk_len(&self, flow_level_gt_0: bool) -> (usize, usize) {
+        let bytes = self.buffer.as_bytes();
+        let mut byte_pos = 0;
+        let mut chars_consumed = 0;
+
+        while byte_pos < bytes.len() {
+            let byte = bytes[byte_pos];
+            if byte < 0x80 {
+                let character = byte as char;
+                if crate::char_traits::is_blank_or_breakz(character)
+                    || flow_level_gt_0 && crate::char_traits::is_flow(character)
+                {
+                    break;
+                }
+                if character == ':' {
+                    let next_byte = bytes.get(byte_pos + 1).copied().unwrap_or(0);
+                    // A non-ASCII character cannot be blank, breakz, or a flow indicator.
+                    let stops_scalar = next_byte < 0x80
+                        && (crate::char_traits::is_blank_or_breakz(next_byte as char)
+                            || flow_level_gt_0 && crate::char_traits::is_flow(next_byte as char));
+                    if stops_scalar {
+                        break;
+                    }
+                }
+                byte_pos += 1;
+            } else {
+                let character = self.buffer[byte_pos..].chars().next().unwrap();
+                byte_pos += character.len_utf8();
+            }
+            chars_consumed += 1;
+        }
+
+        (byte_pos, chars_consumed)
+    }
 }
 
 impl Input for StrInput<'_> {
@@ -477,60 +516,15 @@ impl Input for StrInput<'_> {
         _count: usize,
         flow_level_gt_0: bool,
     ) -> (bool, usize) {
-        let bytes = self.buffer.as_bytes();
-        let len = bytes.len();
-        let mut byte_pos = 0;
-        let mut chars_consumed = 0;
-
-        while byte_pos < len {
-            let b = bytes[byte_pos];
-            if b < 0x80 {
-                let c = b as char;
-                if crate::char_traits::is_blank_or_breakz(c) {
-                    out.push_str(&self.buffer[..byte_pos]);
-                    self.buffer = &self.buffer[byte_pos..];
-                    return (true, chars_consumed);
-                }
-                if flow_level_gt_0 && crate::char_traits::is_flow(c) {
-                    out.push_str(&self.buffer[..byte_pos]);
-                    self.buffer = &self.buffer[byte_pos..];
-                    return (true, chars_consumed);
-                }
-                if c == ':' {
-                    let next_byte = if byte_pos + 1 < len {
-                        bytes[byte_pos + 1]
-                    } else {
-                        0
-                    };
-                    // ASCII optimization: if next_byte >= 0x80, it is not blank/breakz/flow
-                    let is_stop = if next_byte < 0x80 {
-                        let nc = next_byte as char;
-                        crate::char_traits::is_blank_or_breakz(nc)
-                            || (flow_level_gt_0 && crate::char_traits::is_flow(nc))
-                    } else {
-                        false
-                    };
-
-                    if is_stop {
-                        out.push_str(&self.buffer[..byte_pos]);
-                        self.buffer = &self.buffer[byte_pos..];
-                        return (true, chars_consumed);
-                    }
-                }
-                byte_pos += 1;
-                chars_consumed += 1;
-            } else {
-                let mut chars = self.buffer[byte_pos..].chars();
-                let c = chars.next().unwrap();
-                byte_pos += c.len_utf8();
-                chars_consumed += 1;
-            }
-        }
-
+        let (byte_pos, chars_consumed) = self.plain_scalar_chunk_len(flow_level_gt_0);
         out.push_str(&self.buffer[..byte_pos]);
         self.buffer = &self.buffer[byte_pos..];
-        // If we reached here, we consumed the whole string (EOF).
-        // EOF is effectively a stop condition (breakz).
+        (true, chars_consumed)
+    }
+
+    fn skip_plain_scalar_chunk(&mut self, _count: usize, flow_level_gt_0: bool) -> (bool, usize) {
+        let (byte_pos, chars_consumed) = self.plain_scalar_chunk_len(flow_level_gt_0);
+        self.buffer = &self.buffer[byte_pos..];
         (true, chars_consumed)
     }
 }

@@ -3571,7 +3571,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ));
         }
 
-        let mut string = String::with_capacity(32);
+        let borrow_start = start_mark
+            .byte_offset()
+            .filter(|start| self.try_borrow_slice(*start, *start).is_some());
+        let mut string = borrow_start.is_none().then(|| String::with_capacity(32));
+        let mut has_content = false;
         self.buf_whitespaces.clear();
         self.buf_leading_break.clear();
         self.buf_trailing_breaks.clear();
@@ -3587,7 +3591,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 // next line, this is invalid. We cannot decide yet if there will be continuation,
                 // so record that a comment interrupted a plain scalar.
                 if self.input.peek() == '#'
-                    && !string.is_empty()
+                    && has_content
                     && !self.buf_whitespaces.is_empty()
                     && self.flow_level == 0
                 {
@@ -3604,30 +3608,53 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 && self.input.next_can_be_plain_scalar(self.flow_level > 0)
             {
                 if self.leading_whitespace {
+                    if has_content && string.is_none() {
+                        let start = borrow_start.expect("borrowed scalar has a start offset");
+                        let end = end_mark.byte_offset().ok_or_else(|| {
+                            ScanError::from_kind(start_mark, ErrorKind::InputOffsetsWithoutSlice)
+                        })?;
+                        let prefix = self.try_borrow_slice(start, end).ok_or_else(|| {
+                            ScanError::from_kind(start_mark, ErrorKind::InputOffsetsWithoutSlice)
+                        })?;
+                        string = Some(prefix.to_owned());
+                    }
                     if self.buf_leading_break.is_empty() {
-                        string.push_str(&self.buf_leading_break);
-                        string.push_str(&self.buf_trailing_breaks);
+                        if let Some(output) = string.as_mut() {
+                            output.push_str(&self.buf_leading_break);
+                            output.push_str(&self.buf_trailing_breaks);
+                        }
                         self.buf_trailing_breaks.clear();
                         self.buf_leading_break.clear();
                     } else {
                         if self.buf_trailing_breaks.is_empty() {
-                            string.push(' ');
+                            if let Some(output) = string.as_mut() {
+                                output.push(' ');
+                            }
                         } else {
-                            string.push_str(&self.buf_trailing_breaks);
+                            if let Some(output) = string.as_mut() {
+                                output.push_str(&self.buf_trailing_breaks);
+                            }
                             self.buf_trailing_breaks.clear();
                         }
                         self.buf_leading_break.clear();
                     }
                     self.leading_whitespace = false;
                 } else if !self.buf_whitespaces.is_empty() {
-                    string.push_str(&self.buf_whitespaces);
+                    if let Some(output) = string.as_mut() {
+                        output.push_str(&self.buf_whitespaces);
+                    }
                     self.buf_whitespaces.clear();
                 }
 
                 // We can unroll the first iteration of the loop.
-                string.push(self.input.peek());
+                has_content = true;
+                if let Some(output) = string.as_mut() {
+                    output.push(self.input.peek());
+                }
                 self.skip_non_blank();
-                string.reserve(self.input.bufmaxlen());
+                if let Some(output) = string.as_mut() {
+                    output.reserve(self.input.bufmaxlen());
+                }
 
                 // Add content non-blank characters to the scalar.
                 let mut end = false;
@@ -3638,11 +3665,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     // custom buffer lengths.
                     self.input.lookahead(self.input.bufmaxlen());
                     let chunk_len = self.input.bufmaxlen().saturating_sub(1).max(1);
-                    let (stop, chars_consumed) = self.input.fetch_plain_scalar_chunk(
-                        &mut string,
-                        chunk_len,
-                        self.flow_level > 0,
-                    );
+                    let (stop, chars_consumed) = if let Some(output) = string.as_mut() {
+                        self.input
+                            .fetch_plain_scalar_chunk(output, chunk_len, self.flow_level > 0)
+                    } else {
+                        self.input
+                            .skip_plain_scalar_chunk(chunk_len, self.flow_level > 0)
+                    };
                     end = stop;
                     self.mark.offsets.chars += chars_consumed;
                     self.mark.col += chars_consumed;
@@ -3704,7 +3733,26 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.allow_simple_key();
         }
 
-        if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
+        let borrowed_contents = if string.is_none() {
+            let start = borrow_start.expect("borrowed scalar has a start offset");
+            let end = end_mark.byte_offset().ok_or_else(|| {
+                ScanError::from_kind(start_mark, ErrorKind::InputOffsetsWithoutSlice)
+            })?;
+            Some(self.try_borrow_slice(start, end).ok_or_else(|| {
+                ScanError::from_kind(start_mark, ErrorKind::InputOffsetsWithoutSlice)
+            })?)
+        } else {
+            None
+        };
+        let scalar_text = borrowed_contents.unwrap_or_else(|| {
+            string
+                .as_deref()
+                .expect("owned plain scalar has an output buffer")
+        });
+        if let Some(character) = scalar_text
+            .chars()
+            .find(|&character| !is_printable(character))
+        {
             return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedCharacter { character },
@@ -3712,29 +3760,24 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
         self.ensure_current_char_is_printable()?;
 
-        if string.is_empty() {
+        if has_content {
+            let contents = if let Some(slice) = borrowed_contents {
+                Cow::Borrowed(slice)
+            } else {
+                Cow::Owned(string.expect("owned plain scalar has an output buffer"))
+            };
+
+            Ok(Token(
+                Span::new(start_mark, end_mark),
+                TokenType::Scalar(ScalarStyle::Plain, contents),
+            ))
+        } else {
             // `fetch_plain_scalar` must absolutely consume at least one byte. Otherwise,
             // `fetch_next_token` will never stop calling it. An empty plain scalar may happen with
             // erroneous inputs such as "{...".
             Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedEndOfPlainScalar,
-            ))
-        } else {
-            let contents = if let (Some(start), Some(end)) =
-                (start_mark.byte_offset(), end_mark.byte_offset())
-            {
-                match self.try_borrow_slice(start, end) {
-                    Some(slice) if slice == string => Cow::Borrowed(slice),
-                    _ => Cow::Owned(string),
-                }
-            } else {
-                Cow::Owned(string)
-            };
-
-            Ok(Token(
-                Span::new(start_mark, end_mark),
-                TokenType::Scalar(ScalarStyle::Plain, contents),
             ))
         }
     }
