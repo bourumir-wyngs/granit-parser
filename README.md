@@ -6,7 +6,7 @@
 [![Fuzz](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/fuzz.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/fuzz.yml)
 [![docs.rs](https://docs.rs/granit-parser/badge.svg)](https://docs.rs/granit-parser)
 [![codecov](https://codecov.io/gh/bourumir-wyngs/granit-parser/graph/badge.svg)](https://codecov.io/gh/bourumir-wyngs/granit-parser)
-[![Socket Badge](https://badge.socket.dev/cargo/package/granit-parser/0.0.1)](https://badge.socket.dev/cargo/package/granit-parser/0.0.1)
+[![Socket Badge](https://badge.socket.dev/cargo/package/granit-parser)](https://badge.socket.dev/cargo/package/granit-parser)
 
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
