@@ -1,5 +1,5 @@
 use crate::{
-    char_traits::{is_blank_or_breakz, is_breakz, is_flow},
+    char_traits::is_breakz,
     error::ErrorKind,
     input::{BorrowedInput, Input, SkipTabs},
 };
@@ -105,10 +105,6 @@ impl Input for StrInput<'_> {
         BUFFER_LEN
     }
 
-    fn buf_is_empty(&self) -> bool {
-        self.buflen() == 0
-    }
-
     #[inline]
     fn raw_read_ch(&mut self) -> char {
         let mut chars = self.buffer.chars();
@@ -205,22 +201,6 @@ impl Input for StrInput<'_> {
     #[inline]
     fn may_contain_comments(&self) -> bool {
         self.original.as_bytes().contains(&b'#')
-    }
-
-    #[inline]
-    fn look_ch(&mut self) -> char {
-        self.lookahead(1);
-        self.peek()
-    }
-
-    #[inline]
-    fn next_char_is(&self, c: char) -> bool {
-        self.peek() == c
-    }
-
-    #[inline]
-    fn nth_char_is(&self, n: usize, c: char) -> bool {
-        self.peek_nth(n) == c
     }
 
     #[inline]
@@ -363,18 +343,6 @@ impl Input for StrInput<'_> {
         self.buffer = &self.buffer[i..];
 
         (i, SkipTabs::Result(encountered_tab, has_yaml_ws))
-    }
-
-    #[allow(clippy::inline_always)]
-    #[inline(always)]
-    fn next_can_be_plain_scalar(&self, in_flow: bool) -> bool {
-        let nc = self.peek_nth(1);
-        match self.peek() {
-            // indicators can end a plain scalar, see 7.3.3. Plain Style
-            ':' if is_blank_or_breakz(nc) || (in_flow && is_flow(nc)) => false,
-            c if in_flow && is_flow(c) => false,
-            _ => true,
-        }
     }
 
     #[inline]
