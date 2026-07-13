@@ -517,7 +517,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// Whether document directives were already initialized before comments preceding `---`.
     pending_document_directives: bool,
     /// `%TAG` handles already seen before comments preceding an explicit document start.
-    pending_document_tag_handles: BTreeSet<String>,
+    pending_document_tag_handles: BTreeSet<Cow<'input, str>>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -528,7 +528,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The tag directives (`%TAG`) the parser has encountered.
     ///
     /// Key is the handle, and value is the prefix.
-    tags: BTreeMap<String, String>,
+    tags: BTreeMap<Cow<'input, str>, Cow<'input, str>>,
     /// Whether we have emitted a terminal iterator result.
     ///
     /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
@@ -1468,46 +1468,56 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         mut version: Option<YamlVersion>,
         continuing: bool,
-        mut document_tag_handles: BTreeSet<String>,
-    ) -> Result<(Option<YamlVersion>, BTreeSet<String>), ScanError> {
+        mut document_tag_handles: BTreeSet<Cow<'input, str>>,
+    ) -> Result<(Option<YamlVersion>, BTreeSet<Cow<'input, str>>), ScanError> {
         let mut tags = if continuing || self.keep_tags {
-            self.tags.clone()
+            core::mem::take(&mut self.tags)
         } else {
             BTreeMap::new()
         };
 
         loop {
-            match self.peek_token()? {
-                QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
+            let is_directive = matches!(
+                self.peek_token()?.1,
+                QueuedTokenType::VersionDirective(..)
+                    | QueuedTokenType::TagDirective(..)
+                    | QueuedTokenType::ReservedDirective(..)
+            );
+            if !is_directive {
+                break;
+            }
+
+            let QueuedToken(span, token) = self.fetch_token();
+            match token {
+                QueuedTokenType::VersionDirective(major, minor) => {
                     if version.is_some() {
                         return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::DuplicateVersionDirective,
                         ));
                     }
-                    if *major != 1 {
+                    if major != 1 {
                         return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::UnsupportedYamlMajorVersion,
                         ));
                     }
-                    version = Some(YamlVersion::new(*major, *minor));
+                    version = Some(YamlVersion::new(major, minor));
                 }
-                QueuedToken(mark, QueuedTokenType::TagDirective(handle, prefix)) => {
-                    if !document_tag_handles.insert(handle.to_string()) {
+                QueuedTokenType::TagDirective(handle, prefix) => {
+                    if !document_tag_handles.insert(handle.clone()) {
                         return Err(ScanError::from_kind(
-                            mark.start,
+                            span.start,
                             ErrorKind::DuplicateTagDirective,
                         ));
                     }
-                    tags.insert(handle.to_string(), prefix.to_string());
+                    tags.insert(handle, prefix);
                 }
-                QueuedToken(_, QueuedTokenType::ReservedDirective(_, _)) => {
+                QueuedTokenType::ReservedDirective(_, _) => {
                     // Reserved directives are ignored
                 }
-                _ => break,
+                _ => unreachable!("non-directive token passed the directive guard"),
             }
-            self.skip();
         }
 
         self.tags = tags;
@@ -2352,14 +2362,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
             match self.tags.get("!") {
-                Some(prefix) => Tag::with_original_handle(prefix.clone(), suffix, original_handle),
+                Some(prefix) => {
+                    Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
+                }
                 None => Tag::with_original_handle(String::new(), suffix, original_handle),
             }
         } else {
             // Lookup handle in our tag directives.
             let prefix = self.tags.get(&**handle);
             if let Some(prefix) = prefix {
-                Tag::with_original_handle(prefix.clone(), suffix, original_handle)
+                Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
             } else {
                 // Otherwise, it may be a local handle. With a local handle, the handle is set to
                 // "!" and the suffix to whatever follows it ("!foo" -> ("!", "foo")).
@@ -3412,6 +3424,28 @@ a5: *x
     }
 
     #[test]
+    fn tag_directive_state_borrows_str_input_across_comment() {
+        let mut parser = Parser::new_from_str(
+            "%TAG !e! tag:example.com,2026:\n# directive comment\n---\nkey: value\n",
+        );
+
+        while let Some(event) = parser.next_event() {
+            if matches!(event.unwrap().0, Event::Comment(..)) {
+                break;
+            }
+        }
+
+        assert!(matches!(
+            parser.tags.get("!e!"),
+            Some(Cow::Borrowed("tag:example.com,2026:"))
+        ));
+        assert!(parser
+            .pending_document_tag_handles
+            .iter()
+            .any(|handle| matches!(handle, Cow::Borrowed("!e!"))));
+    }
+
+    #[test]
     fn test_each_document_can_declare_own_yaml_version() {
         let document_starts = Parser::new_from_str(
             "%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb\n...\n%YAML 1.1\n---\nc\n",
@@ -3761,7 +3795,7 @@ baz: "qux"
         let mut parser = Parser::new_from_str("");
         parser
             .tags
-            .insert("!".to_string(), "tag:local.example,2024:".to_string());
+            .insert("!".into(), "tag:local.example,2024:".into());
 
         let tag = parser
             .resolve_tag(

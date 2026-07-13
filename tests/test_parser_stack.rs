@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{
+    borrow::Cow,
     string::{String, ToString},
     vec,
     vec::Vec,
@@ -509,6 +510,64 @@ fn test_include_resolver() {
             "StreamEnd"
         ]
     );
+}
+
+#[test]
+fn borrowed_include_resolver_preserves_borrowed_event_text() {
+    const INCLUDED: &str = "included: borrowed-value\n";
+
+    let mut stack: MyStack<'static> = ParserStack::new();
+    stack.set_borrowed_resolver(|name| {
+        assert_eq!(name, "borrowed.yaml");
+        Ok(INCLUDED)
+    });
+    stack.resolve("borrowed.yaml").unwrap();
+
+    while let Some(event) = stack.next_event() {
+        if let Event::Scalar(value, _, _, _) = event.unwrap().0 {
+            if value == "borrowed-value" {
+                assert!(matches!(value, Cow::Borrowed("borrowed-value")));
+                return;
+            }
+        }
+    }
+
+    panic!("expected the included scalar");
+}
+
+#[test]
+fn borrowed_include_resolver_still_validates_eagerly() {
+    let mut stack: MyStack<'static> = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("root: value\n"), "root".to_string());
+    stack.set_borrowed_resolver(|_| Ok("included: [unclosed\n"));
+
+    let error = stack.resolve("invalid.yaml").unwrap_err();
+
+    assert_eq!(
+        error.kind(),
+        ErrorKind::UnclosedFlowCollection { open: '[' }
+    );
+    assert_eq!(error.source_stack(), ["root", "invalid.yaml"]);
+}
+
+#[test]
+fn replay_parser_moves_owned_event_text() {
+    let value = "owned replay value".to_string();
+    let value_ptr = value.as_ptr();
+    let mut replay = ReplayParser::new(
+        vec![(
+            Event::Scalar(Cow::Owned(value), ScalarStyle::Plain, 0, None),
+            test_span(),
+        )],
+        1,
+    );
+
+    let event = replay.next_event().unwrap().unwrap().0;
+    let Event::Scalar(Cow::Owned(value), _, _, _) = event else {
+        panic!("expected an owned scalar");
+    };
+
+    assert_eq!(value.as_ptr(), value_ptr);
 }
 
 #[test]
