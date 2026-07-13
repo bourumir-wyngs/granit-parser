@@ -1462,8 +1462,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         match c {
             '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart),
             '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart),
-            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd),
-            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd),
+            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd, '[', ']'),
+            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd, '{', '}'),
             ',' => self.fetch_flow_entry(),
             '-' if is_blank_or_breakz(nc) => self.fetch_block_entry(),
             '?' if is_blank_or_breakz(nc) => self.fetch_key(),
@@ -1531,7 +1531,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
         let Some(t) = self.tokens.pop_front() else {
-            return Err(self.scan_error(ErrorKind::MissingNextToken));
+            unreachable!("fetch_more_tokens succeeded without producing a token")
         };
         self.token_available = false;
         self.tokens_parsed += 1;
@@ -2467,11 +2467,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let s = core::str::from_utf8(&bytes[..bytes_len])
             .map_err(|_| ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8))?;
 
-        let mut chars = s.chars();
-        match (chars.next(), chars.next()) {
-            (Some(ch), None) => Ok(ch),
-            _ => Err(ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8)),
-        }
+        let Some(ch) = s.chars().next() else {
+            unreachable!("a validated URI escape cannot decode to an empty string")
+        };
+        Ok(ch)
     }
 
     fn fetch_anchor(&mut self, alias: bool) -> ScanResult {
@@ -2580,7 +2579,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(())
     }
 
-    fn fetch_flow_collection_end(&mut self, tok: TokenType<'input>) -> ScanResult {
+    fn fetch_flow_collection_end(
+        &mut self,
+        tok: TokenType<'input>,
+        expected_open: char,
+        actual_close: char,
+    ) -> ScanResult {
         // A closing bracket without a corresponding opening is invalid YAML.
         if self.flow_level == 0 {
             return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
@@ -2588,12 +2592,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let Some((open_mark, open_ch)) = self.flow_markers.pop() else {
             return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
-        };
-
-        let (expected_open, actual_close) = match tok {
-            TokenType::FlowSequenceEnd => ('[', ']'),
-            TokenType::FlowMappingEnd => ('{', '}'),
-            _ => unreachable!("flow collection end called with non-closing token"),
         };
 
         if open_ch != expected_open {
@@ -2879,13 +2877,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Chomping::Keep => trailing_breaks,
             };
 
-            let span = if contents.trim().is_empty() {
-                Span::new(start_mark, self.mark)
-            } else {
-                Span::new(start_mark, self.mark).with_indent(Some(indent))
-            };
-
-            return Ok(Token(span, TokenType::Scalar(style, contents.into())));
+            return Ok(Token(
+                Span::new(start_mark, self.mark),
+                TokenType::Scalar(style, contents.into()),
+            ));
         }
 
         if self.mark.col < indent && (self.mark.col as isize) > self.indent {

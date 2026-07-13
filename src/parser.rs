@@ -956,6 +956,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
+                } else if self.state == State::End {
+                    self.parse()
                 } else if let Some(comment) = self.maybe_next_comment_event()? {
                     Ok(comment)
                 } else {
@@ -999,10 +1001,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// This function does _not_ make use of `self.token`.
     fn scan_next_token(&mut self) -> Result<QueuedToken<'input>, ScanError> {
         match self.scanner.next_queued_token()? {
-            None => match self.scanner.get_error() {
-                None => Err(self.unexpected_eof()),
-                Some(e) => e.into_result(),
-            },
+            None => unreachable!("scanner ended before the parser consumed its stream-end token"),
             Some(tok) => Ok(tok),
         }
     }
@@ -1160,32 +1159,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         } else {
             Placement::Free
         }
-    }
-
-    #[cold]
-    fn unexpected_eof(&self) -> ScanError {
-        let kind = match self.state {
-            State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
-                ErrorKind::UnexpectedEofFlowSequence
-            }
-            State::FlowMappingFirstKey
-            | State::FlowMappingKey
-            | State::FlowMappingValue
-            | State::FlowMappingEmptyValue => ErrorKind::UnexpectedEofFlowMapping,
-            State::FlowSequenceEntryMappingKey
-            | State::FlowSequenceEntryMappingValue
-            | State::FlowSequenceEntryMappingEnd
-            | State::FlowNode => ErrorKind::UnexpectedEofImplicitFlowMapping,
-            State::BlockSequenceFirstEntry | State::BlockSequenceEntry | State::BlockNode => {
-                ErrorKind::UnexpectedEofBlockSequence
-            }
-            State::BlockMappingFirstKey
-            | State::BlockMappingKey
-            | State::BlockMappingValue
-            | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
-            _ => ErrorKind::UnexpectedEof,
-        };
-        ScanError::from_kind(self.scanner.mark(), kind)
     }
 
     fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
@@ -1392,8 +1365,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             State::FlowSequenceEntryMappingEnd => self.flow_sequence_entry_mapping_end(),
             State::FlowMappingEmptyValue => self.flow_mapping_value(true),
 
-            /* impossible */
-            State::End => unreachable!(),
+            State::End => unreachable!("end state is handled before state-machine dispatch"),
         }
     }
 
@@ -1671,59 +1643,53 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
-                if let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() {
-                    match self.anchors.get(&*name) {
-                        None => {
-                            return Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor))
-                        }
-                        Some(id) => return Ok((Event::Alias(*id), span)),
-                    }
-                }
-                unreachable!()
+                let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() else {
+                    unreachable!("alias token disappeared after peek")
+                };
+                return match self.anchors.get(&*name) {
+                    None => Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor)),
+                    Some(id) => Ok((Event::Alias(*id), span)),
+                };
             }
             QueuedToken(_, QueuedTokenType::Anchor(_)) => {
-                if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
-                    anchor_id = self.register_anchor(name, &span)?;
-                    property_end = Some(span.end);
-                    if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
-                        if let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
-                            self.fetch_token()
-                        {
-                            tag_start = Some(tag_span.start);
-                            tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
-                            property_end = Some(tag_span.end);
-                        } else {
-                            unreachable!()
-                        }
-                    }
-                    if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
-                        return Ok(comment);
-                    }
-                } else {
-                    unreachable!()
+                let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() else {
+                    unreachable!("anchor token disappeared after peek")
+                };
+                anchor_id = self.register_anchor(name, &span)?;
+                property_end = Some(span.end);
+                if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
+                    let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
+                        self.fetch_token()
+                    else {
+                        unreachable!("tag token disappeared after peek")
+                    };
+                    tag_start = Some(tag_span.start);
+                    tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
+                    property_end = Some(tag_span.end);
+                }
+                if let Some(comment) = self.maybe_next_comment_event()? {
+                    self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
+                    return Ok(comment);
                 }
             }
             QueuedToken(mark, QueuedTokenType::Tag(..)) => {
-                if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
-                    tag_start = Some(mark.start);
+                let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 else {
+                    unreachable!("tag token disappeared after peek")
+                };
+                tag_start = Some(mark.start);
+                property_end = Some(mark.end);
+                tag = Some(self.resolve_tag(mark, &handle, suffix)?);
+                if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
+                    let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
+                    else {
+                        unreachable!("anchor token disappeared after peek")
+                    };
+                    anchor_id = self.register_anchor(name, &mark)?;
                     property_end = Some(mark.end);
-                    tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                    if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
-                        if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
-                        {
-                            anchor_id = self.register_anchor(name, &mark)?;
-                            property_end = Some(mark.end);
-                        } else {
-                            unreachable!()
-                        }
-                    }
-                    if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
-                        return Ok(comment);
-                    }
-                } else {
-                    unreachable!()
+                }
+                if let Some(comment) = self.maybe_next_comment_event()? {
+                    self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
+                    return Ok(comment);
                 }
             }
             _ => {}
@@ -1762,15 +1728,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(_, QueuedTokenType::Scalar(..)) => {
                 self.pop_state();
-                if let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token() {
-                    Ok(Self::attach_tag_start(
-                        Event::Scalar(v, style, anchor_id, tag),
-                        mark,
-                        tag_start,
-                    ))
-                } else {
-                    unreachable!()
-                }
+                let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token()
+                else {
+                    unreachable!("scalar token disappeared after peek")
+                };
+                Ok(Self::attach_tag_start(
+                    Event::Scalar(v, style, anchor_id, tag),
+                    mark,
+                    tag_start,
+                ))
             }
             QueuedToken(mark, QueuedTokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
@@ -1935,9 +1901,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "block mapping value-node state entered without a pending empty-scalar span"
+            )
         };
         self.block_mapping_value_node_with_empty_span(mark)
     }
@@ -2081,9 +2048,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "flow mapping value-node state entered without a pending empty-scalar span"
+            )
         };
         self.flow_mapping_value_node_with_empty_span(mark)
     }
@@ -2178,9 +2146,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "indentless sequence entry-node state entered without a pending empty-scalar span"
+            )
         };
         self.indentless_sequence_entry_node_with_empty_span(mark)
     }
@@ -2248,9 +2217,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "block sequence entry-node state entered without a pending empty-scalar span"
+            )
         };
         self.block_sequence_entry_node_with_empty_span(mark)
     }
@@ -2607,39 +2577,6 @@ mod test {
         let (event, _) = parser.state_machine().unwrap();
 
         assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
-    }
-
-    #[test]
-    fn unexpected_eof_kind_tracks_parser_state() {
-        let mut parser = Parser::new_from_str("");
-        let cases = [
-            (
-                State::FlowSequenceEntry,
-                ErrorKind::UnexpectedEofFlowSequence,
-            ),
-            (State::FlowMappingValue, ErrorKind::UnexpectedEofFlowMapping),
-            (
-                State::FlowSequenceEntryMappingEnd,
-                ErrorKind::UnexpectedEofImplicitFlowMapping,
-            ),
-            (
-                State::BlockSequenceEntry,
-                ErrorKind::UnexpectedEofBlockSequence,
-            ),
-            (
-                State::BlockMappingValue,
-                ErrorKind::UnexpectedEofBlockMapping,
-            ),
-            (State::DocumentContent, ErrorKind::UnexpectedEof),
-        ];
-
-        for (state, expected) in cases {
-            parser.state = state;
-            let error = parser.unexpected_eof();
-
-            assert_eq!(error.kind(), expected, "unexpected kind for {state:?}");
-            assert_eq!(error.marker(), &Marker::new(0, 1, 0));
-        }
     }
 
     #[test]

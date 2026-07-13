@@ -233,19 +233,14 @@ fn next_event_after_receiver_error_on_stream_end_returns_stream_end() {
 }
 
 #[test]
-fn next_event_after_receiver_error_on_stream_end_with_comments_reports_eof() {
-    // With comments possible, resuming after the scanner is exhausted asks the
-    // scanner for another token and reports an EOF error instead.
+fn next_event_after_receiver_error_on_stream_end_with_comments_returns_stream_end() {
     let mut parser = Parser::new_from_str("# hello\nfoo\n");
     let mut receiver = RejectStreamEnd;
 
     let err = parser.try_load(&mut receiver, true).unwrap_err();
     assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
 
-    let error = parser
-        .next_event()
-        .expect("expected an EOF error")
-        .unwrap_err();
-    assert_eq!(error.info(), "unexpected eof");
+    let (event, _) = parser.next_event().expect("stream end event").unwrap();
+    assert_eq!(event, Event::StreamEnd);
     assert!(parser.next_event().is_none());
 }
