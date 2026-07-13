@@ -56,6 +56,33 @@ fn find_anchor_id(events: &[Event], value: &str) -> Option<usize> {
     })
 }
 
+fn stack_after_first_parent_anchor() -> MyStack<'static> {
+    let mut stack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("before: &parent parent-value\nafter: &after resumed-parent-value\n"),
+        "parent.yaml".to_string(),
+    );
+
+    loop {
+        let event = stack.next_event().unwrap().unwrap().0;
+        if let Event::Scalar(value, _, anchor_id, _) = event {
+            if value == "parent-value" {
+                assert_eq!(anchor_id, 1);
+                break;
+            }
+        }
+    }
+
+    assert_eq!(stack.current_anchor_offset(), 2);
+    stack
+}
+
+fn assert_include_anchor_offset_is_inherited(events: &[Event]) {
+    assert_eq!(find_anchor_id(events, "included-value"), Some(2));
+    assert!(events.iter().any(|event| matches!(event, Event::Alias(2))));
+    assert_eq!(find_anchor_id(events, "resumed-parent-value"), Some(3));
+}
+
 fn format_events(events: &[Event]) -> Vec<String> {
     events
         .iter()
@@ -573,6 +600,36 @@ fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
     assert!(borrowed_events
         .iter()
         .any(|event| matches!(event, Event::Alias(1))));
+}
+
+#[test]
+fn owned_resolve_inherits_and_propagates_parent_anchor_offset() {
+    let mut stack = stack_after_first_parent_anchor();
+    stack.set_resolver(|name| {
+        assert_eq!(name, "included.yaml");
+        Ok("definition: &included included-value\nalias: *included\n".to_string())
+    });
+
+    stack.resolve("included.yaml").unwrap();
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_include_anchor_offset_is_inherited(&events);
+}
+
+#[test]
+fn borrowed_resolve_inherits_and_propagates_parent_anchor_offset() {
+    const INCLUDED: &str = "definition: &included included-value\nalias: *included\n";
+
+    let mut stack = stack_after_first_parent_anchor();
+    stack.set_borrowed_resolver(|name| {
+        assert_eq!(name, "included.yaml");
+        Ok(INCLUDED)
+    });
+
+    stack.resolve("included.yaml").unwrap();
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_include_anchor_offset_is_inherited(&events);
 }
 
 #[test]
