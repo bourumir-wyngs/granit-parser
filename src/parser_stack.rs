@@ -231,12 +231,14 @@ where
             Ok(content) => content,
             Err(error) => return Err(self.contextualize_include_error(error, include_str)),
         };
-        let anchor_offset = self.current_anchor_offset();
+        let inherited_anchor_offset = self.parsers.last().map(AnyParser::get_anchor_offset);
 
         let (events, next_anchor_offset) = match content {
             Cow::Borrowed(content) => {
                 let mut parser = Parser::new_from_str(content);
-                parser.set_anchor_offset(anchor_offset);
+                if let Some(anchor_offset) = inherited_anchor_offset {
+                    parser.set_anchor_offset(anchor_offset);
+                }
                 let mut events = Vec::new();
                 while let Some(event) = parser.next_event() {
                     match event {
@@ -251,7 +253,9 @@ where
             Cow::Owned(content) => {
                 let mut parser =
                     Parser::new_from_iter(content.chars().collect::<Vec<_>>().into_iter());
-                parser.set_anchor_offset(anchor_offset);
+                if let Some(anchor_offset) = inherited_anchor_offset {
+                    parser.set_anchor_offset(anchor_offset);
+                }
                 let mut events = Vec::new();
                 while let Some(event) = parser.next_event() {
                     match event {

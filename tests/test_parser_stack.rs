@@ -551,6 +551,31 @@ fn borrowed_include_resolver_still_validates_eagerly() {
 }
 
 #[test]
+fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
+    const INCLUDED: &str = "definition: &anchor anchored\nalias: *anchor\n";
+
+    let mut owned: MyStack<'static> = ParserStack::new();
+    owned.set_resolver(|_| Ok(INCLUDED.to_string()));
+    owned.resolve("owned.yaml").unwrap();
+    let owned_events = collect_events(&mut owned).unwrap();
+
+    assert_eq!(find_anchor_id(&owned_events, "anchored"), Some(1));
+    assert!(owned_events
+        .iter()
+        .any(|event| matches!(event, Event::Alias(1))));
+
+    let mut borrowed: MyStack<'static> = ParserStack::new();
+    borrowed.set_borrowed_resolver(|_| Ok(INCLUDED));
+    borrowed.resolve("borrowed.yaml").unwrap();
+    let borrowed_events = collect_events(&mut borrowed).unwrap();
+
+    assert_eq!(find_anchor_id(&borrowed_events, "anchored"), Some(1));
+    assert!(borrowed_events
+        .iter()
+        .any(|event| matches!(event, Event::Alias(1))));
+}
+
+#[test]
 fn replay_parser_moves_owned_event_text() {
     let value = "owned replay value".to_string();
     let value_ptr = value.as_ptr();
