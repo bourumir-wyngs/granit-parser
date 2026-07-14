@@ -517,7 +517,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// Whether document directives were already initialized before comments preceding `---`.
     pending_document_directives: bool,
     /// `%TAG` handles already seen before comments preceding an explicit document start.
-    pending_document_tag_handles: BTreeSet<String>,
+    pending_document_tag_handles: BTreeSet<Cow<'input, str>>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
     /// Next ID available for an anchor.
@@ -528,7 +528,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The tag directives (`%TAG`) the parser has encountered.
     ///
     /// Key is the handle, and value is the prefix.
-    tags: BTreeMap<String, String>,
+    tags: BTreeMap<Cow<'input, str>, Cow<'input, str>>,
     /// Whether we have emitted a terminal iterator result.
     ///
     /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
@@ -956,6 +956,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
+                } else if self.state == State::End {
+                    self.parse()
                 } else if let Some(comment) = self.maybe_next_comment_event()? {
                     Ok(comment)
                 } else {
@@ -999,10 +1001,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// This function does _not_ make use of `self.token`.
     fn scan_next_token(&mut self) -> Result<QueuedToken<'input>, ScanError> {
         match self.scanner.next_queued_token()? {
-            None => match self.scanner.get_error() {
-                None => Err(self.unexpected_eof()),
-                Some(e) => e.into_result(),
-            },
+            None => unreachable!("scanner ended before the parser consumed its stream-end token"),
             Some(tok) => Ok(tok),
         }
     }
@@ -1160,32 +1159,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         } else {
             Placement::Free
         }
-    }
-
-    #[cold]
-    fn unexpected_eof(&self) -> ScanError {
-        let kind = match self.state {
-            State::FlowSequenceFirstEntry | State::FlowSequenceEntry => {
-                ErrorKind::UnexpectedEofFlowSequence
-            }
-            State::FlowMappingFirstKey
-            | State::FlowMappingKey
-            | State::FlowMappingValue
-            | State::FlowMappingEmptyValue => ErrorKind::UnexpectedEofFlowMapping,
-            State::FlowSequenceEntryMappingKey
-            | State::FlowSequenceEntryMappingValue
-            | State::FlowSequenceEntryMappingEnd
-            | State::FlowNode => ErrorKind::UnexpectedEofImplicitFlowMapping,
-            State::BlockSequenceFirstEntry | State::BlockSequenceEntry | State::BlockNode => {
-                ErrorKind::UnexpectedEofBlockSequence
-            }
-            State::BlockMappingFirstKey
-            | State::BlockMappingKey
-            | State::BlockMappingValue
-            | State::BlockNodeOrIndentlessSequence => ErrorKind::UnexpectedEofBlockMapping,
-            _ => ErrorKind::UnexpectedEof,
-        };
-        ScanError::from_kind(self.scanner.mark(), kind)
     }
 
     fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
@@ -1392,8 +1365,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             State::FlowSequenceEntryMappingEnd => self.flow_sequence_entry_mapping_end(),
             State::FlowMappingEmptyValue => self.flow_mapping_value(true),
 
-            /* impossible */
-            State::End => unreachable!(),
+            State::End => unreachable!("end state is handled before state-machine dispatch"),
         }
     }
 
@@ -1468,46 +1440,56 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         mut version: Option<YamlVersion>,
         continuing: bool,
-        mut document_tag_handles: BTreeSet<String>,
-    ) -> Result<(Option<YamlVersion>, BTreeSet<String>), ScanError> {
+        mut document_tag_handles: BTreeSet<Cow<'input, str>>,
+    ) -> Result<(Option<YamlVersion>, BTreeSet<Cow<'input, str>>), ScanError> {
         let mut tags = if continuing || self.keep_tags {
-            self.tags.clone()
+            core::mem::take(&mut self.tags)
         } else {
             BTreeMap::new()
         };
 
         loop {
-            match self.peek_token()? {
-                QueuedToken(span, QueuedTokenType::VersionDirective(major, minor)) => {
+            let is_directive = matches!(
+                self.peek_token()?.1,
+                QueuedTokenType::VersionDirective(..)
+                    | QueuedTokenType::TagDirective(..)
+                    | QueuedTokenType::ReservedDirective(..)
+            );
+            if !is_directive {
+                break;
+            }
+
+            let QueuedToken(span, token) = self.fetch_token();
+            match token {
+                QueuedTokenType::VersionDirective(major, minor) => {
                     if version.is_some() {
                         return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::DuplicateVersionDirective,
                         ));
                     }
-                    if *major != 1 {
+                    if major != 1 {
                         return Err(ScanError::from_kind(
                             span.start,
                             ErrorKind::UnsupportedYamlMajorVersion,
                         ));
                     }
-                    version = Some(YamlVersion::new(*major, *minor));
+                    version = Some(YamlVersion::new(major, minor));
                 }
-                QueuedToken(mark, QueuedTokenType::TagDirective(handle, prefix)) => {
-                    if !document_tag_handles.insert(handle.to_string()) {
+                QueuedTokenType::TagDirective(handle, prefix) => {
+                    if !document_tag_handles.insert(handle.clone()) {
                         return Err(ScanError::from_kind(
-                            mark.start,
+                            span.start,
                             ErrorKind::DuplicateTagDirective,
                         ));
                     }
-                    tags.insert(handle.to_string(), prefix.to_string());
+                    tags.insert(handle, prefix);
                 }
-                QueuedToken(_, QueuedTokenType::ReservedDirective(_, _)) => {
+                QueuedTokenType::ReservedDirective(_, _) => {
                     // Reserved directives are ignored
                 }
-                _ => break,
+                _ => unreachable!("non-directive token passed the directive guard"),
             }
-            self.skip();
         }
 
         self.tags = tags;
@@ -1661,59 +1643,53 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) => {
                 self.pop_state();
-                if let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() {
-                    match self.anchors.get(&*name) {
-                        None => {
-                            return Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor))
-                        }
-                        Some(id) => return Ok((Event::Alias(*id), span)),
-                    }
-                }
-                unreachable!()
+                let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() else {
+                    unreachable!("alias token disappeared after peek")
+                };
+                return match self.anchors.get(&*name) {
+                    None => Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor)),
+                    Some(id) => Ok((Event::Alias(*id), span)),
+                };
             }
             QueuedToken(_, QueuedTokenType::Anchor(_)) => {
-                if let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() {
-                    anchor_id = self.register_anchor(name, &span)?;
-                    property_end = Some(span.end);
-                    if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
-                        if let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
-                            self.fetch_token()
-                        {
-                            tag_start = Some(tag_span.start);
-                            tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
-                            property_end = Some(tag_span.end);
-                        } else {
-                            unreachable!()
-                        }
-                    }
-                    if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
-                        return Ok(comment);
-                    }
-                } else {
-                    unreachable!()
+                let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() else {
+                    unreachable!("anchor token disappeared after peek")
+                };
+                anchor_id = self.register_anchor(name, &span)?;
+                property_end = Some(span.end);
+                if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
+                    let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
+                        self.fetch_token()
+                    else {
+                        unreachable!("tag token disappeared after peek")
+                    };
+                    tag_start = Some(tag_span.start);
+                    tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
+                    property_end = Some(tag_span.end);
+                }
+                if let Some(comment) = self.maybe_next_comment_event()? {
+                    self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
+                    return Ok(comment);
                 }
             }
             QueuedToken(mark, QueuedTokenType::Tag(..)) => {
-                if let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 {
-                    tag_start = Some(mark.start);
+                let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 else {
+                    unreachable!("tag token disappeared after peek")
+                };
+                tag_start = Some(mark.start);
+                property_end = Some(mark.end);
+                tag = Some(self.resolve_tag(mark, &handle, suffix)?);
+                if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
+                    let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
+                    else {
+                        unreachable!("anchor token disappeared after peek")
+                    };
+                    anchor_id = self.register_anchor(name, &mark)?;
                     property_end = Some(mark.end);
-                    tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                    if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
-                        if let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
-                        {
-                            anchor_id = self.register_anchor(name, &mark)?;
-                            property_end = Some(mark.end);
-                        } else {
-                            unreachable!()
-                        }
-                    }
-                    if let Some(comment) = self.maybe_next_comment_event()? {
-                        self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
-                        return Ok(comment);
-                    }
-                } else {
-                    unreachable!()
+                }
+                if let Some(comment) = self.maybe_next_comment_event()? {
+                    self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
+                    return Ok(comment);
                 }
             }
             _ => {}
@@ -1752,15 +1728,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(_, QueuedTokenType::Scalar(..)) => {
                 self.pop_state();
-                if let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token() {
-                    Ok(Self::attach_tag_start(
-                        Event::Scalar(v, style, anchor_id, tag),
-                        mark,
-                        tag_start,
-                    ))
-                } else {
-                    unreachable!()
-                }
+                let QueuedToken(mark, QueuedTokenType::Scalar(style, v)) = self.fetch_token()
+                else {
+                    unreachable!("scalar token disappeared after peek")
+                };
+                Ok(Self::attach_tag_start(
+                    Event::Scalar(v, style, anchor_id, tag),
+                    mark,
+                    tag_start,
+                ))
             }
             QueuedToken(mark, QueuedTokenType::FlowSequenceStart) => {
                 self.state = State::FlowSequenceFirstEntry;
@@ -1925,9 +1901,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "block mapping value-node state entered without a pending empty-scalar span"
+            )
         };
         self.block_mapping_value_node_with_empty_span(mark)
     }
@@ -2071,9 +2048,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "flow mapping value-node state entered without a pending empty-scalar span"
+            )
         };
         self.flow_mapping_value_node_with_empty_span(mark)
     }
@@ -2168,9 +2146,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "indentless sequence entry-node state entered without a pending empty-scalar span"
+            )
         };
         self.indentless_sequence_entry_node_with_empty_span(mark)
     }
@@ -2238,9 +2217,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let mark = match self.pending_empty_scalar_span.take() {
-            Some(mark) => mark,
-            None => Span::empty(self.peek_token()?.0.start),
+        let Some(mark) = self.pending_empty_scalar_span.take() else {
+            unreachable!(
+                "block sequence entry-node state entered without a pending empty-scalar span"
+            )
         };
         self.block_sequence_entry_node_with_empty_span(mark)
     }
@@ -2352,14 +2332,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         } else if handle.is_empty() && suffix == "!" {
             // "!" introduces a local tag. Local tags may have their prefix overridden.
             match self.tags.get("!") {
-                Some(prefix) => Tag::with_original_handle(prefix.clone(), suffix, original_handle),
+                Some(prefix) => {
+                    Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
+                }
                 None => Tag::with_original_handle(String::new(), suffix, original_handle),
             }
         } else {
             // Lookup handle in our tag directives.
             let prefix = self.tags.get(&**handle);
             if let Some(prefix) = prefix {
-                Tag::with_original_handle(prefix.clone(), suffix, original_handle)
+                Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
             } else {
                 // Otherwise, it may be a local handle. With a local handle, the handle is set to
                 // "!" and the suffix to whatever follows it ("!foo" -> ("!", "foo")).
@@ -2595,39 +2577,6 @@ mod test {
         let (event, _) = parser.state_machine().unwrap();
 
         assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
-    }
-
-    #[test]
-    fn unexpected_eof_kind_tracks_parser_state() {
-        let mut parser = Parser::new_from_str("");
-        let cases = [
-            (
-                State::FlowSequenceEntry,
-                ErrorKind::UnexpectedEofFlowSequence,
-            ),
-            (State::FlowMappingValue, ErrorKind::UnexpectedEofFlowMapping),
-            (
-                State::FlowSequenceEntryMappingEnd,
-                ErrorKind::UnexpectedEofImplicitFlowMapping,
-            ),
-            (
-                State::BlockSequenceEntry,
-                ErrorKind::UnexpectedEofBlockSequence,
-            ),
-            (
-                State::BlockMappingValue,
-                ErrorKind::UnexpectedEofBlockMapping,
-            ),
-            (State::DocumentContent, ErrorKind::UnexpectedEof),
-        ];
-
-        for (state, expected) in cases {
-            parser.state = state;
-            let error = parser.unexpected_eof();
-
-            assert_eq!(error.kind(), expected, "unexpected kind for {state:?}");
-            assert_eq!(error.marker(), &Marker::new(0, 1, 0));
-        }
     }
 
     #[test]
@@ -3412,6 +3361,28 @@ a5: *x
     }
 
     #[test]
+    fn tag_directive_state_borrows_str_input_across_comment() {
+        let mut parser = Parser::new_from_str(
+            "%TAG !e! tag:example.com,2026:\n# directive comment\n---\nkey: value\n",
+        );
+
+        while let Some(event) = parser.next_event() {
+            if matches!(event.unwrap().0, Event::Comment(..)) {
+                break;
+            }
+        }
+
+        assert!(matches!(
+            parser.tags.get("!e!"),
+            Some(Cow::Borrowed("tag:example.com,2026:"))
+        ));
+        assert!(parser
+            .pending_document_tag_handles
+            .iter()
+            .any(|handle| matches!(handle, Cow::Borrowed("!e!"))));
+    }
+
+    #[test]
     fn test_each_document_can_declare_own_yaml_version() {
         let document_starts = Parser::new_from_str(
             "%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb\n...\n%YAML 1.1\n---\nc\n",
@@ -3761,7 +3732,7 @@ baz: "qux"
         let mut parser = Parser::new_from_str("");
         parser
             .tags
-            .insert("!".to_string(), "tag:local.example,2024:".to_string());
+            .insert("!".into(), "tag:local.example,2024:".into());
 
         let tag = parser
             .resolve_tag(

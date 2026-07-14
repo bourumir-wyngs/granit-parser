@@ -596,7 +596,7 @@ impl<'input> From<Token<'input>> for QueuedToken<'input> {
 ///
 /// In the second document however, reaching EOF would mark the [`SimpleKey`] as no longer possible,
 /// and no [`TokenType::Key`] would be emitted by the scanner.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq)]
 struct SimpleKey {
     /// Whether the token this [`SimpleKey`] refers to may still be a key.
     ///
@@ -1462,8 +1462,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         match c {
             '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart),
             '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart),
-            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd),
-            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd),
+            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd, '[', ']'),
+            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd, '{', '}'),
             ',' => self.fetch_flow_entry(),
             '-' if is_blank_or_breakz(nc) => self.fetch_block_entry(),
             '?' if is_blank_or_breakz(nc) => self.fetch_key(),
@@ -1531,7 +1531,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
         let Some(t) = self.tokens.pop_front() else {
-            return Err(self.scan_error(ErrorKind::MissingNextToken));
+            unreachable!("fetch_more_tokens succeeded without producing a token")
         };
         self.token_available = false;
         self.tokens_parsed += 1;
@@ -2033,55 +2033,39 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return self.scan_tag_owned(&start_mark);
         }
 
-        let (handle, suffix): (Cow<'input, str>, Cow<'input, str>) =
-            if self.input.nth_char_is(1, '<') {
-                // Verbatim tags always need owned strings (URI escapes).
-                let suffix = self.scan_verbatim_tag(&start_mark)?;
-                (Cow::Owned(String::new()), Cow::Owned(suffix))
+        let (handle, suffix): (Cow<'input, str>, Cow<'input, str>) = if self
+            .input
+            .nth_char_is(1, '<')
+        {
+            // Verbatim tags always need owned strings (URI escapes).
+            let suffix = self.scan_verbatim_tag(&start_mark)?;
+            (Cow::Owned(String::new()), Cow::Owned(suffix))
+        } else {
+            // The tag has either the '!suffix' or the '!handle!suffix'
+            let handle = self.scan_tag_handle_cow(&start_mark)?;
+            // Check if it is, indeed, handle.
+            if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
+                // A tag handle starting with "!!" is a secondary tag handle.
+                let suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, true)?;
+                (handle, suffix)
             } else {
-                // The tag has either the '!suffix' or the '!handle!suffix'
-                let handle = self.scan_tag_handle_cow(&start_mark)?;
-                // Check if it is, indeed, handle.
-                if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
-                    // A tag handle starting with "!!" is a secondary tag handle.
-                    let suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, true)?;
-                    (handle, suffix)
+                // Not a real handle, it's part of the suffix.
+                // E.g., "!foo" -> handle="!", suffix="foo"
+                // The "handle" we scanned is actually "!" + suffix_part1.
+                // We need to also scan any remaining suffix characters.
+                let remaining_suffix = self.scan_tag_shorthand_suffix_cow(&start_mark, false)?;
+
+                let suffix = self.combine_local_tag_suffix(&start_mark, handle, remaining_suffix);
+
+                // A special case: the '!' tag.  Set the handle to '' and the
+                // suffix to '!'.
+                if suffix.is_empty() {
+                    (Cow::Borrowed(""), Cow::Borrowed("!"))
                 } else {
-                    // Not a real handle, it's part of the suffix.
-                    // E.g., "!foo" -> handle="!", suffix="foo"
-                    // The "handle" we scanned is actually "!" + suffix_part1.
-                    // We need to also scan any remaining suffix characters.
-                    let remaining_suffix =
-                        self.scan_tag_shorthand_suffix_cow(&start_mark, false)?;
-
-                    // Extract suffix from handle (skip leading '!') and combine with remaining.
-                    let suffix = if handle.len() > 1 {
-                        if remaining_suffix.is_empty() {
-                            // The suffix is just what's in handle after '!'
-                            match handle {
-                                Cow::Borrowed(s) => Cow::Borrowed(&s[1..]),
-                                Cow::Owned(s) => Cow::Owned(s[1..].to_owned()),
-                            }
-                        } else {
-                            // Combine handle (minus leading '!') with remaining suffix.
-                            let mut combined = handle[1..].to_owned();
-                            combined.push_str(&remaining_suffix);
-                            Cow::Owned(combined)
-                        }
-                    } else {
-                        // handle is just "!", suffix is whatever we scanned after
-                        remaining_suffix
-                    };
-
-                    // A special case: the '!' tag.  Set the handle to '' and the
-                    // suffix to '!'.
-                    if suffix.is_empty() {
-                        (Cow::Borrowed(""), Cow::Borrowed("!"))
-                    } else {
-                        (Cow::Borrowed("!"), suffix)
-                    }
+                    (Cow::Borrowed("!"), suffix)
                 }
-            };
+            }
+        };
 
         if is_blank_or_breakz(self.input.look_ch())
             || (self.flow_level > 0 && matches!(self.input.peek(), ',' | ']' | '}'))
@@ -2097,6 +2081,51 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 start_mark,
                 ErrorKind::InvalidTagTerminator,
             ))
+        }
+    }
+
+    fn combine_local_tag_suffix(
+        &self,
+        start_mark: &Marker,
+        handle: Cow<'input, str>,
+        remaining: Cow<'input, str>,
+    ) -> Cow<'input, str> {
+        if handle.len() == 1 {
+            return remaining;
+        }
+
+        match (handle, remaining) {
+            (Cow::Borrowed(handle), Cow::Borrowed(remaining)) => {
+                if remaining.is_empty() {
+                    return Cow::Borrowed(&handle[1..]);
+                }
+
+                let borrowed = start_mark
+                    .byte_offset()
+                    .and_then(|start| start.checked_add(1))
+                    .zip(self.input.byte_offset())
+                    .and_then(|(start, end)| self.try_borrow_slice(start, end));
+                borrowed.map_or_else(
+                    || {
+                        let mut combined =
+                            String::with_capacity(handle.len() - 1 + remaining.len());
+                        combined.push_str(&handle[1..]);
+                        combined.push_str(remaining);
+                        Cow::Owned(combined)
+                    },
+                    Cow::Borrowed,
+                )
+            }
+            (Cow::Borrowed(handle), Cow::Owned(mut remaining)) => {
+                remaining.reserve(handle.len() - 1);
+                remaining.insert_str(0, &handle[1..]);
+                Cow::Owned(remaining)
+            }
+            (Cow::Owned(mut handle), remaining) => {
+                handle.remove(0);
+                handle.push_str(&remaining);
+                Cow::Owned(handle)
+            }
         }
     }
 
@@ -2438,11 +2467,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let s = core::str::from_utf8(&bytes[..bytes_len])
             .map_err(|_| ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8))?;
 
-        let mut chars = s.chars();
-        match (chars.next(), chars.next()) {
-            (Some(ch), None) => Ok(ch),
-            _ => Err(ScanError::from_kind(*mark, ErrorKind::InvalidTagUtf8)),
-        }
+        let Some(ch) = s.chars().next() else {
+            unreachable!("a validated URI escape cannot decode to an empty string")
+        };
+        Ok(ch)
     }
 
     fn fetch_anchor(&mut self, alias: bool) -> ScanResult {
@@ -2551,7 +2579,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(())
     }
 
-    fn fetch_flow_collection_end(&mut self, tok: TokenType<'input>) -> ScanResult {
+    fn fetch_flow_collection_end(
+        &mut self,
+        tok: TokenType<'input>,
+        expected_open: char,
+        actual_close: char,
+    ) -> ScanResult {
         // A closing bracket without a corresponding opening is invalid YAML.
         if self.flow_level == 0 {
             return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
@@ -2559,12 +2592,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let Some((open_mark, open_ch)) = self.flow_markers.pop() else {
             return Err(self.scan_error(ErrorKind::MisplacedFlowCollectionEnd));
-        };
-
-        let (expected_open, actual_close) = match tok {
-            TokenType::FlowSequenceEnd => ('[', ']'),
-            TokenType::FlowMappingEnd => ('{', '}'),
-            _ => unreachable!("flow collection end called with non-closing token"),
         };
 
         if open_ch != expected_open {
@@ -2850,13 +2877,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Chomping::Keep => trailing_breaks,
             };
 
-            let span = if contents.trim().is_empty() {
-                Span::new(start_mark, self.mark)
-            } else {
-                Span::new(start_mark, self.mark).with_indent(Some(indent))
-            };
-
-            return Ok(Token(span, TokenType::Scalar(style, contents.into())));
+            return Ok(Token(
+                Span::new(start_mark, self.mark),
+                TokenType::Scalar(style, contents.into()),
+            ));
         }
 
         if self.mark.col < indent && (self.mark.col as isize) > self.indent {
@@ -3854,7 +3878,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Fetch a value from a mapping (after a `:`).
     fn fetch_value(&mut self) -> ScanResult {
-        let sk = self.simple_keys.last().unwrap().clone();
+        let sk = *self.simple_keys.last().unwrap();
         let start_mark = self.mark;
         let is_implicit_flow_mapping = self.current_flow_collection_is_sequence()
             && !self.current_flow_mapping_started()
@@ -5041,6 +5065,23 @@ mod test {
                     matches!(suffix, Cow::Borrowed("mytag")),
                     "local tag suffix should be borrowed, got: {suffix:?}"
                 );
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn local_tag_suffix_with_punctuation_is_borrowed_for_str_input() {
+        let mut scanner = Scanner::new(StrInput::new("!mytag/part foo\n"));
+
+        loop {
+            let tok = scanner
+                .next_token()
+                .expect("valid YAML must scan without errors")
+                .expect("scanner must eventually produce a token");
+            if let TokenType::Tag(handle, suffix) = tok.1 {
+                assert!(matches!(handle, Cow::Borrowed("!")));
+                assert!(matches!(suffix, Cow::Borrowed("mytag/part")));
                 break;
             }
         }

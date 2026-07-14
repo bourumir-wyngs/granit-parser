@@ -4,12 +4,11 @@ use crate::{
     parser::{Event, ParseResult, Parser, ParserTrait, SpannedEventReceiver},
     scanner::Span,
 };
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
 /// A lightweight parser that replays a pre-collected event stream.
 pub struct ReplayParser<'input> {
-    events: Vec<(Event<'input>, Span)>,
-    index: usize,
+    events: alloc::vec::IntoIter<(Event<'input>, Span)>,
     anchor_offset: usize,
 }
 
@@ -18,8 +17,7 @@ impl<'input> ReplayParser<'input> {
     #[must_use]
     pub fn new(events: Vec<(Event<'input>, Span)>, anchor_offset: usize) -> Self {
         Self {
-            events,
-            index: 0,
+            events: events.into_iter(),
             anchor_offset,
         }
     }
@@ -51,12 +49,11 @@ impl<'input> ReplayParser<'input> {
 
 impl<'input> ParserTrait<'input> for ReplayParser<'input> {
     fn peek(&mut self) -> Option<Result<&(Event<'input>, Span), ScanError>> {
-        self.events.get(self.index).map(Ok)
+        self.events.as_slice().first().map(Ok)
     }
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
-        let event = self.events.get(self.index).cloned()?;
-        self.index += 1;
+        let event = self.events.next()?;
         self.advance_anchor_offset(&event.0);
         Some(Ok(event))
     }
@@ -166,7 +163,7 @@ where
     current_error: Option<ScanError>,
     stream_end_emitted: bool,
     #[allow(clippy::type_complexity)]
-    include_resolver: Option<Box<dyn FnMut(&str) -> Result<String, ScanError> + 'input>>,
+    include_resolver: Option<Box<dyn FnMut(&str) -> Result<Cow<'input, str>, ScanError> + 'input>>,
 }
 
 impl<'input, I, T> ParserStack<'input, I, T>
@@ -191,9 +188,21 @@ where
     /// The resolver receives the include name and returns the included YAML source text.
     pub fn set_resolver(
         &mut self,
-        resolver: impl FnMut(&str) -> Result<String, ScanError> + 'input,
+        mut resolver: impl FnMut(&str) -> Result<String, ScanError> + 'input,
     ) {
-        self.include_resolver = Some(Box::new(resolver));
+        self.include_resolver = Some(Box::new(move |name| resolver(name).map(Cow::Owned)));
+    }
+
+    /// Set an include resolver whose source text can be borrowed for the stack's input lifetime.
+    ///
+    /// Unlike [`Self::set_resolver`], this path lets scalar, comment, anchor, and tag token text in
+    /// included documents borrow directly from the returned source. The included document is still
+    /// validated eagerly so resolution errors retain the same timing and source-stack context.
+    pub fn set_borrowed_resolver(
+        &mut self,
+        mut resolver: impl FnMut(&str) -> Result<&'input str, ScanError> + 'input,
+    ) {
+        self.include_resolver = Some(Box::new(move |name| resolver(name).map(Cow::Borrowed)));
     }
 
     /// Resolves an include string using the include resolver.
@@ -206,33 +215,71 @@ where
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
     /// included content cannot be parsed.
     pub fn resolve(&mut self, include_str: &str) -> Result<(), ScanError> {
+        let resolved = match &mut self.include_resolver {
+            Some(resolver) => resolver(include_str),
+            None => {
+                return Err(self.contextualize_include_error(
+                    ScanError::from_kind(
+                        crate::scanner::Marker::new(0, 1, 0),
+                        ErrorKind::MissingIncludeResolver,
+                    ),
+                    include_str,
+                ));
+            }
+        };
+        let content = match resolved {
+            Ok(content) => content,
+            Err(error) => return Err(self.contextualize_include_error(error, include_str)),
+        };
+        let inherited_anchor_offset = self.parsers.last().map(AnyParser::get_anchor_offset);
+
+        let (events, next_anchor_offset) = match content {
+            Cow::Borrowed(content) => {
+                let mut parser = Parser::new_from_str(content);
+                if let Some(anchor_offset) = inherited_anchor_offset {
+                    parser.set_anchor_offset(anchor_offset);
+                }
+                let mut events = Vec::new();
+                while let Some(event) = parser.next_event() {
+                    match event {
+                        Ok(event) => events.push(event),
+                        Err(error) => {
+                            return Err(self.contextualize_include_error(error, include_str));
+                        }
+                    }
+                }
+                (events, parser.get_anchor_offset())
+            }
+            Cow::Owned(content) => {
+                let mut parser =
+                    Parser::new_from_iter(content.chars().collect::<Vec<_>>().into_iter());
+                if let Some(anchor_offset) = inherited_anchor_offset {
+                    parser.set_anchor_offset(anchor_offset);
+                }
+                let mut events = Vec::new();
+                while let Some(event) = parser.next_event() {
+                    match event {
+                        Ok(event) => events.push(event),
+                        Err(error) => {
+                            return Err(self.contextualize_include_error(error, include_str));
+                        }
+                    }
+                }
+                (events, parser.get_anchor_offset())
+            }
+        };
+
+        self.push_replay_parser(
+            ReplayParser::new(events, next_anchor_offset),
+            include_str.into(),
+        );
+        Ok(())
+    }
+
+    fn contextualize_include_error(&self, error: ScanError, include_str: &str) -> ScanError {
         let mut source_stack = self.stack();
         source_stack.push(include_str.into());
-
-        if let Some(resolver) = &mut self.include_resolver {
-            let content = resolver(include_str)
-                .map_err(|error| error.with_source_stack(source_stack.clone()))?;
-            let mut parser = Parser::new_from_iter(content.chars().collect::<Vec<_>>().into_iter());
-            if let Some(parent) = self.parsers.last() {
-                parser.set_anchor_offset(parent.get_anchor_offset());
-            }
-            let mut events = Vec::new();
-            while let Some(event) = parser.next_event() {
-                events.push(event.map_err(|error| error.with_source_stack(source_stack.clone()))?);
-            }
-
-            self.push_replay_parser(
-                ReplayParser::new(events, parser.get_anchor_offset()),
-                include_str.into(),
-            );
-            Ok(())
-        } else {
-            Err(ScanError::from_kind(
-                crate::scanner::Marker::new(0, 1, 0),
-                ErrorKind::MissingIncludeResolver,
-            )
-            .with_source_stack(source_stack))
-        }
+        error.with_source_stack(source_stack)
     }
 
     /// Resolves an include by name and pushes the resulting parser onto the stack.

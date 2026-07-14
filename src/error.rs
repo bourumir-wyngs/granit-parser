@@ -85,8 +85,6 @@ pub enum ErrorKind {
         /// The character that was encountered.
         character: char,
     },
-    /// The scanner could not produce the next token.
-    MissingNextToken,
     /// A tab was used in a context where it is not allowed.
     TabNotAllowed,
     /// A tab was used in block indentation.
@@ -293,7 +291,6 @@ impl fmt::Display for ErrorKind {
             Self::UnexpectedCharacter { character } => {
                 write!(f, "unexpected character: `{}'", character.escape_default())
             }
-            Self::MissingNextToken => f.write_str("did not find expected next token"),
             Self::TabNotAllowed => f.write_str("tabs disallowed in this context"),
             Self::TabInBlockIndentation => {
                 f.write_str("tabs disallowed within this context (block indentation)")

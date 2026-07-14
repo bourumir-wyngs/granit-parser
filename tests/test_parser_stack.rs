@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::{
+    borrow::Cow,
     string::{String, ToString},
     vec,
     vec::Vec,
@@ -53,6 +54,33 @@ fn find_anchor_id(events: &[Event], value: &str) -> Option<usize> {
             None
         }
     })
+}
+
+fn stack_after_first_parent_anchor() -> MyStack<'static> {
+    let mut stack = ParserStack::new();
+    stack.push_str_parser(
+        Parser::new_from_str("before: &parent parent-value\nafter: &after resumed-parent-value\n"),
+        "parent.yaml".to_string(),
+    );
+
+    loop {
+        let event = stack.next_event().unwrap().unwrap().0;
+        if let Event::Scalar(value, _, anchor_id, _) = event {
+            if value == "parent-value" {
+                assert_eq!(anchor_id, 1);
+                break;
+            }
+        }
+    }
+
+    assert_eq!(stack.current_anchor_offset(), 2);
+    stack
+}
+
+fn assert_include_anchor_offset_is_inherited(events: &[Event]) {
+    assert_eq!(find_anchor_id(events, "included-value"), Some(2));
+    assert!(events.iter().any(|event| matches!(event, Event::Alias(2))));
+    assert_eq!(find_anchor_id(events, "resumed-parent-value"), Some(3));
 }
 
 fn format_events(events: &[Event]) -> Vec<String> {
@@ -509,6 +537,119 @@ fn test_include_resolver() {
             "StreamEnd"
         ]
     );
+}
+
+#[test]
+fn borrowed_include_resolver_preserves_borrowed_event_text() {
+    const INCLUDED: &str = "included: borrowed-value\n";
+
+    let mut stack: MyStack<'static> = ParserStack::new();
+    stack.set_borrowed_resolver(|name| {
+        assert_eq!(name, "borrowed.yaml");
+        Ok(INCLUDED)
+    });
+    stack.resolve("borrowed.yaml").unwrap();
+
+    while let Some(event) = stack.next_event() {
+        if let Event::Scalar(value, _, _, _) = event.unwrap().0 {
+            if value == "borrowed-value" {
+                assert!(matches!(value, Cow::Borrowed("borrowed-value")));
+                return;
+            }
+        }
+    }
+
+    panic!("expected the included scalar");
+}
+
+#[test]
+fn borrowed_include_resolver_still_validates_eagerly() {
+    let mut stack: MyStack<'static> = ParserStack::new();
+    stack.push_str_parser(Parser::new_from_str("root: value\n"), "root".to_string());
+    stack.set_borrowed_resolver(|_| Ok("included: [unclosed\n"));
+
+    let error = stack.resolve("invalid.yaml").unwrap_err();
+
+    assert_eq!(
+        error.kind(),
+        ErrorKind::UnclosedFlowCollection { open: '[' }
+    );
+    assert_eq!(error.source_stack(), ["root", "invalid.yaml"]);
+}
+
+#[test]
+fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
+    const INCLUDED: &str = "definition: &anchor anchored\nalias: *anchor\n";
+
+    let mut owned: MyStack<'static> = ParserStack::new();
+    owned.set_resolver(|_| Ok(INCLUDED.to_string()));
+    owned.resolve("owned.yaml").unwrap();
+    let owned_events = collect_events(&mut owned).unwrap();
+
+    assert_eq!(find_anchor_id(&owned_events, "anchored"), Some(1));
+    assert!(owned_events
+        .iter()
+        .any(|event| matches!(event, Event::Alias(1))));
+
+    let mut borrowed: MyStack<'static> = ParserStack::new();
+    borrowed.set_borrowed_resolver(|_| Ok(INCLUDED));
+    borrowed.resolve("borrowed.yaml").unwrap();
+    let borrowed_events = collect_events(&mut borrowed).unwrap();
+
+    assert_eq!(find_anchor_id(&borrowed_events, "anchored"), Some(1));
+    assert!(borrowed_events
+        .iter()
+        .any(|event| matches!(event, Event::Alias(1))));
+}
+
+#[test]
+fn owned_resolve_inherits_and_propagates_parent_anchor_offset() {
+    let mut stack = stack_after_first_parent_anchor();
+    stack.set_resolver(|name| {
+        assert_eq!(name, "included.yaml");
+        Ok("definition: &included included-value\nalias: *included\n".to_string())
+    });
+
+    stack.resolve("included.yaml").unwrap();
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_include_anchor_offset_is_inherited(&events);
+}
+
+#[test]
+fn borrowed_resolve_inherits_and_propagates_parent_anchor_offset() {
+    const INCLUDED: &str = "definition: &included included-value\nalias: *included\n";
+
+    let mut stack = stack_after_first_parent_anchor();
+    stack.set_borrowed_resolver(|name| {
+        assert_eq!(name, "included.yaml");
+        Ok(INCLUDED)
+    });
+
+    stack.resolve("included.yaml").unwrap();
+    let events = collect_events(&mut stack).unwrap();
+
+    assert_include_anchor_offset_is_inherited(&events);
+}
+
+#[test]
+fn replay_parser_moves_owned_event_text() {
+    let value = "owned replay value".to_string();
+    let value_ptr = value.as_ptr();
+    let mut replay = ReplayParser::new(
+        vec![(
+            Event::Scalar(Cow::Owned(value), ScalarStyle::Plain, 0, None),
+            test_span(),
+        )],
+        1,
+    );
+
+    let event = replay.next_event().unwrap().unwrap().0;
+    let Event::Scalar(Cow::Owned(value), _, _, _) = event else {
+        panic!("expected an owned scalar");
+    };
+
+    assert_eq!(value.as_ptr(), value_ptr);
 }
 
 #[test]

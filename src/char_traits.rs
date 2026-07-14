@@ -72,7 +72,7 @@ pub fn as_hex(c: char) -> u32 {
         '0'..='9' => (c as u32) - ('0' as u32),
         'a'..='f' => (c as u32) - ('a' as u32) + 10,
         'A'..='F' => (c as u32) - ('A' as u32) + 10,
-        _ => unreachable!(),
+        _ => unreachable!("as_hex called with a non-hexadecimal character"),
     }
 }
 

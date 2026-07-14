@@ -154,7 +154,9 @@ or [`push_include`](https://docs.rs/granit-parser/latest/granit_parser/parser_st
 on `ParserStack`, comment events
 from included documents are forwarded through the normal event stream. Their
 spans remain local to the included source, matching the existing span behavior
-for other included-document events.
+for other included-document events. Use `ParserStack::set_borrowed_resolver` when included source
+text already has the stack's input lifetime; its event text can then use the same zero-copy path as
+`Parser::new_from_str`.
 
 Use the iterator API when the caller should pull events and decide when to stop
 parsing. [`load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load)
