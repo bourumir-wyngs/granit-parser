@@ -12,6 +12,12 @@ use crate::scanner::Marker;
 
 /// Details of an I/O failure reported by an input adapter.
 ///
+/// This error is primarily intended for terminal failures such as a missing file, insufficient
+/// permissions, or a failed read, where an exact character position is usually not meaningful.
+/// Streaming inputs may be read ahead by a small lookahead window. Once an adapter reports an I/O
+/// failure, the parser reports it at its current marker; consequently, a few successfully read
+/// characters that were already buffered ahead of that marker may not be scanned or emitted.
+///
 /// The human-readable message is available in every build. With the `std` feature enabled, an
 /// instance constructed from `std::io::Error` also retains that original error and exposes it
 /// through `InputIoError::io_error` and the standard error source chain.
