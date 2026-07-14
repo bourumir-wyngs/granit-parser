@@ -1,6 +1,20 @@
 # Changelog
 
 ## v0.0.8
+- Added `FallibleBufferedInput` and `Parser::new_from_fallible_iter` for
+  `Iterator<Item = Result<char, ErrorKind>>` sources. Clean iterator exhaustion remains EOF, while
+  an error item now terminates parsing as a `ScanError` without polling the source again. Existing
+  `BufferedInput` and `Parser::new_from_iter` APIs remain unchanged.
+- Added `ErrorKind::InputIo`, `ErrorKind::InputDecoding`, and
+  `ErrorKind::InputByteLimitExceeded` for machine-readable streaming source failures. The provided
+  `examples/fallible_reader.rs` defines a documented `CheckedChars` iterator adapter demonstrating
+  per-character I/O handling, UTF-8 byte limits, clean EOF, and terminal source errors.
+- Added the optional `std` feature and the stable `InputIoError` wrapper. Message-only construction
+  remains available under `no_std`; with `std`, construction from `std::io::Error` retains the
+  original error through `InputIoError::io_error()` and the standard error source chain.
+- Made `debug_prints` enable the new `std` feature explicitly.
+- Added the default `Input::take_source_error` hook so existing custom `Input` implementations stay
+  source-compatible while fallible inputs can distinguish source failure from EOF.
 - Fixed literal NUL being treated as end-of-input and rejected raw DEL and C0/C1 controls other
   than TAB, LF, CR, and NEL in scalars and comments. The valid double-quoted `"\0"` escape remains
   supported.

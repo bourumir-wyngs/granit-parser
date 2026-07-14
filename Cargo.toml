@@ -31,7 +31,8 @@ exclude = [
 [features]
 default = ["error_messages"]
 error_messages = []
-debug_prints = []
+std = []
+debug_prints = ["std"]
 
 [dependencies]
 arraydeque = { version = "0.5.1", default-features = false }
@@ -55,6 +56,10 @@ path = "tools/time_parse.rs"
 [[bin]]
 name = "run_parser"
 path = "tools/run_bench.rs"
+
+[[example]]
+name = "fallible_reader"
+required-features = ["std"]
 
 [lints.rust]
 unsafe_code = "forbid"

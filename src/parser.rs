@@ -8,7 +8,7 @@ use crate::{
     error::{ErrorKind, ScanError},
     input::{str::StrInput, BorrowedInput},
     scanner::{Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
-    BufferedInput,
+    BufferedInput, FallibleBufferedInput,
 };
 
 use alloc::{
@@ -847,6 +847,22 @@ where
     pub fn new_from_iter(iter: T) -> Self {
         debug_print!("\x1B[;31m>>>>>>>>>> New parser from iter\x1B[;0m");
         Parser::new(BufferedInput::new(iter))
+    }
+}
+
+impl<T> Parser<'static, FallibleBufferedInput<T>>
+where
+    T: Iterator<Item = Result<char, ErrorKind>>,
+{
+    /// Create a parser over a fallible iterator of characters.
+    ///
+    /// The iterator's `None` return value means clean end-of-input. An `Err` item reports a
+    /// terminal source failure and is returned by the parser as a [`ScanError`] carrying the same
+    /// [`ErrorKind`]. The iterator is not polled again after its first error.
+    #[must_use]
+    pub fn new_from_fallible_iter(iter: T) -> Self {
+        debug_print!("\x1B[;31m>>>>>>>>>> New parser from fallible iter\x1B[;0m");
+        Parser::new(FallibleBufferedInput::new(iter))
     }
 }
 
@@ -2474,9 +2490,8 @@ mod test {
     #[cfg(feature = "error_messages")]
     use core::{error::Error as _, fmt};
 
-    use crate::error::ErrorKind;
     #[cfg(feature = "error_messages")]
-    use crate::error::ScanError;
+    use crate::error::{ErrorKind, ScanError};
     use crate::scanner::{Marker, ScalarStyle, Span};
 
     use super::{

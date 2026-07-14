@@ -1,4 +1,5 @@
 use crate::char_traits::is_breakz;
+use crate::error::ErrorKind;
 use crate::input::{BorrowedInput, Input};
 
 use arraydeque::ArrayDeque;
@@ -190,6 +191,132 @@ impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
 /// `BufferedInput` does not support zero-copy slicing since it's a streaming input
 /// without stable backing storage.
 impl<T: Iterator<Item = char>> BorrowedInput<'static> for BufferedInput<T> {
+    #[inline]
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'static str> {
+        None
+    }
+}
+
+/// Adapter that exposes successful items to [`BufferedInput`] and latches the first source error.
+struct FallibleChars<T: Iterator<Item = Result<char, ErrorKind>>> {
+    input: T,
+    error: Option<ErrorKind>,
+    finished: bool,
+}
+
+impl<T: Iterator<Item = Result<char, ErrorKind>>> FallibleChars<T> {
+    fn new(input: T) -> Self {
+        Self {
+            input,
+            error: None,
+            finished: false,
+        }
+    }
+}
+
+impl<T: Iterator<Item = Result<char, ErrorKind>>> Iterator for FallibleChars<T> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        match self.input.next() {
+            Some(Ok(c)) => Some(c),
+            Some(Err(error)) => {
+                self.error = Some(error);
+                self.finished = true;
+                None
+            }
+            None => {
+                self.finished = true;
+                None
+            }
+        }
+    }
+}
+
+/// A buffered wrapper around a fallible iterator of characters.
+///
+/// The iterator uses its normal `None` return value for clean end-of-input and returns source
+/// failures as `Some(Err(error))`, where `error` is an [`ErrorKind`]. The first error is latched,
+/// parsing becomes terminal, and the underlying iterator is never polled again.
+#[allow(clippy::module_name_repetitions)]
+pub struct FallibleBufferedInput<T: Iterator<Item = Result<char, ErrorKind>>> {
+    inner: BufferedInput<FallibleChars<T>>,
+}
+
+impl<T: Iterator<Item = Result<char, ErrorKind>>> FallibleBufferedInput<T> {
+    /// Create a buffered input over a fallible character iterator.
+    pub fn new(input: T) -> Self {
+        Self {
+            inner: BufferedInput::new(FallibleChars::new(input)),
+        }
+    }
+}
+
+impl<T: Iterator<Item = Result<char, ErrorKind>>> Input for FallibleBufferedInput<T> {
+    #[inline]
+    fn lookahead(&mut self, count: usize) {
+        self.inner.lookahead(count);
+    }
+
+    #[inline]
+    fn buflen(&self) -> usize {
+        self.inner.buflen()
+    }
+
+    #[inline]
+    fn bufmaxlen(&self) -> usize {
+        self.inner.bufmaxlen()
+    }
+
+    #[inline]
+    fn raw_read_ch(&mut self) -> char {
+        self.inner.raw_read_ch()
+    }
+
+    #[inline]
+    fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+        self.inner.raw_read_non_breakz_ch()
+    }
+
+    #[inline]
+    fn skip(&mut self) {
+        self.inner.skip();
+    }
+
+    #[inline]
+    fn skip_n(&mut self, count: usize) {
+        self.inner.skip_n(count);
+    }
+
+    #[inline]
+    fn peek(&self) -> char {
+        self.inner.peek()
+    }
+
+    #[inline]
+    fn peek_nth(&self, n: usize) -> char {
+        self.inner.peek_nth(n)
+    }
+
+    #[inline]
+    fn next_is_z(&self) -> bool {
+        self.inner.next_is_z()
+    }
+
+    #[inline]
+    fn take_source_error(&mut self) -> Option<ErrorKind> {
+        self.inner.input.error.take()
+    }
+}
+
+/// `FallibleBufferedInput` is a streaming input and cannot provide stable borrowed slices.
+impl<T: Iterator<Item = Result<char, ErrorKind>>> BorrowedInput<'static>
+    for FallibleBufferedInput<T>
+{
     #[inline]
     fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'static str> {
         None

@@ -134,6 +134,38 @@ DocumentEnd bytes=Some(349..349) source=Some("")
 StreamEnd bytes=Some(349..349) source=Some("")
 ```
 
+## Fallible streaming input
+
+`Parser::new_from_iter` remains available for genuinely infallible character sources such as
+`str::chars()`. Do not use it for an adapter that turns I/O, decoding, or size-limit failures into
+EOF: an incomplete YAML prefix may itself be a valid document.
+
+Use `Parser::new_from_fallible_iter` for a streaming source that can fail. It accepts an
+`Iterator<Item = Result<char, ErrorKind>>`. The iterator protocol has three distinct outcomes:
+
+* `Some(Ok(character))` supplies another character.
+* `None` reports clean physical end-of-input.
+* `Some(Err(error_kind))` reports a terminal source failure.
+
+The parser returns a `ScanError` carrying that same `ErrorKind` and never polls the source again.
+Input adapters can report `ErrorKind::InputIo`, `ErrorKind::InputDecoding`, or
+`ErrorKind::InputByteLimitExceeded`. A byte-limited adapter must probe one byte beyond its limit;
+stopping exactly at the limit would once again make an oversized input look like clean EOF.
+
+`InputIoError::from_message` stores portable I/O details and is available in `no_std` builds. With
+the optional `std` feature, `InputIoError::from(io_error)` also retains the original
+`std::io::Error`; it is available through `InputIoError::io_error` and the `ScanError` error-source
+chain. The public `ErrorKind::InputIo` shape is the same in both configurations.
+
+The provided [fallible reader example](examples/fallible_reader.rs) defines a small
+`CheckedChars<I>` iterator adapter. It shows how to wrap a decoded `io::Result<char>` source, retain
+state between `next()` calls, report I/O errors, enforce a UTF-8 byte limit, stop polling after a
+failure, and feed one character at a time to the parser:
+
+```sh
+cargo run --features std --example fallible_reader
+```
+
 ## Event API choices
 
 Use [`try_load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.try_load)

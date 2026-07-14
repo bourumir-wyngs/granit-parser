@@ -1400,6 +1400,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// # Errors
     /// Returns `ScanError` when the scanner does not find the next expected token.
     pub fn fetch_next_token(&mut self) -> ScanResult {
+        let result = self.fetch_next_token_impl();
+        if let Some(kind) = self.input.take_source_error() {
+            return Err(ScanError::from_kind(self.mark, kind));
+        }
+        result
+    }
+
+    fn fetch_next_token_impl(&mut self) -> ScanResult {
         self.input.lookahead(1);
 
         if !self.stream_start_produced {
