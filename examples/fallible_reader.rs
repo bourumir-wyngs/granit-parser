@@ -53,15 +53,15 @@ where
 
         match next {
             Ok(c) => {
-                // Count the number of bytes this character occupies when encoded as UTF-8. The
-                // character that crosses the limit is replaced by the terminal limit error.
-                self.bytes_read = self.bytes_read.saturating_add(c.len_utf8());
-                if self.bytes_read > self.byte_limit {
+                let char_bytes = c.len_utf8();
+
+                if char_bytes > self.byte_limit.saturating_sub(self.bytes_read) {
                     self.finished = true;
                     Some(Err(ErrorKind::InputByteLimitExceeded {
                         limit: self.byte_limit,
                     }))
                 } else {
+                    self.bytes_read += char_bytes;
                     Some(Ok(c))
                 }
             }
