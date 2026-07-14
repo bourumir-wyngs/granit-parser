@@ -68,6 +68,11 @@
 //! [`ScanError::info`]. Disabling this feature makes both render an empty string while retaining
 //! machine-readable error kinds and source markers.
 //!
+//! #### `std`
+//! Retains the original `std::io::Error` inside [`InputIoError`] when constructed through
+//! `InputIoError::from_io` or its `From<std::io::Error>` implementation. Without this feature,
+//! [`InputIoError::from_message`] remains available for portable `no_std` error reporting.
+//!
 //! #### `debug_prints`
 //! Enables the `debug` module and usage of debug prints in the scanner and the parser. Do not
 //! enable if you are consuming the crate rather than working on it as this can significantly
@@ -76,7 +81,7 @@
 //!
 //! This feature does not raise the MSRV further.
 //!
-//! This feature is _not_ `no_std` compatible.
+//! This feature enables `std` and is _not_ `no_std` compatible.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs, clippy::pedantic)]
@@ -84,7 +89,7 @@
 
 extern crate alloc;
 
-#[cfg(feature = "debug_prints")]
+#[cfg(feature = "std")]
 extern crate std;
 
 mod char_traits;
@@ -97,8 +102,8 @@ mod parser;
 pub mod parser_stack;
 mod scanner;
 
-pub use crate::error::{ErrorKind, ScanError};
-pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, Input};
+pub use crate::error::{ErrorKind, InputIoError, ScanError};
+pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, FallibleBufferedInput, Input};
 pub use crate::parser::{
     Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,
     TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,

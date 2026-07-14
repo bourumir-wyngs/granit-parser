@@ -11,7 +11,7 @@ pub(crate) mod buffered;
 pub(crate) mod str;
 
 #[allow(clippy::module_name_repetitions)]
-pub use buffered::BufferedInput;
+pub use buffered::{BufferedInput, FallibleBufferedInput};
 
 /// A trait for inputs that can provide borrowed slices with a specific lifetime.
 ///
@@ -187,6 +187,21 @@ pub trait Input {
     #[must_use]
     fn may_contain_comments(&self) -> bool {
         true
+    }
+
+    /// Take a terminal error reported by the underlying source.
+    ///
+    /// Infallible inputs use the default implementation. Fallible streaming inputs latch their
+    /// first source error and return it here so the scanner can distinguish the failure from clean
+    /// end-of-input. Once an implementation reports an error, it must not read from its source
+    /// again.
+    ///
+    /// Source adapters should use an input-related [`ErrorKind`] such as
+    /// [`ErrorKind::InputIo`], [`ErrorKind::InputDecoding`], or
+    /// [`ErrorKind::InputByteLimitExceeded`].
+    #[inline]
+    fn take_source_error(&mut self) -> Option<ErrorKind> {
+        None
     }
 
     /// Look for the next character and return it.
