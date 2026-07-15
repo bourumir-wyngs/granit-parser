@@ -1,5 +1,7 @@
 //! Parser and scanner error types.
 
+#[cfg(feature = "std")]
+use alloc::sync::Arc;
 use alloc::{
     string::{String, ToString},
     vec::Vec,
@@ -8,12 +10,152 @@ use core::fmt;
 
 use crate::scanner::Marker;
 
+/// Details of an I/O failure reported by an input adapter.
+///
+/// This error is primarily intended for terminal failures such as a missing file, insufficient
+/// permissions, or a failed read, where an exact character position is usually not meaningful.
+/// Streaming inputs may be read ahead by a small lookahead window. Once an adapter reports an I/O
+/// failure, the parser reports it at its current marker; consequently, a few successfully read
+/// characters that were already buffered ahead of that marker may not be scanned or emitted.
+///
+/// The human-readable message is available in every build. With the `std` feature enabled, an
+/// instance constructed from `std::io::Error` also retains that original error and exposes it
+/// through `InputIoError::io_error` and the standard error source chain.
+///
+/// Equality and hashing use the portable message. The optional retained `std` error does not
+/// participate, so these operations have the same behavior with and without the `std` feature.
+#[derive(Clone, Debug)]
+pub struct InputIoError {
+    message: String,
+    #[cfg(feature = "std")]
+    source: Option<Arc<std::io::Error>>,
+}
+
+impl InputIoError {
+    /// Create I/O error details from a portable message.
+    ///
+    /// This constructor is available in `no_std` builds. It does not retain a typed source error.
+    #[must_use]
+    pub fn from_message(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            #[cfg(feature = "std")]
+            source: None,
+        }
+    }
+
+    /// Create I/O error details while retaining the original [`std::io::Error`].
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn from_io(error: std::io::Error) -> Self {
+        Self {
+            message: error.to_string(),
+            source: Some(Arc::new(error)),
+        }
+    }
+
+    /// Return the portable human-readable error message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Return the retained [`std::io::Error`], when one is available.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn io_error(&self) -> Option<&std::io::Error> {
+        self.source.as_deref()
+    }
+
+    /// Recover the retained [`std::io::Error`] when this is its only owner.
+    ///
+    /// # Errors
+    /// Returns the original `InputIoError` when it was created from a portable message or when
+    /// another clone still shares the retained error.
+    #[cfg(feature = "std")]
+    pub fn try_into_io_error(self) -> Result<std::io::Error, Self> {
+        let Self { message, source } = self;
+        let Some(source) = source else {
+            return Err(Self {
+                message,
+                source: None,
+            });
+        };
+
+        match Arc::try_unwrap(source) {
+            Ok(error) => Ok(error),
+            Err(source) => Err(Self {
+                message,
+                source: Some(source),
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for InputIoError {
+    fn from(error: std::io::Error) -> Self {
+        Self::from_io(error)
+    }
+}
+
+impl PartialEq for InputIoError {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+    }
+}
+
+impl Eq for InputIoError {}
+
+impl core::hash::Hash for InputIoError {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::hash::Hash::hash(&self.message, state);
+    }
+}
+
+impl fmt::Display for InputIoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl core::error::Error for InputIoError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        #[cfg(feature = "std")]
+        {
+            self.source
+                .as_deref()
+                .map(|error| error as &(dyn core::error::Error + 'static))
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            None
+        }
+    }
+}
+
 /// Machine-readable category for a [`ScanError`].
 #[derive(Clone, PartialEq, Debug, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
     /// Too many consecutive comments were buffered before a collection entry.
     TooManyComments,
+    /// Reading from the input source failed.
+    InputIo {
+        /// Portable details and, with the `std` feature, an optional retained I/O error.
+        error: InputIoError,
+    },
+    /// The input source was not valid text in the adapter's expected encoding.
+    InputDecoding {
+        /// Human-readable details supplied by the input adapter.
+        message: String,
+    },
+    /// The raw input exceeded a configured byte limit.
+    InputByteLimitExceeded {
+        /// Maximum number of raw input bytes accepted by the adapter.
+        limit: usize,
+    },
     /// Input ended while parsing a flow sequence.
     UnexpectedEofFlowSequence,
     /// Input ended while parsing a flow mapping.
@@ -208,6 +350,13 @@ impl fmt::Display for ErrorKind {
         match self {
             Self::TooManyComments => {
                 f.write_str("too many consecutive comments before resolving collection entry")
+            }
+            Self::InputIo { error } => write!(f, "input I/O error: {error}"),
+            Self::InputDecoding { message } => {
+                write!(f, "input decoding error: {message}")
+            }
+            Self::InputByteLimitExceeded { limit } => {
+                write!(f, "input exceeds the configured limit of {limit} bytes")
             }
             Self::UnexpectedEofFlowSequence => {
                 f.write_str("unexpected EOF while parsing a flow sequence")
@@ -445,7 +594,7 @@ impl fmt::Display for ErrorKind {
     }
 }
 
-/// An error that occurred while scanning or parsing YAML.
+/// An error that occurred while reading, scanning, or parsing YAML.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub struct ScanError {
     /// The position at which the error happened in the source.
@@ -501,6 +650,27 @@ impl ScanError {
         self.kind.clone()
     }
 
+    /// Extract the input I/O error details without cloning them.
+    ///
+    /// # Errors
+    /// Returns the original scan error unchanged when it has a different error category.
+    pub fn try_into_input_io_error(self) -> Result<InputIoError, Self> {
+        let Self {
+            mark,
+            kind,
+            source_stack,
+        } = self;
+
+        match kind {
+            ErrorKind::InputIo { error } => Ok(error),
+            kind => Err(Self {
+                mark,
+                kind,
+                source_stack,
+            }),
+        }
+    }
+
     /// Return source names captured by a parser stack, from bottom to top.
     #[must_use]
     pub fn source_stack(&self) -> &[String] {
@@ -535,7 +705,14 @@ impl fmt::Display for ScanError {
     }
 }
 
-impl core::error::Error for ScanError {}
+impl core::error::Error for ScanError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match &self.kind {
+            ErrorKind::InputIo { error } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -545,7 +722,7 @@ mod tests {
     use alloc::string::String;
     use alloc::string::ToString;
 
-    use super::{ErrorKind, ScanError};
+    use super::{ErrorKind, InputIoError, ScanError};
     use crate::scanner::Marker;
 
     #[cfg(feature = "error_messages")]
@@ -576,6 +753,138 @@ mod tests {
             format!("{error}"),
             "mismatched bracket '[' closed by '}' at char 3 line 2 column 2"
         );
+    }
+
+    #[cfg(feature = "error_messages")]
+    #[test]
+    fn input_error_kinds_construct_info() {
+        assert_eq!(
+            ErrorKind::InputIo {
+                error: InputIoError::from_message("connection reset")
+            }
+            .to_string(),
+            "input I/O error: connection reset"
+        );
+        assert_eq!(
+            ErrorKind::InputDecoding {
+                message: String::from("invalid utf-8")
+            }
+            .to_string(),
+            "input decoding error: invalid utf-8"
+        );
+        assert_eq!(
+            ErrorKind::InputByteLimitExceeded { limit: 4096 }.to_string(),
+            "input exceeds the configured limit of 4096 bytes"
+        );
+    }
+
+    #[test]
+    fn message_only_input_io_error_has_no_source() {
+        use core::error::Error as _;
+
+        let error = InputIoError::from_message("portable failure");
+
+        assert_eq!(error.message(), "portable failure");
+        assert!(error.source().is_none());
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn std_input_io_error_is_retained_in_scan_error_source_chain() {
+        use core::error::Error as _;
+        use std::io;
+
+        let details = InputIoError::from(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"));
+        assert_eq!(details.message(), "pipe closed");
+        assert_eq!(
+            details
+                .io_error()
+                .expect("std construction should retain io::Error")
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+
+        let error = ScanError::from_kind(
+            Marker::new(3, 2, 1),
+            ErrorKind::InputIo {
+                error: details.clone(),
+            },
+        );
+        let input_error = error
+            .source()
+            .and_then(|source| source.downcast_ref::<InputIoError>())
+            .expect("ScanError should expose InputIoError as its source");
+        let io_error = input_error
+            .source()
+            .and_then(|source| source.downcast_ref::<io::Error>())
+            .expect("InputIoError should expose the retained io::Error");
+
+        assert_eq!(io_error.kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(details, *input_error);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn unique_std_input_io_error_can_be_recovered() {
+        use std::io;
+
+        let details = InputIoError::from(io::Error::from_raw_os_error(12_345));
+        let error = details
+            .try_into_io_error()
+            .expect("a uniquely owned io::Error should be recoverable");
+
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn shared_std_input_io_error_can_be_recovered_after_other_clone_is_dropped() {
+        use std::io;
+
+        let details = InputIoError::from(io::Error::from_raw_os_error(12_345));
+        let other = details.clone();
+        let details = details
+            .try_into_io_error()
+            .expect_err("a shared io::Error cannot be moved out");
+
+        drop(other);
+
+        let error = details
+            .try_into_io_error()
+            .expect("the last owner should recover the io::Error");
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn scan_error_moves_input_io_error_out_without_cloning() {
+        use std::io;
+
+        let error = ScanError::from_kind(
+            Marker::new(3, 2, 1),
+            ErrorKind::InputIo {
+                error: InputIoError::from(io::Error::from_raw_os_error(12_345)),
+            },
+        );
+        let details = error
+            .try_into_input_io_error()
+            .expect("input I/O details should be extractable");
+        let error = details
+            .try_into_io_error()
+            .expect("extracting the scan error should retain unique ownership");
+
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[test]
+    fn extracting_input_io_error_preserves_other_scan_errors() {
+        let error = ScanError::from_kind(Marker::new(3, 2, 1), ErrorKind::ExpectedWhitespace);
+        let error = error
+            .try_into_input_io_error()
+            .expect_err("a non-I/O scan error should be returned unchanged");
+
+        assert_eq!(error.marker(), &Marker::new(3, 2, 1));
+        assert_eq!(error.kind(), ErrorKind::ExpectedWhitespace);
     }
 
     #[cfg(feature = "error_messages")]
