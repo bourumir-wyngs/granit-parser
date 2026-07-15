@@ -66,6 +66,30 @@ impl InputIoError {
     pub fn io_error(&self) -> Option<&std::io::Error> {
         self.source.as_deref()
     }
+
+    /// Recover the retained [`std::io::Error`] when this is its only owner.
+    ///
+    /// # Errors
+    /// Returns the original `InputIoError` when it was created from a portable message or when
+    /// another clone still shares the retained error.
+    #[cfg(feature = "std")]
+    pub fn try_into_io_error(self) -> Result<std::io::Error, Self> {
+        let Self { message, source } = self;
+        let Some(source) = source else {
+            return Err(Self {
+                message,
+                source: None,
+            });
+        };
+
+        match Arc::try_unwrap(source) {
+            Ok(error) => Ok(error),
+            Err(source) => Err(Self {
+                message,
+                source: Some(source),
+            }),
+        }
+    }
 }
 
 #[cfg(feature = "std")]
@@ -626,6 +650,27 @@ impl ScanError {
         self.kind.clone()
     }
 
+    /// Extract the input I/O error details without cloning them.
+    ///
+    /// # Errors
+    /// Returns the original scan error unchanged when it has a different error category.
+    pub fn try_into_input_io_error(self) -> Result<InputIoError, Self> {
+        let Self {
+            mark,
+            kind,
+            source_stack,
+        } = self;
+
+        match kind {
+            ErrorKind::InputIo { error } => Ok(error),
+            kind => Err(Self {
+                mark,
+                kind,
+                source_stack,
+            }),
+        }
+    }
+
     /// Return source names captured by a parser stack, from bottom to top.
     #[must_use]
     pub fn source_stack(&self) -> &[String] {
@@ -776,6 +821,70 @@ mod tests {
 
         assert_eq!(io_error.kind(), io::ErrorKind::BrokenPipe);
         assert_eq!(details, *input_error);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn unique_std_input_io_error_can_be_recovered() {
+        use std::io;
+
+        let details = InputIoError::from(io::Error::from_raw_os_error(12_345));
+        let error = details
+            .try_into_io_error()
+            .expect("a uniquely owned io::Error should be recoverable");
+
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn shared_std_input_io_error_can_be_recovered_after_other_clone_is_dropped() {
+        use std::io;
+
+        let details = InputIoError::from(io::Error::from_raw_os_error(12_345));
+        let other = details.clone();
+        let details = details
+            .try_into_io_error()
+            .expect_err("a shared io::Error cannot be moved out");
+
+        drop(other);
+
+        let error = details
+            .try_into_io_error()
+            .expect("the last owner should recover the io::Error");
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn scan_error_moves_input_io_error_out_without_cloning() {
+        use std::io;
+
+        let error = ScanError::from_kind(
+            Marker::new(3, 2, 1),
+            ErrorKind::InputIo {
+                error: InputIoError::from(io::Error::from_raw_os_error(12_345)),
+            },
+        );
+        let details = error
+            .try_into_input_io_error()
+            .expect("input I/O details should be extractable");
+        let error = details
+            .try_into_io_error()
+            .expect("extracting the scan error should retain unique ownership");
+
+        assert_eq!(error.raw_os_error(), Some(12_345));
+    }
+
+    #[test]
+    fn extracting_input_io_error_preserves_other_scan_errors() {
+        let error = ScanError::from_kind(Marker::new(3, 2, 1), ErrorKind::ExpectedWhitespace);
+        let error = error
+            .try_into_input_io_error()
+            .expect_err("a non-I/O scan error should be returned unchanged");
+
+        assert_eq!(error.marker(), &Marker::new(3, 2, 1));
+        assert_eq!(error.kind(), ErrorKind::ExpectedWhitespace);
     }
 
     #[cfg(feature = "error_messages")]
