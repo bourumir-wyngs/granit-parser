@@ -29,7 +29,7 @@ exclude = [
 ]
 
 [features]
-default = ["error_messages"]
+default = ["error_messages", "std"]
 error_messages = []
 std = []
 debug_prints = ["std"]
