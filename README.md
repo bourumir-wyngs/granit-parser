@@ -133,67 +133,6 @@ MappingEnd bytes=Some(349..349) source=Some("")
 DocumentEnd bytes=Some(349..349) source=Some("")
 StreamEnd bytes=Some(349..349) source=Some("")
 ```
-
-## Fallible streaming input
-
-`Parser::new_from_iter` remains available for genuinely infallible character sources such as
-`str::chars()`. Do not use it for an adapter that turns I/O, decoding, or size-limit failures into
-EOF: an incomplete YAML prefix may itself be a valid document.
-
-Use `Parser::new_from_fallible_iter` for a streaming source that can fail. It accepts an
-`Iterator<Item = Result<char, ErrorKind>>`. The iterator protocol has three distinct outcomes:
-
-* `Some(Ok(character))` supplies another character.
-* `None` reports clean physical end-of-input.
-* `Some(Err(error_kind))` reports a terminal source failure.
-
-The parser returns a `ScanError` carrying that same `ErrorKind` and never polls the source again.
-Input adapters can report `ErrorKind::InputIo`, `ErrorKind::InputDecoding`, or
-`ErrorKind::InputByteLimitExceeded`. A byte-limited adapter must probe one byte beyond its limit;
-stopping exactly at the limit would once again make an oversized input look like clean EOF.
-
-`InputIoError::from_message` stores portable I/O details and is available in `no_std` builds. With
-the optional `std` feature, `InputIoError::from(io_error)` also retains the original
-`std::io::Error`; it is available through `InputIoError::io_error` and the `ScanError` error-source
-chain. The public `ErrorKind::InputIo` shape is the same in both configurations.
-
-The provided [fallible reader example](examples/fallible_reader.rs) defines a small
-`CheckedChars<I>` iterator adapter. It shows how to wrap a decoded `io::Result<char>` source, retain
-state between `next()` calls, report I/O errors, enforce a UTF-8 byte limit, stop polling after a
-failure, and feed one character at a time to the parser:
-
-```sh
-cargo run --features std --example fallible_reader
-```
-
-## Event API choices
-
-Use [`try_load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.try_load)
-when a receiver may return a validation or application error and parsing should
-stop immediately. It accepts
-[`TryEventReceiver`](https://docs.rs/granit-parser/latest/granit_parser/trait.TryEventReceiver.html)
-or
-[`TrySpannedEventReceiver`](https://docs.rs/granit-parser/latest/granit_parser/trait.TrySpannedEventReceiver.html)
-and returns
-[`TryLoadError`](https://docs.rs/granit-parser/latest/granit_parser/enum.TryLoadError.html) to
-distinguish parser errors from receiver errors.
-
-Event-only receivers receive comment events as `Event::Comment(text, placement)`.
-Spanned receivers receive the same event plus the comment span in
-[`on_event`](https://docs.rs/granit-parser/latest/granit_parser/trait.SpannedEventReceiver.html#tymethod.on_event).
-When using [`resolve`](https://docs.rs/granit-parser/latest/granit_parser/parser_stack/struct.ParserStack.html#method.resolve)
-or [`push_include`](https://docs.rs/granit-parser/latest/granit_parser/parser_stack/struct.ParserStack.html#method.push_include)
-on `ParserStack`, comment events
-from included documents are forwarded through the normal event stream. Their
-spans remain local to the included source, matching the existing span behavior
-for other included-document events. Use `ParserStack::set_borrowed_resolver` when included source
-text already has the stack's input lifetime; its event text can then use the same zero-copy path as
-`Parser::new_from_str`.
-
-Use the iterator API when the caller should pull events and decide when to stop
-parsing. [`load`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.load)
-is `infallible`.
-
 ## Key differences from saphyr-parser
 
 All changes are intentionally scoped around correctness, compliance, and interoperability. This list summarizes 
@@ -273,7 +212,18 @@ This parser supports explicit handling for JSON-style Unicode surrogate pairs in
   
   Granit-parser uses the [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) enum to encode the error kind, and this enum may carry additional metadata. This is useful when messages need to be translated (built-in messages are English), or when the using code needs to handle some error specifically without greping for message text.
 
+### Fallible streaming input
 
+[`Parser::new_from_iter`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_iter) remains available for genuinely infallible sources. Do not use it for an adapter that turns I/O, decoding, or size-limit failures into EOF: an incomplete YAML prefix may itself be a valid document.
+
+Use [`Parser::new_from_fallible_iter`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_fallible_iter) for a streaming source that can fail. It accepts an [`Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html) whose items are [`Result<char, ErrorKind>`](https://doc.rust-lang.org/std/result/enum.Result.html). The iterator protocol has three distinct outcomes:
+
+* `Some(Ok(character))` supplies another character.
+* `None` reports clean physical end-of-input.
+* `Some(Err(error_kind))` reports a terminal source failure.
+
+The parser returns a [`ScanError`](https://docs.rs/granit-parser/latest/granit_parser/struct.ScanError.html) carrying that same [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) and never polls the source again.
+See the [fallible reader example](examples/fallible_reader.rs).
 
 ### Security
 
