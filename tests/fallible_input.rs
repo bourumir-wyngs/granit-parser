@@ -36,7 +36,7 @@ fn source_error_cannot_be_mistaken_for_clean_eof() {
         }
     };
 
-    assert_eq!(error.kind(), io_error("connection reset"));
+    assert_eq!(error.kind(), &io_error("connection reset"));
     assert!(!emitted_stream_end);
     assert!(parser.next().is_none(), "a source error must be terminal");
 }
@@ -48,22 +48,21 @@ fn source_error_takes_priority_over_eof_derived_syntax_error() {
         .find_map(Result::err)
         .expect("source failure should be reported");
 
-    assert_eq!(error.kind(), io_error("read failed"));
+    assert_eq!(error.kind(), &io_error("read failed"));
 }
 
 #[test]
-fn scanner_iterator_records_source_error() {
+fn scanner_iterator_emits_source_error() {
     let input = core::iter::once(Err(io_error("scanner read failed")));
     let mut scanner = Scanner::new(FallibleBufferedInput::new(input));
 
-    assert!(scanner.next().is_none());
-    assert_eq!(
-        scanner
-            .get_error()
-            .expect("scanner should retain the source error")
-            .kind(),
-        io_error("scanner read failed")
-    );
+    let error = scanner
+        .by_ref()
+        .find_map(Result::err)
+        .expect("scanner should emit the source error");
+
+    assert_eq!(error.kind(), &io_error("scanner read failed"));
+    assert!(scanner.next().is_none(), "a source error must be terminal");
 }
 
 struct ErrorThenPanic {
@@ -91,7 +90,7 @@ fn source_is_not_polled_after_error() {
         .find_map(Result::err)
         .expect("source failure should be reported");
 
-    assert_eq!(error.kind(), io_error("terminal failure"));
+    assert_eq!(error.kind(), &io_error("terminal failure"));
 }
 
 struct Sink;
@@ -111,5 +110,8 @@ fn receiver_api_returns_byte_limit_error() {
         .load(&mut Sink, true)
         .expect_err("byte limit failure should stop receiver loading");
 
-    assert_eq!(error.kind(), ErrorKind::InputByteLimitExceeded { limit: 8 });
+    assert_eq!(
+        error.kind(),
+        &ErrorKind::InputByteLimitExceeded { limit: 8 }
+    );
 }

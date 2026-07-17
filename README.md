@@ -10,7 +10,7 @@
 
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
-[![0.0.3 compatible (see API note)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
+[![1.0 API compatibility](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
 [![crates.io](https://img.shields.io/crates/d/granit-parser.svg)](https://crates.io/crates/granit-parser)
 
 > “YAML is hard. Much more than I had anticipated. If you are exploring dark corners of YAML ... I'm curious to know what it is.”
@@ -28,7 +28,9 @@ Its primary goals are:
 * compatibility with real-world YAML usage
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
-`granit-parser`’s 0.0.1 or 0.0.2 public API is very similar to that of `saphyr-parser`, so it is typically an easy replacement. Later versions emit style and comment information, you need to adjust your code to handle or discard them.
+`granit-parser` 1.0 stabilizes the public API after the experimental 0.0.x releases. The 1.0
+migration, including scanner and parser-stack replacements, is documented in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
@@ -225,6 +227,20 @@ Use [`Parser::new_from_fallible_iter`](https://docs.rs/granit-parser/latest/gran
 The parser returns a [`ScanError`](https://docs.rs/granit-parser/latest/granit_parser/struct.ScanError.html) carrying that same [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) and never polls the source again.
 See the [fallible reader example](examples/fallible_reader.rs).
 
+The lower-level [`Scanner`](https://docs.rs/granit-parser/latest/granit_parser/struct.Scanner.html)
+is also fallible. Its iterator item is `Result<Token, ScanError>`, so collecting all tokens keeps
+scanner failures distinct from clean EOF:
+
+```rust
+use granit_parser::{Scanner, StrInput};
+
+let tokens = Scanner::new(StrInput::new("key: value\n"))
+    .collect::<Result<Vec<_>, _>>()
+    .expect("valid YAML should scan");
+
+assert!(!tokens.is_empty());
+```
+
 ### Security
 
 This crate includes fixes to improve resilience against:
@@ -243,6 +259,9 @@ The following ergonomic helpers are available:
 - `Event::alias_id`
 - `Event::is_node`
 - `Tag::parts`
+- `Tag::handle`
+- `Tag::suffix`
+- `Tag::original_handle`
 - `Tag::original_parts`
 - `Tag::original`
 - `Tag::core_suffix`

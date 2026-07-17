@@ -29,13 +29,6 @@ use crate::{
 /// Maximum number of characters the scanner may look ahead while disambiguating a simple key.
 const SIMPLE_KEY_MAX_LOOKAHEAD: usize = 1024;
 
-/// The encoding of the input. Currently, only UTF-8 is supported.
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
-pub enum TEncoding {
-    /// UTF-8 encoding.
-    Utf8,
-}
-
 /// The source style used for a YAML scalar.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
 pub enum ScalarStyle {
@@ -68,7 +61,7 @@ pub enum ScalarStyle {
 /// For streaming inputs, byte offsets are not generally useful (and may not correspond to any
 /// meaningful underlying file/source), so they are optional.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct MarkerOffsets {
+struct MarkerOffsets {
     /// The index (in characters) in the source.
     chars: usize,
     /// The offset (in bytes) in the source, if available.
@@ -262,6 +255,7 @@ impl Span {
 ///
 /// # Last
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub enum Placement {
     /// An own-line comment immediately before another YAML token.
@@ -287,32 +281,28 @@ pub enum Placement {
     Last,
 }
 
-/// A YAML comment captured from the source.
+/// YAML comment metadata captured from the source.
 ///
-/// Comments are presentation metadata, not YAML data. This type carries the raw comment payload,
-/// source span, and a best-effort [`Placement`] hint for callers that want to correlate comments
-/// with nearby YAML presentation.
+/// Comments are presentation metadata, not YAML data. This type carries the raw comment payload and
+/// a best-effort [`Placement`] hint. The companion [`Token`] carries the comment's source span.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub struct Comment<'input> {
-    /// Span covering the whole source comment, including `#` and excluding the line break.
-    pub span: Span,
     /// Raw comment payload exactly after `#`, excluding only the line break.
     ///
     /// Leading spaces are preserved, including a single space immediately after `#` when present.
-    pub text: Cow<'input, str>,
+    text: Cow<'input, str>,
     /// Best-effort placement of this comment relative to nearby YAML content.
-    pub placement: Placement,
+    placement: Placement,
 }
 
 impl<'input> Comment<'input> {
-    /// Create a captured YAML comment from a source span and raw payload.
+    /// Create captured YAML comment metadata from a raw payload.
     ///
     /// The placement defaults to [`Placement::Free`]. Use [`Comment::with_placement`] when the
     /// caller already knows a more specific placement.
     #[must_use]
-    pub fn new(span: Span, text: impl Into<Cow<'input, str>>) -> Self {
+    pub fn new(text: impl Into<Cow<'input, str>>) -> Self {
         Self {
-            span,
             text: text.into(),
             placement: Placement::Free,
         }
@@ -323,6 +313,24 @@ impl<'input> Comment<'input> {
     pub fn with_placement(mut self, placement: Placement) -> Self {
         self.placement = placement;
         self
+    }
+
+    /// Return the raw comment payload exactly after `#`, excluding only the line break.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        self.text.as_ref()
+    }
+
+    /// Return the best-effort placement of this comment relative to nearby YAML content.
+    #[must_use]
+    pub const fn placement(&self) -> Placement {
+        self.placement
+    }
+
+    /// Consume the comment and return its raw payload without cloning.
+    #[must_use]
+    pub fn into_text(self) -> Cow<'input, str> {
+        self.text
     }
 
     /// Return the comment payload with surrounding whitespace removed.
@@ -341,10 +349,11 @@ impl AsRef<str> for Comment<'_> {
 }
 
 /// The contents of a scanner token.
+#[non_exhaustive]
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub enum TokenType<'input> {
     /// The start of the stream. Sent first, before even [`TokenType::DocumentStart`].
-    StreamStart(TEncoding),
+    StreamStart,
     /// The end of the stream, EOF.
     StreamEnd,
     /// A YAML version directive.
@@ -406,8 +415,9 @@ pub enum TokenType<'input> {
     Scalar(ScalarStyle, Cow<'input, str>),
     /// A YAML source comment.
     ///
-    /// The token payload carries the raw text exactly after `#`, the source span, and an initial
-    /// [`Placement`] hint. The token's companion [`Span`] is the same as [`Comment::span`].
+    /// The token payload carries the raw text exactly after `#` and an initial [`Placement`] hint.
+    /// The companion [`Token`] span covers the whole source comment, including `#` and excluding the
+    /// line break.
     Comment(
         /// Captured comment metadata.
         Comment<'input>,
@@ -423,45 +433,40 @@ pub enum TokenType<'input> {
 
 /// A scanner token.
 #[derive(Clone, PartialEq, Debug, Eq)]
-pub struct Token<'input>(
-    /// Source span covered by this token.
-    pub Span,
-    /// Token payload emitted by the scanner.
-    pub TokenType<'input>,
-);
+pub struct Token<'input>(Span, TokenType<'input>);
 
-/// Compact comment metadata used only inside the scanner queue.
-///
-/// The queued token already stores the source span, so storing a full public [`Comment`] there
-/// duplicates a large [`Span`] and inflates every queued token.
-#[derive(Clone, PartialEq, Debug, Eq)]
-pub(crate) struct QueuedComment<'input> {
-    pub(crate) text: Cow<'input, str>,
-    pub(crate) placement: Placement,
-}
-
-impl<'input> QueuedComment<'input> {
-    fn into_public(self, span: Span) -> Comment<'input> {
-        Comment::new(span, self.text).with_placement(self.placement)
+impl<'input> Token<'input> {
+    /// Create a scanner token from its source span and payload.
+    #[must_use]
+    pub const fn new(span: Span, token_type: TokenType<'input>) -> Self {
+        Self(span, token_type)
     }
-}
 
-impl<'input> From<Comment<'input>> for QueuedComment<'input> {
-    fn from(comment: Comment<'input>) -> Self {
-        Self {
-            text: comment.text,
-            placement: comment.placement,
-        }
+    /// Return the source span covered by this token.
+    #[must_use]
+    pub const fn span(&self) -> Span {
+        self.0
+    }
+
+    /// Return the payload emitted by the scanner.
+    #[must_use]
+    pub const fn token_type(&self) -> &TokenType<'input> {
+        &self.1
+    }
+
+    /// Consume the token and return its source span and payload.
+    #[must_use]
+    pub fn into_parts(self) -> (Span, TokenType<'input>) {
+        (self.0, self.1)
     }
 }
 
 /// Token payload used in the scanner's internal queue.
 ///
-/// This mirrors [`TokenType`] but stores comments without their span. Public [`Token`] values are
-/// reconstructed when the scanner emits them.
+/// Public [`Token`] values are reconstructed when the scanner emits them.
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub(crate) enum QueuedTokenType<'input> {
-    StreamStart(TEncoding),
+    StreamStart,
     StreamEnd,
     VersionDirective(u32, u32),
     TagDirective(Cow<'input, str>, Cow<'input, str>),
@@ -482,14 +487,14 @@ pub(crate) enum QueuedTokenType<'input> {
     Anchor(Cow<'input, str>),
     Tag(Cow<'input, str>, Cow<'input, str>),
     Scalar(ScalarStyle, Cow<'input, str>),
-    Comment(QueuedComment<'input>),
+    Comment(Comment<'input>),
     ReservedDirective(String, Vec<String>),
 }
 
 impl<'input> QueuedTokenType<'input> {
-    fn into_public(self, span: Span) -> TokenType<'input> {
+    fn into_public(self) -> TokenType<'input> {
         match self {
-            Self::StreamStart(encoding) => TokenType::StreamStart(encoding),
+            Self::StreamStart => TokenType::StreamStart,
             Self::StreamEnd => TokenType::StreamEnd,
             Self::VersionDirective(major, minor) => TokenType::VersionDirective(major, minor),
             Self::TagDirective(handle, prefix) => TokenType::TagDirective(handle, prefix),
@@ -510,7 +515,7 @@ impl<'input> QueuedTokenType<'input> {
             Self::Anchor(name) => TokenType::Anchor(name),
             Self::Tag(handle, suffix) => TokenType::Tag(handle, suffix),
             Self::Scalar(style, value) => TokenType::Scalar(style, value),
-            Self::Comment(comment) => TokenType::Comment(comment.into_public(span)),
+            Self::Comment(comment) => TokenType::Comment(comment),
             Self::ReservedDirective(name, params) => TokenType::ReservedDirective(name, params),
         }
     }
@@ -519,7 +524,7 @@ impl<'input> QueuedTokenType<'input> {
 impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
     fn from(token: TokenType<'input>) -> Self {
         match token {
-            TokenType::StreamStart(encoding) => Self::StreamStart(encoding),
+            TokenType::StreamStart => Self::StreamStart,
             TokenType::StreamEnd => Self::StreamEnd,
             TokenType::VersionDirective(major, minor) => Self::VersionDirective(major, minor),
             TokenType::TagDirective(handle, prefix) => Self::TagDirective(handle, prefix),
@@ -540,7 +545,7 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
             TokenType::Anchor(name) => Self::Anchor(name),
             TokenType::Tag(handle, suffix) => Self::Tag(handle, suffix),
             TokenType::Scalar(style, value) => Self::Scalar(style, value),
-            TokenType::Comment(comment) => Self::Comment(comment.into()),
+            TokenType::Comment(comment) => Self::Comment(comment),
             TokenType::ReservedDirective(name, params) => Self::ReservedDirective(name, params),
         }
     }
@@ -552,7 +557,7 @@ pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenTyp
 
 impl<'input> QueuedToken<'input> {
     fn into_public(self) -> Token<'input> {
-        Token(self.0, self.1.into_public(self.0))
+        Token(self.0, self.1.into_public())
     }
 }
 
@@ -710,6 +715,9 @@ enum ImplicitMappingState {
 ///
 /// It is however not a full parser and needs [`crate::parser::Parser`] to fully detect invalid
 /// YAML documents.
+///
+/// `Scanner` is a fallible iterator over [`Token`] values. A scanning failure is emitted as one
+/// [`Err`] item, after which the iterator is exhausted.
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Scanner<'input, T> {
@@ -726,8 +734,8 @@ pub struct Scanner<'input, T> {
     /// follows. In this case, the token stays in the `VecDeque` but cannot be returned from
     /// [`Self::next`] until we have more context.
     tokens: VecDeque<QueuedToken<'input>>,
-    /// The last error that happened.
-    error: Option<ScanError>,
+    /// Whether a terminal error has been emitted by the iterator.
+    failed: bool,
     /// Error found after one or more already-scanned comment tokens.
     deferred_error: Option<ScanError>,
     /// Whether the input may contain `#` comment indicators.
@@ -805,10 +813,10 @@ pub struct Scanner<'input, T> {
 }
 
 impl<'input, T: BorrowedInput<'input>> Iterator for Scanner<'input, T> {
-    type Item = Token<'input>;
+    type Item = Result<Token<'input>, ScanError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.error.is_some() {
+        if self.failed {
             return None;
         }
         match self.next_token() {
@@ -818,16 +826,21 @@ impl<'input, T: BorrowedInput<'input>> Iterator for Scanner<'input, T> {
                     tok.1,
                     tok.0
                 );
-                Some(tok)
+                Some(Ok(tok))
             }
-            Ok(tok) => tok,
-            Err(e) => self.stop_after_error(e),
+            Ok(None) => None,
+            Err(error) => {
+                self.failed = true;
+                Some(Err(error))
+            }
         }
     }
 }
 
+impl<'input, T: BorrowedInput<'input>> core::iter::FusedIterator for Scanner<'input, T> {}
+
 /// A convenience alias for scanner functions that may fail without returning a value.
-pub type ScanResult = Result<(), ScanError>;
+type ScanResult = Result<(), ScanError>;
 
 #[derive(Debug)]
 enum FlowScalarBuf {
@@ -1089,7 +1102,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             input,
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
-            error: None,
+            failed: false,
             deferred_error: None,
             comments_possible,
 
@@ -1117,15 +1130,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
-    /// Return a copy of the last error that was encountered, if any.
-    ///
-    /// This does not clear the error state and further calls to [`Self::get_error`] will return (a
-    /// clone of) the same error.
-    #[inline]
-    pub fn get_error(&self) -> Option<ScanError> {
-        self.error.clone().or_else(|| self.deferred_error.clone())
-    }
-
     #[cold]
     fn scan_error(&self, kind: ErrorKind) -> ScanError {
         ScanError::from_kind(self.mark, kind)
@@ -1139,12 +1143,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else {
             Err(self.scan_error(ErrorKind::UnexpectedCharacter { character }))
         }
-    }
-
-    #[cold]
-    fn stop_after_error(&mut self, error: ScanError) -> Option<Token<'input>> {
-        self.error = Some(error);
-        None
     }
 
     #[cold]
@@ -1296,7 +1294,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let span = Span::new(start_mark, end_mark);
         Ok(QueuedToken(
             span,
-            QueuedTokenType::Comment(QueuedComment { text, placement }),
+            QueuedTokenType::Comment(Comment { text, placement }),
         ))
     }
 
@@ -1399,7 +1397,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     ///
     /// # Errors
     /// Returns `ScanError` when the scanner does not find the next expected token.
-    pub fn fetch_next_token(&mut self) -> ScanResult {
+    fn fetch_next_token(&mut self) -> ScanResult {
         let result = self.fetch_next_token_impl();
         if let Some(kind) = self.input.take_source_error() {
             return Err(ScanError::from_kind(self.mark, kind));
@@ -1555,7 +1553,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     ///
     /// # Errors
     /// Returns `ScanError` when scanning fails to find an expected next token.
-    pub fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
+    fn next_token(&mut self) -> Result<Option<Token<'input>>, ScanError> {
         Ok(self.next_queued_token()?.map(QueuedToken::into_public))
     }
 
@@ -1563,7 +1561,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     ///
     /// # Errors
     /// Returns `ScanError` when scanning fails.
-    pub fn fetch_more_tokens(&mut self) -> ScanResult {
+    fn fetch_more_tokens(&mut self) -> ScanResult {
         let mut need_more;
         loop {
             if self.tokens.is_empty() {
@@ -1829,7 +1827,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.stream_start_produced = true;
         self.allow_simple_key();
         self.tokens
-            .push_back(Token(Span::empty(mark), TokenType::StreamStart(TEncoding::Utf8)).into());
+            .push_back(Token(Span::empty(mark), TokenType::StreamStart).into());
         self.simple_keys.push(SimpleKey::new(Marker::new(0, 0, 0)));
     }
 
@@ -4141,7 +4139,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 ///
 /// See YAML spec 8.1.1.2.
 #[derive(PartialEq, Eq)]
-pub enum Chomping {
+enum Chomping {
     /// The final line break and any trailing empty lines are excluded.
     Strip,
     /// The final line break is preserved, but trailing empty lines are excluded.
@@ -4166,7 +4164,7 @@ mod test {
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{
             Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
-            TEncoding, Token, TokenType,
+            Token, TokenType,
         },
     };
 
@@ -4351,7 +4349,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();
@@ -4378,12 +4376,14 @@ mod test {
         let mut scanner = Scanner::new(SmallReportedBufferInput::new("|\n  value\n", 0));
 
         let scalar = scanner
-            .find_map(|token| match token {
-                Token(_, TokenType::Scalar(ScalarStyle::Literal, value)) => {
-                    Some(value.into_owned())
-                }
-                _ => None,
-            })
+            .find_map(
+                |token| match token.expect("valid YAML should scan without errors") {
+                    Token(_, TokenType::Scalar(ScalarStyle::Literal, value)) => {
+                        Some(value.into_owned())
+                    }
+                    _ => None,
+                },
+            )
             .expect("expected block scalar token");
 
         assert_eq!(scalar, "value\n");
@@ -4394,10 +4394,14 @@ mod test {
         let mut scanner = Scanner::new(SmallReportedBufferInput::new("plain\n", 0));
 
         let scalar = scanner
-            .find_map(|token| match token {
-                Token(_, TokenType::Scalar(ScalarStyle::Plain, value)) => Some(value.into_owned()),
-                _ => None,
-            })
+            .find_map(
+                |token| match token.expect("valid YAML should scan without errors") {
+                    Token(_, TokenType::Scalar(ScalarStyle::Plain, value)) => {
+                        Some(value.into_owned())
+                    }
+                    _ => None,
+                },
+            )
             .expect("expected plain scalar token");
 
         assert_eq!(scalar, "plain");
@@ -4508,14 +4512,14 @@ mod test {
 
         let error = scanner.scan_comment_token().unwrap_err();
 
-        assert_eq!(error.kind(), ErrorKind::InputOffsetsWithoutSlice);
+        assert_eq!(error.kind(), &ErrorKind::InputOffsetsWithoutSlice);
     }
 
     #[test]
     fn queued_token_roundtrips_public_token_variants() {
         let span = Span::new(Marker::new(0, 1, 0), Marker::new(7, 1, 7));
         let tokens = [
-            Token(span, TokenType::StreamStart(TEncoding::Utf8)),
+            Token(span, TokenType::StreamStart),
             Token(span, TokenType::StreamEnd),
             Token(span, TokenType::VersionDirective(1, 2)),
             Token(
@@ -4548,7 +4552,7 @@ mod test {
             Token(
                 span,
                 TokenType::Comment(
-                    Comment::new(span, Cow::Borrowed(" comment")).with_placement(Placement::Right),
+                    Comment::new(Cow::Borrowed(" comment")).with_placement(Placement::Right),
                 ),
             ),
             Token(
@@ -4614,7 +4618,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -4633,7 +4637,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -4668,7 +4672,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -4683,7 +4687,7 @@ mod test {
 
         assert_eq!(
             error.kind(),
-            ErrorKind::UnexpectedCharacter { character: '@' }
+            &ErrorKind::UnexpectedCharacter { character: '@' }
         );
     }
 
@@ -4711,7 +4715,7 @@ mod test {
         scanner.next_token().unwrap();
         assert_eq!(
             scanner.next_token().unwrap_err().kind(),
-            ErrorKind::UnexpectedCharacter {
+            &ErrorKind::UnexpectedCharacter {
                 character: '\u{0001}'
             }
         );
@@ -4724,7 +4728,7 @@ mod test {
         scanner.next_token().unwrap();
         assert_eq!(
             scanner.next_token().unwrap_err().kind(),
-            ErrorKind::UnexpectedCharacter {
+            &ErrorKind::UnexpectedCharacter {
                 character: '\u{0001}'
             }
         );
@@ -5155,7 +5159,7 @@ mod test {
     }
 
     fn first_scanner_error_kind(input: &str) -> ErrorKind {
-        first_scanner_error(input).kind()
+        first_scanner_error(input).kind().clone()
     }
 
     fn first_buffered_scanner_error_kind(input: &str) -> ErrorKind {
@@ -5164,7 +5168,7 @@ mod test {
             match scanner.next_token() {
                 Ok(Some(_)) => {}
                 Ok(None) => panic!("expected scanner error"),
-                Err(error) => return error.kind(),
+                Err(error) => return error.kind().clone(),
             }
         }
     }
@@ -5203,15 +5207,14 @@ mod test {
     }
 
     #[test]
-    fn iterator_next_records_error_and_then_stays_empty() {
+    fn iterator_next_emits_error_and_then_stays_empty() {
         let mut scanner = Scanner::new(StrInput::new("\"unterminated"));
 
-        while scanner.next().is_some() {}
-
         let error = scanner
-            .get_error()
-            .expect("scanner should retain the error");
-        assert_eq!(error.kind(), ErrorKind::UnclosedQuotedScalar);
+            .by_ref()
+            .find_map(Result::err)
+            .expect("scanner should emit the error");
+        assert_eq!(error.kind(), &ErrorKind::UnclosedQuotedScalar);
         assert!(scanner.next().is_none());
     }
 
@@ -5416,7 +5419,7 @@ mod test {
 
         assert_eq!(
             error.kind(),
-            ErrorKind::UnexpectedCharacter { character: '@' }
+            &ErrorKind::UnexpectedCharacter { character: '@' }
         );
     }
 
@@ -5442,7 +5445,7 @@ mod test {
 
         assert_eq!(
             error.kind(),
-            ErrorKind::UnclosedFlowCollection { open: '[' }
+            &ErrorKind::UnclosedFlowCollection { open: '[' }
         );
     }
 
@@ -5564,7 +5567,7 @@ mod test {
     fn required_simple_key_requires_value_at_stream_end() {
         let error = first_scanner_error("a:\n&b\n- c\n");
 
-        assert_eq!(error.kind(), ErrorKind::SimpleKeyExpected);
+        assert_eq!(error.kind(), &ErrorKind::SimpleKeyExpected);
         assert_eq!(error.marker().index(), 3);
         assert_eq!(error.marker().line(), 2);
         assert_eq!(error.marker().col(), 0);
@@ -5620,7 +5623,7 @@ mod test {
             let error = scanner
                 .fetch_value()
                 .expect_err("invalid simple key position should be reported as a scan error");
-            assert_eq!(error.kind(), ErrorKind::InvalidSimpleKey);
+            assert_eq!(error.kind(), &ErrorKind::InvalidSimpleKey);
             assert_eq!(error.marker(), &Marker::new(0, 1, 0));
         }
     }
@@ -5631,7 +5634,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();
@@ -5648,7 +5651,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart(_)
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();

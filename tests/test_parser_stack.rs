@@ -8,10 +8,9 @@ use alloc::{
 };
 use core::iter::Empty;
 use granit_parser::{
-    parser_stack::{ParserStack, ReplayParser},
-    BorrowedInput, ErrorKind, Event, Marker, Parser, ParserTrait, Placement, ScalarStyle,
-    ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
-    TryLoadError,
+    BorrowedInput, ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, Placement,
+    ReplayParser, ScalarStyle, ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle,
+    TryEventReceiver, TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -182,7 +181,7 @@ fn nested_parser_scan_error_after_document_end_preserves_kind_and_adds_source_st
         match stack.next_event() {
             Some(Ok(_)) => {}
             Some(Err(err)) => {
-                assert_eq!(err.kind(), ErrorKind::UnclosedFlowCollection { open: '[' });
+                assert_eq!(err.kind(), &ErrorKind::UnclosedFlowCollection { open: '[' });
                 assert_eq!(
                     err.info(),
                     "unclosed bracket '['\nwhile parsing parent -> child"
@@ -515,7 +514,7 @@ fn test_include_resolver() {
         }
     });
 
-    stack.resolve("inc1").unwrap();
+    stack.push_include("inc1").unwrap();
 
     let events = collect_events(&mut stack).unwrap();
     let names = format_events(&events);
@@ -548,7 +547,7 @@ fn borrowed_include_resolver_preserves_borrowed_event_text() {
         assert_eq!(name, "borrowed.yaml");
         Ok(INCLUDED)
     });
-    stack.resolve("borrowed.yaml").unwrap();
+    stack.push_include("borrowed.yaml").unwrap();
 
     while let Some(event) = stack.next_event() {
         if let Event::Scalar(value, _, _, _) = event.unwrap().0 {
@@ -568,22 +567,22 @@ fn borrowed_include_resolver_still_validates_eagerly() {
     stack.push_str_parser(Parser::new_from_str("root: value\n"), "root".to_string());
     stack.set_borrowed_resolver(|_| Ok("included: [unclosed\n"));
 
-    let error = stack.resolve("invalid.yaml").unwrap_err();
+    let error = stack.push_include("invalid.yaml").unwrap_err();
 
     assert_eq!(
         error.kind(),
-        ErrorKind::UnclosedFlowCollection { open: '[' }
+        &ErrorKind::UnclosedFlowCollection { open: '[' }
     );
     assert_eq!(error.source_stack(), ["root", "invalid.yaml"]);
 }
 
 #[test]
-fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
+fn empty_stack_include_preserves_fresh_parser_anchor_offset() {
     const INCLUDED: &str = "definition: &anchor anchored\nalias: *anchor\n";
 
     let mut owned: MyStack<'static> = ParserStack::new();
     owned.set_resolver(|_| Ok(INCLUDED.to_string()));
-    owned.resolve("owned.yaml").unwrap();
+    owned.push_include("owned.yaml").unwrap();
     let owned_events = collect_events(&mut owned).unwrap();
 
     assert_eq!(find_anchor_id(&owned_events, "anchored"), Some(1));
@@ -593,7 +592,7 @@ fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
 
     let mut borrowed: MyStack<'static> = ParserStack::new();
     borrowed.set_borrowed_resolver(|_| Ok(INCLUDED));
-    borrowed.resolve("borrowed.yaml").unwrap();
+    borrowed.push_include("borrowed.yaml").unwrap();
     let borrowed_events = collect_events(&mut borrowed).unwrap();
 
     assert_eq!(find_anchor_id(&borrowed_events, "anchored"), Some(1));
@@ -603,21 +602,21 @@ fn empty_stack_resolve_preserves_fresh_parser_anchor_offset() {
 }
 
 #[test]
-fn owned_resolve_inherits_and_propagates_parent_anchor_offset() {
+fn owned_include_inherits_and_propagates_parent_anchor_offset() {
     let mut stack = stack_after_first_parent_anchor();
     stack.set_resolver(|name| {
         assert_eq!(name, "included.yaml");
         Ok("definition: &included included-value\nalias: *included\n".to_string())
     });
 
-    stack.resolve("included.yaml").unwrap();
+    stack.push_include("included.yaml").unwrap();
     let events = collect_events(&mut stack).unwrap();
 
     assert_include_anchor_offset_is_inherited(&events);
 }
 
 #[test]
-fn borrowed_resolve_inherits_and_propagates_parent_anchor_offset() {
+fn borrowed_include_inherits_and_propagates_parent_anchor_offset() {
     const INCLUDED: &str = "definition: &included included-value\nalias: *included\n";
 
     let mut stack = stack_after_first_parent_anchor();
@@ -626,7 +625,7 @@ fn borrowed_resolve_inherits_and_propagates_parent_anchor_offset() {
         Ok(INCLUDED)
     });
 
-    stack.resolve("included.yaml").unwrap();
+    stack.push_include("included.yaml").unwrap();
     let events = collect_events(&mut stack).unwrap();
 
     assert_include_anchor_offset_is_inherited(&events);
@@ -644,7 +643,7 @@ fn replay_parser_moves_owned_event_text() {
         1,
     );
 
-    let event = replay.next_event().unwrap().unwrap().0;
+    let event = replay.next().unwrap().unwrap().0;
     let Event::Scalar(Cow::Owned(value), _, _, _) = event else {
         panic!("expected an owned scalar");
     };
@@ -790,7 +789,7 @@ fn replay_parser_peek_next_and_load_track_collection_anchors() {
     let mut recv = TestReceiver { events: Vec::new() };
     replay.load(&mut recv, true).unwrap();
 
-    assert_eq!(replay.get_anchor_offset(), 8);
+    assert_eq!(replay.anchor_offset(), 8);
     assert_eq!(
         format_events(&recv.events),
         vec![
@@ -937,7 +936,7 @@ fn parser_stack_forwards_comment_events_from_stacked_parsers() {
 }
 
 #[test]
-fn parser_stack_resolve_preserves_included_comment_events_and_local_spans() {
+fn parser_stack_include_preserves_comment_events_and_local_spans() {
     let included = "# inc\nincluded: value\n";
     let mut stack: MyStack = ParserStack::new();
     stack.set_resolver(move |name| {
@@ -949,7 +948,7 @@ fn parser_stack_resolve_preserves_included_comment_events_and_local_spans() {
         "parent".to_string(),
     );
     stack
-        .resolve("included.yaml")
+        .push_include("included.yaml")
         .expect("include should resolve");
 
     let mut events = Vec::new();
@@ -980,7 +979,7 @@ fn default_empty_stack_peek_and_next_emit_stream_end_once() {
 }
 
 #[test]
-fn parser_stack_push_str_after_exhaustion_reactivates_stack() {
+fn parser_stack_push_str_after_exhaustion_stays_exhausted() {
     let mut stack: MyStack = ParserStack::new();
 
     while stack.next_event().is_some() {}
@@ -988,20 +987,8 @@ fn parser_stack_push_str_after_exhaustion_reactivates_stack() {
 
     stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
 
-    let events = collect_events(&mut stack).unwrap();
-    assert_eq!(
-        format_events(&events),
-        vec![
-            "StreamStart",
-            "DocStart",
-            "MapStart",
-            "Scalar(b)",
-            "Scalar(2)",
-            "MapEnd",
-            "DocEnd",
-            "StreamEnd"
-        ]
-    );
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
 }
 
 #[test]
@@ -1029,10 +1016,10 @@ fn parser_stack_push_after_peeked_empty_stream_end_reactivates_stack() {
 }
 
 #[test]
-fn parser_stack_resolve_without_resolver_reports_error() {
+fn parser_stack_include_without_resolver_reports_error() {
     let mut stack: MyStack = ParserStack::new();
 
-    let err = stack.resolve("missing").unwrap_err();
+    let err = stack.push_include("missing").unwrap_err();
 
     assert!(err
         .to_string()
@@ -1045,11 +1032,11 @@ fn parser_stack_resolver_can_construct_a_scan_error() {
     stack.push_str_parser(Parser::new_from_str("root: value"), "root".to_string());
     stack.set_resolver(|_| Err(ScanError::new(Marker::new(0, 1, 0), "include not found")));
 
-    let err = stack.resolve("missing").unwrap_err();
+    let err = stack.push_include("missing").unwrap_err();
 
     assert_eq!(
         err.kind(),
-        ErrorKind::Custom("include not found".to_string())
+        &ErrorKind::Custom("include not found".to_string())
     );
     assert_eq!(
         err.info(),
@@ -1091,7 +1078,7 @@ fn parser_stack_push_include_resolves_included_content() {
 }
 
 #[test]
-fn parser_stack_push_include_after_exhaustion_reactivates_stack() {
+fn parser_stack_push_include_after_exhaustion_stays_exhausted() {
     let mut stack: MyStack = ParserStack::new();
     stack.set_resolver(|name| match name {
         "child" => Ok("b: 2".to_string()),
@@ -1103,20 +1090,8 @@ fn parser_stack_push_include_after_exhaustion_reactivates_stack() {
 
     stack.push_include("child").unwrap();
 
-    let events = collect_events(&mut stack).unwrap();
-    assert_eq!(
-        format_events(&events),
-        vec![
-            "StreamStart",
-            "DocStart",
-            "MapStart",
-            "Scalar(b)",
-            "Scalar(2)",
-            "MapEnd",
-            "DocEnd",
-            "StreamEnd"
-        ]
-    );
+    assert!(stack.next_event().is_none());
+    assert!(stack.peek().is_none());
 }
 
 #[test]
@@ -1140,7 +1115,7 @@ fn multi_document_include_does_not_splice_into_parent() {
                 spliced = true;
             }
             Err(err) => {
-                assert_eq!(err.kind(), ErrorKind::MultipleDocumentsUnsupported);
+                assert_eq!(err.kind(), &ErrorKind::MultipleDocumentsUnsupported);
                 assert_eq!(
                     err.info(),
                     "multiple documents not supported here\nwhile parsing root -> two.yaml"

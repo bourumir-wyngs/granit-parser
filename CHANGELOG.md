@@ -1,6 +1,49 @@
 # Changelog
 
-## v0.0.8
+## v1.0.0
+
+**Breaking Changes**:
+
+- Made `Scanner` a fallible, fused iterator with
+  `Item = Result<Token<'input>, ScanError>`. Scanner failures are now emitted once and cannot be
+  mistaken for clean EOF. Use `scanner.next()` for incremental scanning or
+  `scanner.collect::<Result<Vec<_>, _>>()` to collect tokens. Removed the public `get_error`,
+  `next_token`, `fetch_next_token`, and `fetch_more_tokens` methods; queue management is now an
+  implementation detail.
+- Removed the internal-only `Event::Nothing` variant.
+- Marked `Event`, `TokenType`, and `Placement` as non-exhaustive. Downstream matches must include a
+  wildcard arm so new variants can be added in compatible releases.
+- Removed the redundant UTF-8-only `TEncoding` payload. `TokenType::StreamStart` is now a unit
+  variant; the scanner consumes decoded Rust `char` values regardless of their original encoding.
+- Removed the duplicated `Span` from scanner `Comment`. The companion `Token` remains the sole
+  source span, and `Comment::new` now accepts only the comment text.
+- Made `Comment` and `Token` fields private. Use `Comment::text`, `Comment::placement`, and
+  `Comment::into_text`, or `Token::span`, `Token::token_type`, and `Token::into_parts` to inspect
+  them; use their `new` constructors to create values.
+- Made `Tag` fields private. Use `Tag::handle`, `Tag::suffix`, `Tag::original_handle`, `Tag::parts`,
+  and `Tag::original_parts` to inspect them, and use the existing constructors to create tags.
+- Changed `ScanError::kind` to return `&ErrorKind` instead of cloning the error category.
+- Consolidated the old `ScanError::new` and convenience `ScanError::new_str` constructors into
+  `ScanError::new(marker, impl Into<String>)` and removed `new_str`.
+- `ScanError` now stores a structured `ErrorKind`, and `ScanError::info` renders and returns an owned
+  `String` instead of borrowing a stored message.
+- With `std` enabled, retaining arbitrary `std::io::Error` values means `InputIoError` and public
+  types containing it no longer guarantee the `UnwindSafe` or `RefUnwindSafe` auto traits.
+- Renamed `Parser::get_anchor_offset` and `ReplayParser::get_anchor_offset` to `anchor_offset`.
+- Removed the duplicate `ParserStack::resolve` method; use `ParserStack::push_include`. Also removed
+  the internal `AnyParser` enum from the public API.
+- Made the `parser_stack` module private. Import `ParserStack` and `ReplayParser` directly from the
+  crate root.
+
+**API Additions**:
+
+- Re-exported `ParseResult` at the crate root.
+- Re-exported `ParserStack` and `ReplayParser` at the crate root.
+- Implemented `FusedIterator` for `Parser`, `Scanner`, `ReplayParser`, and `ParserStack`, and made
+  `ReplayParser` directly iterable.
+
+**Features and Fixes**:
+
 - Added `FallibleBufferedInput` and `Parser::new_from_fallible_iter` for
   `Iterator<Item = Result<char, ErrorKind>>` sources. Clean iterator exhaustion remains EOF, while
   an error item now terminates parsing as a `ScanError` without polling the source again. Existing

@@ -608,13 +608,13 @@ pub struct ScanError {
 impl ScanError {
     /// Create an externally supplied error from a location and message.
     ///
-    /// The message is copied into [`ErrorKind::Custom`]. This is useful for adapters that
+    /// The message is stored in [`ErrorKind::Custom`]. This is useful for adapters that
     /// participate in parser APIs, such as a custom [`ParserTrait`](crate::ParserTrait)
-    /// implementation or a [`ParserStack`](crate::parser_stack::ParserStack) include resolver.
+    /// implementation or a [`ParserStack`](crate::ParserStack) include resolver.
     #[must_use]
     #[cold]
-    pub fn new(loc: Marker, message: &str) -> ScanError {
-        Self::from_kind(loc, ErrorKind::Custom(String::from(message)))
+    pub fn new(loc: Marker, message: impl Into<String>) -> ScanError {
+        Self::from_kind(loc, ErrorKind::Custom(message.into()))
     }
 
     #[must_use]
@@ -644,10 +644,10 @@ impl ScanError {
         &self.mark
     }
 
-    /// Return a clone of the machine-readable error category.
+    /// Return the machine-readable error category.
     #[must_use]
-    pub fn kind(&self) -> ErrorKind {
-        self.kind.clone()
+    pub fn kind(&self) -> &ErrorKind {
+        &self.kind
     }
 
     /// Extract the input I/O error details without cloning them.
@@ -731,7 +731,7 @@ mod tests {
         let marker = Marker::new(3, 2, 1);
         let error = ScanError::from_kind(marker, ErrorKind::ExpectedWhitespace);
 
-        assert_eq!(error.kind(), ErrorKind::ExpectedWhitespace);
+        assert_eq!(error.kind(), &ErrorKind::ExpectedWhitespace);
         assert_eq!(error.kind().to_string(), "expected whitespace");
         assert_eq!(error.info(), "expected whitespace");
     }
@@ -884,7 +884,7 @@ mod tests {
             .expect_err("a non-I/O scan error should be returned unchanged");
 
         assert_eq!(error.marker(), &Marker::new(3, 2, 1));
-        assert_eq!(error.kind(), ErrorKind::ExpectedWhitespace);
+        assert_eq!(error.kind(), &ErrorKind::ExpectedWhitespace);
     }
 
     #[cfg(feature = "error_messages")]
@@ -897,7 +897,7 @@ mod tests {
 
         assert_eq!(
             error.kind(),
-            ErrorKind::Custom(String::from("adapter failed"))
+            &ErrorKind::Custom(String::from("adapter failed"))
         );
         assert_eq!(error.info(), "adapter failed");
     }

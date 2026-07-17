@@ -10,14 +10,7 @@ fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
 }
 
 fn scanner_tokens(source: &str) -> Result<Vec<Token<'_>>, ScanError> {
-    let mut scanner = Scanner::new(StrInput::new(source));
-    let mut tokens = Vec::new();
-
-    while let Some(token) = scanner.next_token()? {
-        tokens.push(token);
-    }
-
-    Ok(tokens)
+    Scanner::new(StrInput::new(source)).collect()
 }
 
 /// Iterator wrapper that records how many characters the parser pulls from streaming input.
@@ -133,28 +126,19 @@ fn assert_monotonic_spans(events: &[(Event<'_>, Span)]) {
 
 #[test]
 fn comment_type_is_a_convenience_container() {
-    let span = Span::new(
-        Marker::new(0, 1, 0).with_byte_offset(Some(0)),
-        Marker::new(11, 1, 11).with_byte_offset(Some(11)),
-    );
-    let comment = Comment::new(span, " payload ");
+    let comment = Comment::new(" payload ");
 
-    assert_eq!(comment.span, span);
-    assert_eq!(comment.text, " payload ");
-    assert_eq!(comment.placement, Placement::Free);
+    assert_eq!(comment.text(), " payload ");
+    assert_eq!(comment.placement(), Placement::Free);
     assert_eq!(comment.as_ref(), " payload ");
     assert_eq!(comment.trimmed_text(), "payload");
 }
 
 #[test]
 fn comment_type_preserves_single_space_payload() {
-    let span = Span::new(
-        Marker::new(0, 1, 0).with_byte_offset(Some(0)),
-        Marker::new(2, 1, 2).with_byte_offset(Some(2)),
-    );
-    let comment = Comment::new(span, " ");
+    let comment = Comment::new(" ");
 
-    assert_eq!(comment.text, " ");
+    assert_eq!(comment.text(), " ");
     assert_eq!(comment.trimmed_text(), "");
 }
 
@@ -177,25 +161,25 @@ fn token_comment_uses_span_for_full_source_comment() {
         Marker::new(11, 1, 11).with_byte_offset(Some(11)),
         Marker::new(20, 1, 20).with_byte_offset(Some(20)),
     );
-    let token = Token(
+    let token = Token::new(
         span,
-        TokenType::Comment(Comment::new(span, " payload").with_placement(Placement::Right)),
+        TokenType::Comment(Comment::new(" payload").with_placement(Placement::Right)),
     );
 
-    assert_eq!(token.0.slice(yaml), Some("# payload"));
-    assert!(matches!(token.1, TokenType::Comment(ref comment)
-        if comment.text == " payload" && comment.placement == Placement::Right));
+    assert_eq!(token.span().slice(yaml), Some("# payload"));
+    assert!(matches!(token.token_type(), TokenType::Comment(comment)
+        if comment.text() == " payload" && comment.placement() == Placement::Right));
 }
 
 #[test]
 fn scanner_emits_comment_tokens_in_source_order() {
     let yaml = "# top\n  # indented\nkey: value # trailing\n#eof";
-    let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+    let tokens = scanner_tokens(yaml).expect("valid YAML should scan without errors");
 
     let comments: Vec<_> = tokens
         .iter()
-        .filter_map(|Token(span, token)| match token {
-            TokenType::Comment(comment) => Some((comment.text.as_ref(), span.slice(yaml))),
+        .filter_map(|token| match token.token_type() {
+            TokenType::Comment(comment) => Some((comment.text(), token.span().slice(yaml))),
             _ => None,
         })
         .collect();
@@ -214,12 +198,12 @@ fn scanner_emits_comment_tokens_in_source_order() {
 #[test]
 fn scanner_assigns_initial_comment_placements() {
     let yaml = "# own line\nkey: value # right\n";
-    let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+    let tokens = scanner_tokens(yaml).expect("valid YAML should scan without errors");
 
     let comments: Vec<_> = tokens
         .iter()
-        .filter_map(|Token(_, token)| match token {
-            TokenType::Comment(comment) => Some((comment.text.as_ref(), comment.placement)),
+        .filter_map(|token| match token.token_type() {
+            TokenType::Comment(comment) => Some((comment.text(), comment.placement())),
             _ => None,
         })
         .collect();
@@ -240,32 +224,35 @@ fn scanner_marks_same_line_comments_after_syntax_as_right() {
     ];
 
     for (yaml, expected_text) in cases {
-        let comment = Scanner::new(StrInput::new(yaml))
-            .find_map(|Token(_, token)| match token {
+        let comment = scanner_tokens(yaml)
+            .expect("valid YAML should scan without errors")
+            .into_iter()
+            .find_map(|token| match token.into_parts().1 {
                 TokenType::Comment(comment) => Some(comment),
                 _ => None,
             })
             .expect("comment token should be emitted");
 
-        assert_eq!(comment.text, expected_text, "{yaml:?}");
-        assert_eq!(comment.placement, Placement::Right, "{yaml:?}");
+        assert_eq!(comment.text(), expected_text, "{yaml:?}");
+        assert_eq!(comment.placement(), Placement::Right, "{yaml:?}");
     }
 }
 
 #[test]
 fn scanner_emits_trailing_comment_after_plain_scalar_token() {
-    let tokens = Scanner::new(StrInput::new("key: value # trailing\n")).collect::<Vec<Token<'_>>>();
+    let tokens =
+        scanner_tokens("key: value # trailing\n").expect("valid YAML should scan without errors");
 
     let value_index = tokens
         .iter()
-        .position(|Token(_, token)| {
-            matches!(token, TokenType::Scalar(ScalarStyle::Plain, value) if value == "value")
+        .position(|token| {
+            matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Plain, value) if value == "value")
         })
         .expect("plain scalar token should be emitted");
     let comment_index = tokens
         .iter()
-        .position(|Token(_, token)| {
-            matches!(token, TokenType::Comment(comment) if comment.text == " trailing")
+        .position(|token| {
+            matches!(token.token_type(), TokenType::Comment(comment) if comment.text() == " trailing")
         })
         .expect("comment token should be emitted");
 
@@ -355,15 +342,16 @@ fn scanner_emits_comments_after_syntax_tokens() {
     ];
 
     for case in cases {
-        let tokens = Scanner::new(StrInput::new(case.yaml)).collect::<Vec<Token<'_>>>();
+        let tokens = scanner_tokens(case.yaml).expect("valid YAML should scan without errors");
         let syntax_index = tokens
             .iter()
-            .position(|Token(_, token)| (case.syntax_matches)(token))
+            .position(|token| (case.syntax_matches)(token.token_type()))
             .expect("syntax token should be emitted");
         let comment_index = tokens
             .iter()
-            .position(|Token(_, token)| {
-                matches!(token, TokenType::Comment(comment) if comment.text == case.expected_comment)
+            .position(|token| {
+                matches!(token.token_type(), TokenType::Comment(comment)
+                    if comment.text() == case.expected_comment)
             })
             .expect("comment token should be emitted");
 
@@ -374,27 +362,32 @@ fn scanner_emits_comments_after_syntax_tokens() {
 #[test]
 fn scanner_emits_comments_after_block_scalar_headers() {
     let yaml = "key: | # block scalar header\n  body\n";
-    let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+    let tokens = scanner_tokens(yaml).expect("valid YAML should scan without errors");
 
-    assert!(tokens.iter().any(
-        |Token(_, token)| matches!(token, TokenType::Comment(comment)
-            if comment.text == " block scalar header")
-    ));
-    assert!(tokens.iter().any(|Token(_, token)| {
-        matches!(token, TokenType::Scalar(ScalarStyle::Literal, value) if value == "body\n")
+    assert!(tokens.iter().any(|token| {
+        matches!(token.token_type(), TokenType::Comment(comment)
+            if comment.text() == " block scalar header")
+    }));
+    assert!(tokens.iter().any(|token| {
+        matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Literal, value) if value == "body\n")
     }));
 }
 
 #[test]
 fn scanner_preserves_empty_comment_payloads() {
     let yaml = "#\n# \n";
-    let comments: Vec<_> = Scanner::new(StrInput::new(yaml))
-        .filter_map(|Token(span, token)| match token {
-            TokenType::Comment(comment) => Some((
-                comment.text.into_owned(),
-                span.slice(yaml).map(str::to_owned),
-            )),
-            _ => None,
+    let comments: Vec<_> = scanner_tokens(yaml)
+        .expect("valid YAML should scan without errors")
+        .into_iter()
+        .filter_map(|token| {
+            let (span, token_type) = token.into_parts();
+            match token_type {
+                TokenType::Comment(comment) => Some((
+                    comment.into_text().into_owned(),
+                    span.slice(yaml).map(str::to_owned),
+                )),
+                _ => None,
+            }
         })
         .collect();
 
@@ -410,10 +403,15 @@ fn scanner_preserves_empty_comment_payloads() {
 #[test]
 fn scanner_comment_span_stops_before_crlf() {
     let yaml = "# crlf\r\nkey: value\n";
-    let comment = Scanner::new(StrInput::new(yaml))
-        .find_map(|Token(span, token)| match token {
-            TokenType::Comment(comment) => Some((comment.text.into_owned(), span)),
-            _ => None,
+    let comment = scanner_tokens(yaml)
+        .expect("valid YAML should scan without errors")
+        .into_iter()
+        .find_map(|token| {
+            let (span, token_type) = token.into_parts();
+            match token_type {
+                TokenType::Comment(comment) => Some((comment.into_text().into_owned(), span)),
+                _ => None,
+            }
         })
         .expect("comment token should be emitted");
 
@@ -424,14 +422,19 @@ fn scanner_comment_span_stops_before_crlf() {
 #[test]
 fn scanner_preserves_non_ascii_comment_payload_offsets() {
     let yaml = "# ž🎵\n";
-    let comment = Scanner::new(StrInput::new(yaml))
-        .find_map(|Token(span, token)| match token {
-            TokenType::Comment(comment) => Some((comment, span)),
-            _ => None,
+    let comment = scanner_tokens(yaml)
+        .expect("valid YAML should scan without errors")
+        .into_iter()
+        .find_map(|token| {
+            let (span, token_type) = token.into_parts();
+            match token_type {
+                TokenType::Comment(comment) => Some((comment, span)),
+                _ => None,
+            }
         })
         .expect("comment token should be emitted");
 
-    assert_eq!(comment.0.text, " ž🎵");
+    assert_eq!(comment.0.text(), " ž🎵");
     assert_eq!(comment.1.slice(yaml), Some("# ž🎵"));
     assert_eq!(comment.1.start.index(), 0);
     assert_eq!(comment.1.end.index(), 4);
@@ -441,9 +444,11 @@ fn scanner_preserves_non_ascii_comment_payload_offsets() {
 
 #[test]
 fn scanner_comment_text_is_borrowed_for_str_input() {
-    let comment = Scanner::new(StrInput::new("# borrowed\n"))
-        .find_map(|Token(_, token)| match token {
-            TokenType::Comment(comment) => Some(comment.text),
+    let comment = scanner_tokens("# borrowed\n")
+        .expect("valid YAML should scan without errors")
+        .into_iter()
+        .find_map(|token| match token.into_parts().1 {
+            TokenType::Comment(comment) => Some(comment.into_text()),
             _ => None,
         })
         .expect("comment token should be emitted");
@@ -457,8 +462,11 @@ fn scanner_comment_text_is_borrowed_for_str_input() {
 #[test]
 fn scanner_comment_text_is_owned_for_buffered_input() {
     let comment = Scanner::new(BufferedInput::new("# streamed\n".chars()))
-        .find_map(|Token(_, token)| match token {
-            TokenType::Comment(comment) => Some(comment.text),
+        .collect::<Result<Vec<_>, _>>()
+        .expect("valid YAML should scan without errors")
+        .into_iter()
+        .find_map(|token| match token.into_parts().1 {
+            TokenType::Comment(comment) => Some(comment.into_text()),
             _ => None,
         })
         .expect("comment token should be emitted");
@@ -478,14 +486,21 @@ fn scanner_comment_tokens_match_between_str_and_buffered_input() {
         T: BorrowedInput<'input>,
     {
         scanner
-            .filter_map(|Token(span, token)| match token {
-                TokenType::Comment(comment) => Some((
-                    comment.text.into_owned(),
-                    comment.placement,
-                    span.start.index(),
-                    span.end.index(),
-                )),
-                _ => None,
+            .map(|token| token.expect("valid YAML should scan without errors"))
+            .filter_map(|token| {
+                let (span, token_type) = token.into_parts();
+                match token_type {
+                    TokenType::Comment(comment) => {
+                        let placement = comment.placement();
+                        Some((
+                            comment.into_text().into_owned(),
+                            placement,
+                            span.start.index(),
+                            span.end.index(),
+                        ))
+                    }
+                    _ => None,
+                }
             })
             .collect()
     }
@@ -519,17 +534,17 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
     ];
 
     for (yaml, style, expected_value) in cases {
-        let tokens = Scanner::new(StrInput::new(yaml)).collect::<Vec<Token<'_>>>();
+        let tokens = scanner_tokens(yaml).expect("valid YAML should scan without errors");
 
         assert!(
             !tokens
                 .iter()
-                .any(|Token(_, token)| matches!(token, TokenType::Comment(_))),
+                .any(|token| matches!(token.token_type(), TokenType::Comment(_))),
             "{yaml:?}"
         );
         assert!(
-            tokens.iter().any(|Token(_, token)| {
-                matches!(token, TokenType::Scalar(scalar_style, value)
+            tokens.iter().any(|token| {
+                matches!(token.token_type(), TokenType::Scalar(scalar_style, value)
                     if *scalar_style == style && value == expected_value)
             }),
             "{yaml:?}"
@@ -543,11 +558,13 @@ fn scanner_does_not_emit_unseparated_comment_after_quoted_scalar_error() {
     let mut saw_comment = false;
 
     let error = loop {
-        match scanner.next_token() {
-            Ok(Some(Token(_, TokenType::Comment(_)))) => saw_comment = true,
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("expected scanner error"),
-            Err(error) => break error,
+        match scanner.next() {
+            Some(Ok(token)) if matches!(token.token_type(), TokenType::Comment(_)) => {
+                saw_comment = true;
+            }
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("expected scanner error"),
         }
     };
 
@@ -560,14 +577,14 @@ fn scanner_does_not_emit_unseparated_comment_after_quoted_scalar_error() {
 
 #[test]
 fn scanner_treats_unseparated_hash_after_plain_scalar_as_content() {
-    let tokens = Scanner::new(StrInput::new("key: value#bad\n")).collect::<Vec<Token<'_>>>();
+    let tokens = scanner_tokens("key: value#bad\n").expect("valid YAML should scan without errors");
 
-    assert!(tokens.iter().any(|Token(_, token)| {
-        matches!(token, TokenType::Scalar(ScalarStyle::Plain, value) if value == "value#bad")
+    assert!(tokens.iter().any(|token| {
+        matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Plain, value) if value == "value#bad")
     }));
     assert!(!tokens
         .iter()
-        .any(|Token(_, token)| matches!(token, TokenType::Comment(_))));
+        .any(|token| matches!(token.token_type(), TokenType::Comment(_))));
 }
 
 #[test]
@@ -600,18 +617,18 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
         let tokens = scanner_tokens(case.yaml).expect("scanner should accept YAML");
         let scalars = tokens
             .iter()
-            .filter_map(|Token(_, token)| match token {
+            .filter_map(|token| match token.token_type() {
                 TokenType::Scalar(ScalarStyle::Plain, value) => Some(value.as_ref()),
                 _ => None,
             })
             .collect::<Vec<_>>();
         let comments = tokens
             .iter()
-            .filter_map(|Token(span, token)| match token {
+            .filter_map(|token| match token.token_type() {
                 TokenType::Comment(comment) => Some((
-                    comment.text.as_ref(),
-                    comment.placement,
-                    span.slice(case.yaml),
+                    comment.text(),
+                    comment.placement(),
+                    token.span().slice(case.yaml),
                 )),
                 _ => None,
             })
@@ -638,10 +655,10 @@ fn scanner_rejects_tab_immediately_after_explicit_key_indicator() {
     let mut scanner = Scanner::new(StrInput::new("?\tkey\n"));
 
     let error = loop {
-        match scanner.next_token() {
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("expected scanner error"),
-            Err(error) => break error,
+        match scanner.next() {
+            Some(Ok(_)) => {}
+            Some(Err(error)) => break error,
+            None => panic!("expected scanner error"),
         }
     };
 
@@ -1229,7 +1246,8 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
             Event::StreamEnd => Some("StreamEnd".into()),
             Event::Scalar(value, ..) => Some(format!("Scalar({value})")),
             Event::Comment(text, _) => Some(format!("Comment({text})")),
-            Event::Nothing | Event::Alias(_) | Event::MappingStart(..) | Event::MappingEnd => None,
+            Event::Alias(_) | Event::MappingStart(..) | Event::MappingEnd => None,
+            _ => None,
         })
         .collect();
 

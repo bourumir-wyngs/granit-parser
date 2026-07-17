@@ -167,9 +167,9 @@ fn streaming_tag_directive_resolves_shorthand_tag() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "bar");
-    assert_eq!(tag.handle, "tag:example.com,2000:app/");
-    assert_eq!(tag.suffix, "foo");
-    assert_eq!(tag.original_handle, "!e!");
+    assert_eq!(tag.handle(), "tag:example.com,2000:app/");
+    assert_eq!(tag.suffix(), "foo");
+    assert_eq!(tag.original_handle(), "!e!");
 }
 
 #[test]
@@ -194,8 +194,8 @@ fn streaming_tag_directive_prefix_decodes_uri_escape() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "tag:example/");
-    assert_eq!(tag.suffix, "x");
+    assert_eq!(tag.handle(), "tag:example/");
+    assert_eq!(tag.suffix(), "x");
 }
 
 #[test]
@@ -216,8 +216,8 @@ fn tag_directive_prefix_starting_with_uri_escape_is_decoded() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "app/");
-    assert_eq!(tag.suffix, "x");
+    assert_eq!(tag.handle(), "app/");
+    assert_eq!(tag.suffix(), "x");
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn verbatim_tag_with_uri_escape_is_decoded() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(format!("{}{}", tag.handle, tag.suffix), "tag:example");
+    assert_eq!(format!("{}{}", tag.handle(), tag.suffix()), "tag:example");
 }
 
 #[test]
@@ -250,29 +250,16 @@ fn required_simple_key_at_eof_without_newline_errors() {
 }
 
 #[test]
-fn scanner_reports_misplaced_bracket_when_resumed_after_unclosed_bracket() {
-    // The public `Scanner` API can be driven past a first error. The `---` marker inside the
-    // unclosed flow sequence pops the flow marker while reporting the first error; resuming
-    // then reaches `]` with a non-zero flow level but no recorded opening bracket.
+fn scanner_error_is_terminal() {
     let mut scanner = Scanner::new(StrInput::new("[\n--- ]\n"));
 
-    let first = loop {
-        match scanner.next_token() {
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("expected a first scan error"),
-            Err(error) => break error,
-        }
-    };
-    assert_eq!(first.info(), "unclosed bracket '['");
+    let error = scanner
+        .by_ref()
+        .find_map(Result::err)
+        .expect("scanner should emit an error");
 
-    let second = loop {
-        match scanner.next_token() {
-            Ok(Some(_)) => {}
-            Ok(None) => panic!("expected a second scan error"),
-            Err(error) => break error,
-        }
-    };
-    assert_eq!(second.info(), "misplaced bracket");
+    assert_eq!(error.info(), "unclosed bracket '['");
+    assert!(scanner.next().is_none());
 }
 
 // --- Offsets available but no zero-copy borrowing (`SliceMode::Delegate`) -------------------
@@ -287,9 +274,9 @@ fn no_borrow_input_resolves_tag_directive_via_owned_slices() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "tag:e/");
-    assert_eq!(tag.suffix, "foo");
-    assert_eq!(tag.original_handle, "!e!");
+    assert_eq!(tag.handle(), "tag:e/");
+    assert_eq!(tag.suffix(), "foo");
+    assert_eq!(tag.original_handle(), "!e!");
 }
 
 #[test]
@@ -311,8 +298,8 @@ fn no_borrow_input_scans_primary_handle_tag_as_owned() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "!");
-    assert_eq!(tag.suffix, "foo");
+    assert_eq!(tag.handle(), "!");
+    assert_eq!(tag.suffix(), "foo");
 }
 
 #[test]
@@ -390,8 +377,8 @@ fn empty_range_sliceless_input_decodes_tag_directive_prefix_escape() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "app/");
-    assert_eq!(tag.suffix, "x");
+    assert_eq!(tag.handle(), "app/");
+    assert_eq!(tag.suffix(), "x");
 }
 
 #[test]
@@ -401,8 +388,8 @@ fn empty_range_sliceless_input_decodes_tag_suffix_escape() {
 
     let (value, tag) = first_tagged_scalar(&events);
     assert_eq!(value, "1");
-    assert_eq!(tag.handle, "!");
-    assert_eq!(tag.suffix, "abc");
+    assert_eq!(tag.handle(), "!");
+    assert_eq!(tag.suffix(), "abc");
 }
 
 // --- `slice_bytes` fails after the first call (`SliceMode::FirstCallOnly`) ------------------

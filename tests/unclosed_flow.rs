@@ -79,7 +79,7 @@ fn mismatched_sequence_closed_by_mapping_brace_reports_mismatch() {
 
     assert_eq!(
         error.kind(),
-        ErrorKind::MismatchedFlowCollectionEnd {
+        &ErrorKind::MismatchedFlowCollectionEnd {
             open: '[',
             close: '}',
         }
@@ -94,7 +94,7 @@ fn mismatched_mapping_closed_by_sequence_bracket_reports_mismatch() {
 
     assert_eq!(
         error.kind(),
-        ErrorKind::MismatchedFlowCollectionEnd {
+        &ErrorKind::MismatchedFlowCollectionEnd {
             open: '{',
             close: ']',
         }

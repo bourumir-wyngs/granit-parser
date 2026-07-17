@@ -360,7 +360,7 @@ pub struct EventReporter<'input> {
 
 impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
     fn on_event(&mut self, ev: Event<'input>, span: Span) {
-        if matches!(ev, Event::Comment(..) | Event::Nothing) {
+        if matches!(ev, Event::Comment(..)) {
             return;
         }
 
@@ -409,7 +409,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 )
             }
             Event::Alias(idx) => format!("=ALI *{idx}"),
-            Event::Comment(..) | Event::Nothing => unreachable!("comments are ignored above"),
+            Event::Comment(..) => unreachable!("comments are ignored above"),
+            _ => return,
         };
         self.events.push(line);
     }
@@ -439,7 +440,7 @@ fn escape_text(text: &str) -> String {
 
 fn format_tag(tag: Option<&Cow<'_, Tag>>) -> String {
     if let Some(tag) = tag {
-        format!(" <{}{}>", tag.handle, tag.suffix)
+        format!(" <{}{}>", tag.handle(), tag.suffix())
     } else {
         String::new()
     }

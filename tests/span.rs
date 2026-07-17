@@ -130,7 +130,7 @@ fn tagged_block_collection_reports_tag_start_on_tag_line() {
         .find(|(event, _span)| {
             matches!(
                 event,
-                Event::MappingStart(_, _, Some(tag)) if tag.suffix == "omap"
+                Event::MappingStart(_, _, Some(tag)) if tag.suffix() == "omap"
             )
         })
         .expect("expected tagged block mapping");
@@ -154,7 +154,7 @@ fn tag_start_uses_tag_token_when_anchor_precedes_tag() {
             matches!(
                 event,
                 Event::Scalar(value, _, _, Some(tag))
-                    if value.as_ref() == "value" && tag.suffix == "str"
+                    if value.as_ref() == "value" && tag.suffix() == "str"
             )
         })
         .expect("expected tagged anchored scalar");
@@ -176,7 +176,7 @@ fn tag_start_uses_tag_token_when_tag_precedes_anchor() {
             matches!(
                 event,
                 Event::Scalar(value, _, _, Some(tag))
-                    if value.as_ref() == "value" && tag.suffix == "str"
+                    if value.as_ref() == "value" && tag.suffix() == "str"
             )
         })
         .expect("expected tagged anchored scalar");
@@ -263,7 +263,7 @@ fn tagged_empty_scalar_span_stays_at_tag_end() {
             matches!(
                 event,
                 Event::Scalar(value, _, _, Some(tag))
-                    if value.is_empty() && tag.suffix == "str"
+                    if value.is_empty() && tag.suffix() == "str"
             )
         })
         .expect("expected tagged empty scalar");

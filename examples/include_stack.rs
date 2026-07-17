@@ -1,6 +1,4 @@
-use granit_parser::{
-    parser_stack::ParserStack, Event, Parser, ParserTrait, ScanError, StrInput, Tag,
-};
+use granit_parser::{Event, Parser, ParserStack, ParserTrait, ScanError, StrInput, Tag};
 
 type IncludeStack = ParserStack<'static, core::iter::Empty<char>, StrInput<'static>>;
 

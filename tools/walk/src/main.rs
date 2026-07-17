@@ -112,7 +112,6 @@ fn build_node<'input>(
         }),
         Event::SequenceStart(..) => build_sequence(span, parser),
         Event::MappingStart(..) => build_mapping(span, parser),
-        Event::Nothing => bail!("Unexpected internal parser event"),
         Event::Comment(..) => bail!("Unexpected comment while building node"),
         Event::StreamStart
         | Event::StreamEnd
@@ -120,6 +119,7 @@ fn build_node<'input>(
         | Event::DocumentEnd
         | Event::SequenceEnd
         | Event::MappingEnd => bail!("Unexpected event while building node: {event:?}"),
+        _ => bail!("Unsupported event while building node: {event:?}"),
     }
 }
 

@@ -128,12 +128,12 @@ fn non_printable_source_characters_are_rejected_by_both_inputs() {
         for input in &inputs {
             assert_eq!(
                 first_str_error(input).kind(),
-                ErrorKind::UnexpectedCharacter { character },
+                &ErrorKind::UnexpectedCharacter { character },
                 "string input accepted {input:?}",
             );
             assert_eq!(
                 first_iter_error(input).kind(),
-                ErrorKind::UnexpectedCharacter { character },
+                &ErrorKind::UnexpectedCharacter { character },
                 "iterator input accepted {input:?}",
             );
         }
@@ -147,7 +147,7 @@ fn invalid_indentation_diagnostics_match_between_input_backends() {
     let iter_error = first_iter_error(input);
 
     for error in [&str_error, &iter_error] {
-        assert_eq!(error.kind(), ErrorKind::InvalidIndentation);
+        assert_eq!(error.kind(), &ErrorKind::InvalidIndentation);
         assert_eq!(error.marker(), &Marker::new(7, 3, 0));
     }
 

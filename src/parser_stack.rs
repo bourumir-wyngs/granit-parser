@@ -24,7 +24,7 @@ impl<'input> ReplayParser<'input> {
 
     /// Return the next anchor ID that should be assigned after replayed events.
     #[must_use]
-    pub fn get_anchor_offset(&self) -> usize {
+    pub fn anchor_offset(&self) -> usize {
         self.anchor_offset
     }
 
@@ -79,8 +79,18 @@ impl<'input> ParserTrait<'input> for ReplayParser<'input> {
     }
 }
 
+impl<'input> Iterator for ReplayParser<'input> {
+    type Item = ParseResult<'input>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_event()
+    }
+}
+
+impl core::iter::FusedIterator for ReplayParser<'_> {}
+
 /// A wrapper for different types of parsers.
-pub enum AnyParser<'input, I, T>
+enum AnyParser<'input, I, T>
 where
     I: Iterator<Item = char>,
     T: BorrowedInput<'input>,
@@ -120,12 +130,12 @@ where
     I: Iterator<Item = char>,
     T: BorrowedInput<'input>,
 {
-    fn get_anchor_offset(&self) -> usize {
+    fn anchor_offset(&self) -> usize {
         match self {
-            AnyParser::String { parser, .. } => parser.get_anchor_offset(),
-            AnyParser::Iter { parser, .. } => parser.get_anchor_offset(),
-            AnyParser::Custom { parser, .. } => parser.get_anchor_offset(),
-            AnyParser::Replay { parser, .. } => parser.get_anchor_offset(),
+            AnyParser::String { parser, .. } => parser.anchor_offset(),
+            AnyParser::Iter { parser, .. } => parser.anchor_offset(),
+            AnyParser::Custom { parser, .. } => parser.anchor_offset(),
+            AnyParser::Replay { parser, .. } => parser.anchor_offset(),
         }
     }
 
@@ -183,7 +193,7 @@ where
         }
     }
 
-    /// Set the resolver used by [`Self::resolve`] and [`Self::push_include`].
+    /// Set the resolver used by [`Self::push_include`].
     ///
     /// The resolver receives the include name and returns the included YAML source text.
     pub fn set_resolver(
@@ -205,7 +215,7 @@ where
         self.include_resolver = Some(Box::new(move |name| resolver(name).map(Cow::Borrowed)));
     }
 
-    /// Resolves an include string using the include resolver.
+    /// Resolve an include by name and push the resulting parser onto the stack.
     ///
     /// Comment events from the included content are preserved. Their spans are local to the
     /// included content returned by the resolver, matching the existing behavior for all included
@@ -214,7 +224,7 @@ where
     /// # Errors
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
     /// included content cannot be parsed.
-    pub fn resolve(&mut self, include_str: &str) -> Result<(), ScanError> {
+    pub fn push_include(&mut self, include_str: &str) -> Result<(), ScanError> {
         let resolved = match &mut self.include_resolver {
             Some(resolver) => resolver(include_str),
             None => {
@@ -231,7 +241,7 @@ where
             Ok(content) => content,
             Err(error) => return Err(self.contextualize_include_error(error, include_str)),
         };
-        let inherited_anchor_offset = self.parsers.last().map(AnyParser::get_anchor_offset);
+        let inherited_anchor_offset = self.parsers.last().map(AnyParser::anchor_offset);
 
         let (events, next_anchor_offset) = match content {
             Cow::Borrowed(content) => {
@@ -248,7 +258,7 @@ where
                         }
                     }
                 }
-                (events, parser.get_anchor_offset())
+                (events, parser.anchor_offset())
             }
             Cow::Owned(content) => {
                 let mut parser =
@@ -265,7 +275,7 @@ where
                         }
                     }
                 }
-                (events, parser.get_anchor_offset())
+                (events, parser.anchor_offset())
             }
         };
 
@@ -282,24 +292,10 @@ where
         error.with_source_stack(source_stack)
     }
 
-    /// Resolves an include by name and pushes the resulting parser onto the stack.
-    ///
-    /// This is an alias for [`Self::resolve`] with a name that reads naturally in
-    /// include-oriented consumers: `stack.push_include("config.yaml")?`.
-    /// Comment spans from the included content are local to that included source.
-    ///
-    /// # Errors
-    /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
-    /// included content cannot be parsed.
-    pub fn push_include(&mut self, include_name: &str) -> Result<(), ScanError> {
-        self.resolve(include_name)
-    }
-
     fn prepare_for_push(&mut self) {
         if matches!(self.current.as_ref(), Some((Event::StreamEnd, _))) {
             self.current = None;
         }
-        self.stream_end_emitted = false;
     }
 
     /// Push a string parser onto the stack.
@@ -309,7 +305,7 @@ where
     pub fn push_str_parser(&mut self, mut parser: Parser<'input, StrInput<'input>>, name: String) {
         self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
-            parser.set_anchor_offset(parent.get_anchor_offset());
+            parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::String { parser, name });
     }
@@ -325,7 +321,7 @@ where
     ) {
         self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
-            parser.set_anchor_offset(parent.get_anchor_offset());
+            parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::Iter { parser, name });
     }
@@ -337,7 +333,7 @@ where
     pub fn push_custom_parser(&mut self, mut parser: Parser<'input, T>, name: String) {
         self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
-            parser.set_anchor_offset(parent.get_anchor_offset());
+            parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::Custom { parser, name });
     }
@@ -349,8 +345,8 @@ where
     pub fn push_replay_parser(&mut self, mut parser: ReplayParser<'input>, name: String) {
         self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
-            let inherited = parent.get_anchor_offset();
-            parser.set_anchor_offset(parser.get_anchor_offset().max(inherited));
+            let inherited = parent.anchor_offset();
+            parser.set_anchor_offset(parser.anchor_offset().max(inherited));
         }
 
         self.parsers.push(AnyParser::Replay { parser, name });
@@ -368,7 +364,7 @@ where
     ) {
         self.prepare_for_push();
         if let Some(parent) = self.parsers.last() {
-            parser.set_anchor_offset(parent.get_anchor_offset());
+            parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::Custom { parser, name });
         self.current = Some(current);
@@ -377,7 +373,7 @@ where
     /// Return the anchor offset that a newly pushed parser should inherit.
     #[must_use]
     pub fn current_anchor_offset(&self) -> usize {
-        self.parsers.last().map_or(0, AnyParser::get_anchor_offset)
+        self.parsers.last().map_or(0, AnyParser::anchor_offset)
     }
 
     /// Return the names of the parsers currently in the stack, from bottom to top.
@@ -404,7 +400,7 @@ where
 
     fn propagate_anchor_offset_from_popped(&mut self, popped: &AnyParser<'input, I, T>) {
         if let Some(parent) = self.parsers.last_mut() {
-            let next_offset = parent.get_anchor_offset().max(popped.get_anchor_offset());
+            let next_offset = parent.anchor_offset().max(popped.anchor_offset());
             parent.set_anchor_offset(next_offset);
         }
     }
@@ -603,4 +599,11 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.next_event()
     }
+}
+
+impl<'input, I, T> core::iter::FusedIterator for ParserStack<'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
 }

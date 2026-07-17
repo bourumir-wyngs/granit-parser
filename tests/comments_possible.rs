@@ -87,11 +87,15 @@ struct ParseTrace<'input> {
 }
 
 fn scanner_tokens_fast_path(source: &str) -> Vec<Token<'_>> {
-    Scanner::new(StrInput::new(source)).collect()
+    Scanner::new(StrInput::new(source))
+        .collect::<Result<_, _>>()
+        .expect("valid YAML should scan without errors")
 }
 
 fn scanner_tokens_comment_enabled(source: &str) -> Vec<Token<'_>> {
-    Scanner::new(CommentEnabledStrInput::new(source)).collect()
+    Scanner::new(CommentEnabledStrInput::new(source))
+        .collect::<Result<_, _>>()
+        .expect("valid YAML should scan without errors")
 }
 
 fn parser_trace_fast_path(source: &str) -> ParseTrace<'_> {

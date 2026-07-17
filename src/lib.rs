@@ -98,16 +98,16 @@ mod debug;
 mod error;
 pub mod input;
 mod parser;
-/// A stack-based parser implementation.
-pub mod parser_stack;
+mod parser_stack;
 mod scanner;
 
 pub use crate::error::{ErrorKind, InputIoError, ScanError};
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, FallibleBufferedInput, Input};
 pub use crate::parser::{
-    Event, EventReceiver, Parser, ParserTrait, SpannedEventReceiver, StructureStyle, Tag,
-    TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
+    Event, EventReceiver, ParseResult, Parser, ParserTrait, SpannedEventReceiver, StructureStyle,
+    Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
+pub use crate::parser_stack::{ParserStack, ReplayParser};
 pub use crate::scanner::{
     Comment, Marker, Placement, ScalarStyle, Scanner, Span, Token, TokenType,
 };
