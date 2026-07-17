@@ -36,10 +36,10 @@ debug_prints = ["std"]
 
 [dependencies]
 arraydeque = { version = "0.5.1", default-features = false }
-smallvec = {  version = ">= 1.0.0, < 2.0.0" }
+smallvec = {  version = ">=1.6.1, < 2.0.0" }
 
 [dev-dependencies]
-libtest-mimic = "=0.8.1"
+libtest-mimic = "0.8.2"
 
 [[test]]
 name = "yaml-test-suite"

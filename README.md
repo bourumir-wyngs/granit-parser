@@ -5,8 +5,10 @@
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/bourumir-wyngs/granit-parser/ci.yml)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/fuzz.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/fuzz.yml)
 [![docs.rs](https://docs.rs/granit-parser/badge.svg)](https://docs.rs/granit-parser)
+
 [![codecov](https://codecov.io/gh/bourumir-wyngs/granit-parser/graph/badge.svg)](https://codecov.io/gh/bourumir-wyngs/granit-parser)
 [![Socket Badge](https://badge.socket.dev/cargo/package/granit-parser)](https://socket.dev/cargo/package/granit-parser)
+[![dependency status](https://deps.rs/repo/github/bourumir-wyngs/granit-parser/status.svg)](https://deps.rs/repo/github/bourumir-wyngs/granit-parser)
 
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
