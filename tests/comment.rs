@@ -1246,7 +1246,6 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
             Event::StreamEnd => Some("StreamEnd".into()),
             Event::Scalar(value, ..) => Some(format!("Scalar({value})")),
             Event::Comment(text, _) => Some(format!("Comment({text})")),
-            Event::Alias(_) | Event::MappingStart(..) | Event::MappingEnd => None,
             _ => None,
         })
         .collect();
