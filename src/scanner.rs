@@ -216,7 +216,7 @@ impl Span {
     /// Return the length of the span (in characters).
     ///
     /// # Panics
-    /// Panics if the end marker precedes the start marker.
+    /// Panics in debug builds if the end marker precedes the start marker.
     #[track_caller]
     #[must_use]
     pub fn len(&self) -> usize {
