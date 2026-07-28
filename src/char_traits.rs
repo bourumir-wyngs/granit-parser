@@ -65,6 +65,10 @@ pub fn is_hex(c: char) -> bool {
 }
 
 /// Convert the hexadecimal digit to an integer.
+///
+/// # Panics
+/// Panics if `c` is not an ASCII hexadecimal digit.
+#[track_caller]
 #[inline]
 #[must_use]
 pub fn as_hex(c: char) -> u32 {

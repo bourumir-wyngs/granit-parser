@@ -31,6 +31,11 @@ pub trait BorrowedInput<'a>: Input {
     /// half-open: `[start, end)`.
     ///
     /// Returns `None` if the input does not support zero-copy slicing.
+    ///
+    /// # Panics
+    /// Implementations may panic in debug builds if `start` is greater than `end` or `end` is past
+    /// the end of the underlying source.
+    #[track_caller]
     #[must_use]
     fn slice_borrowed(&self, start: usize, end: usize) -> Option<&'a str>;
 }
@@ -173,6 +178,11 @@ pub trait Input {
     ///
     /// Implementations that return `None` from [`Input::byte_offset`] must also return `None`
     /// here.
+    ///
+    /// # Panics
+    /// Implementations may panic in debug builds if `start` is greater than `end` or `end` is past
+    /// the end of the underlying source.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn slice_bytes(&self, _start: usize, _end: usize) -> Option<&str> {
@@ -239,6 +249,10 @@ pub trait Input {
     ///
     /// This function assumes that the next 2 characters in the input have already been fetched
     /// through [`Input::lookahead`].
+    ///
+    /// # Panics
+    /// Panics if the active lookahead window contains fewer than 2 characters.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn next_2_are(&self, c1: char, c2: char) -> bool {
@@ -250,6 +264,10 @@ pub trait Input {
     ///
     /// This function assumes that the next 3 characters in the input have already been fetched
     /// through [`Input::lookahead`].
+    ///
+    /// # Panics
+    /// Panics if the active lookahead window contains fewer than 3 characters.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn next_3_are(&self, c1: char, c2: char, c3: char) -> bool {
@@ -261,6 +279,10 @@ pub trait Input {
     ///
     /// This function assumes that the next 4 characters in the input have already been fetched
     /// through [`Input::lookahead`].
+    ///
+    /// # Panics
+    /// Panics if the active lookahead window contains fewer than 4 characters.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn next_is_document_indicator(&self) -> bool {
@@ -273,6 +295,10 @@ pub trait Input {
     ///
     /// This function assumes that the next 4 characters in the input have already been fetched
     /// through [`Input::lookahead`].
+    ///
+    /// # Panics
+    /// Panics if the active lookahead window contains fewer than 4 characters.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn next_is_document_start(&self) -> bool {
@@ -284,6 +310,10 @@ pub trait Input {
     ///
     /// This function assumes that the next 4 characters in the input have already been fetched
     /// through [`Input::lookahead`].
+    ///
+    /// # Panics
+    /// Panics if the active lookahead window contains fewer than 4 characters.
+    #[track_caller]
     #[inline]
     #[must_use]
     fn next_is_document_end(&self) -> bool {
@@ -305,7 +335,13 @@ pub trait Input {
     /// Returns [`ErrorKind::CommentNotSeparated`] if a comment is encountered without preceding
     /// whitespace. In that event, the first tuple element contains the number of characters
     /// consumed prior to reaching the `#`.
+    ///
+    /// # Panics
+    /// Panics if `skip_tabs` is [`SkipTabs::Result`], which is an output-only variant.
+    #[track_caller]
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
+        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
+
         let mut encountered_tab = false;
         let mut has_yaml_ws = false;
         let mut chars_consumed = 0;
@@ -350,6 +386,10 @@ pub trait Input {
     /// # Return
     /// Returns the number of consumed characters and a [`SkipTabs::Result`] describing whether
     /// tabs and valid YAML whitespace (` `) were encountered.
+    ///
+    /// # Panics
+    /// Panics if `skip_tabs` is [`SkipTabs::Result`], which is an output-only variant.
+    #[track_caller]
     fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, SkipTabs) {
         assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
 

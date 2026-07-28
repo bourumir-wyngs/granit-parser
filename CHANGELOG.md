@@ -43,6 +43,8 @@
   `ReplayParser` directly iterable.
 - Added `#[must_use]` to parser, scanner, and buffered-input constructors, scanner state accessors,
   and the value-returning `Input` predicate helpers.
+- Added `#[track_caller]` to caller-precondition checks so panic locations point to the invalid
+  call.
 
 **Features and Fixes**:
 
