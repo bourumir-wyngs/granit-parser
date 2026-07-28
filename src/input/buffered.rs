@@ -39,6 +39,7 @@ pub struct BufferedInput<T: Iterator<Item = char>> {
 
 impl<T: Iterator<Item = char>> BufferedInput<T> {
     /// Create a new [`BufferedInput`] over the given character iterator.
+    #[must_use]
     pub fn new(input: T) -> Self {
         Self {
             input,
@@ -249,6 +250,7 @@ pub struct FallibleBufferedInput<T: Iterator<Item = Result<char, ErrorKind>>> {
 
 impl<T: Iterator<Item = Result<char, ErrorKind>>> FallibleBufferedInput<T> {
     /// Create a buffered input over a fallible character iterator.
+    #[must_use]
     pub fn new(input: T) -> Self {
         Self {
             inner: BufferedInput::new(FallibleChars::new(input)),

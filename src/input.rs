@@ -384,6 +384,7 @@ pub trait Input {
     /// This function assumes we are not given a blankz character.
     #[allow(clippy::inline_always)]
     #[inline(always)]
+    #[must_use]
     fn next_can_be_plain_scalar(&self, in_flow: bool) -> bool {
         let nc = self.peek_nth(1);
         match self.peek() {
@@ -405,6 +406,7 @@ pub trait Input {
     /// [a blank]: is_blank
     /// [a break]: is_break
     #[inline]
+    #[must_use]
     fn next_is_blank_or_break(&self) -> bool {
         is_blank(self.peek()) || is_break(self.peek())
     }
@@ -420,6 +422,7 @@ pub trait Input {
     /// [a blank]: is_blank
     /// [a breakz]: is_breakz
     #[inline]
+    #[must_use]
     fn next_is_blank_or_breakz(&self) -> bool {
         is_blank(self.peek()) || is_breakz(self.peek())
     }
@@ -434,6 +437,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a blank]: is_blank
     #[inline]
+    #[must_use]
     fn next_is_blank(&self) -> bool {
         is_blank(self.peek())
     }
@@ -448,6 +452,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a break]: is_break
     #[inline]
+    #[must_use]
     fn next_is_break(&self) -> bool {
         is_break(self.peek())
     }
@@ -462,6 +467,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a breakz]: is_breakz
     #[inline]
+    #[must_use]
     fn next_is_breakz(&self) -> bool {
         is_breakz(self.peek())
     }
@@ -476,6 +482,7 @@ pub trait Input {
     /// # Return
     /// Returns true if the input is exhausted, false otherwise.
     #[inline]
+    #[must_use]
     fn next_is_z(&self) -> bool {
         is_z(self.peek())
     }
@@ -490,6 +497,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a flow]: is_flow
     #[inline]
+    #[must_use]
     fn next_is_flow(&self) -> bool {
         is_flow(self.peek())
     }
@@ -504,6 +512,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a digit]: is_digit
     #[inline]
+    #[must_use]
     fn next_is_digit(&self) -> bool {
         is_digit(self.peek())
     }
@@ -518,6 +527,7 @@ pub trait Input {
     /// [`lookahead`]: Input::lookahead
     /// [a letter]: is_alpha
     #[inline]
+    #[must_use]
     fn next_is_alpha(&self) -> bool {
         is_alpha(self.peek())
     }

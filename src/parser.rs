@@ -896,6 +896,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     }
 
     /// Create a parser over a custom input source.
+    #[must_use]
     pub fn new(src: T) -> Self {
         Parser {
             scanner: Scanner::new(src),

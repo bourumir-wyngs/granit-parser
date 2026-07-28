@@ -41,6 +41,8 @@
 - Re-exported `ParserStack` and `ReplayParser` at the crate root.
 - Implemented `FusedIterator` for `Parser`, `Scanner`, `ReplayParser`, and `ParserStack`, and made
   `ReplayParser` directly iterable.
+- Added `#[must_use]` to parser, scanner, and buffered-input constructors, scanner state accessors,
+  and the value-returning `Input` predicate helpers.
 
 **Features and Fixes**:
 

@@ -1095,6 +1095,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(Cow::Borrowed(slice))
     }
     /// Create a scanner over the given input source.
+    #[must_use]
     pub fn new(input: T) -> Self {
         let initial_byte_offset = input.byte_offset();
         let comments_possible = input.may_contain_comments();
@@ -1317,18 +1318,21 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Return whether the [`TokenType::StreamStart`] event has been emitted.
     #[inline]
+    #[must_use]
     pub fn stream_started(&self) -> bool {
         self.stream_start_produced
     }
 
     /// Return whether the [`TokenType::StreamEnd`] event has been emitted.
     #[inline]
+    #[must_use]
     pub fn stream_ended(&self) -> bool {
         self.stream_end_produced
     }
 
     /// Return the current position in the input stream.
     #[inline]
+    #[must_use]
     pub fn mark(&self) -> Marker {
         self.mark
     }
