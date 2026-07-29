@@ -1193,6 +1193,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    /// Take the token buffered by [`Self::peek_token`].
+    ///
+    /// # Panics
+    /// Panics if no token has been buffered.
+    #[track_caller]
     fn fetch_token<'a>(&mut self) -> QueuedToken<'a>
     where
         'input: 'a,
@@ -1207,6 +1212,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.token = None;
     }
     /// Pops the top-most state and make it the current state.
+    ///
+    /// # Panics
+    /// Panics if the state stack is empty.
+    #[track_caller]
     fn pop_state(&mut self) {
         self.state = self.states.pop().unwrap();
     }

@@ -224,6 +224,10 @@ impl Span {
     }
 
     /// Return whether the [`Span`] has a length of zero.
+    ///
+    /// # Panics
+    /// Panics in debug builds if the end marker precedes the start marker.
+    #[track_caller]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1353,6 +1357,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     //
     // # Panics (in debug)
     // If the next characters do not correspond to a line break.
+    #[track_caller]
     #[inline]
     fn read_break(&mut self, s: &mut String) {
         self.skip_break();
@@ -1363,6 +1368,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     //
     // # Panics (in debug)
     // If the next characters do not correspond to a line break.
+    #[track_caller]
     #[inline]
     fn skip_break(&mut self) {
         let c = self.input.peek();
@@ -1375,6 +1381,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Insert a token at the given position.
+    ///
+    /// # Panics
+    /// Panics if `pos` is past the end of the token queue.
+    #[track_caller]
     fn insert_token(&mut self, pos: usize, tok: Token<'input>) {
         let old_len = self.tokens.len();
         assert!(pos <= old_len);
@@ -1801,6 +1811,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
+    /// Skip YAML whitespace up to the end of the current line.
+    ///
+    /// # Panics
+    /// Panics in debug builds if `skip_tabs` is [`SkipTabs::Result`].
+    #[track_caller]
     fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
         debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
 

@@ -405,6 +405,11 @@ where
         }
     }
 
+    /// Pop the current parser and propagate its anchor offset to its parent.
+    ///
+    /// # Panics
+    /// Panics if the parser stack is empty.
+    #[track_caller]
     fn pop_parser_and_propagate_anchor_offset(&mut self) {
         let popped = self.parsers.pop().unwrap();
         self.propagate_anchor_offset_from_popped(&popped);
