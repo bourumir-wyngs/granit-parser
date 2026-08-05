@@ -118,6 +118,74 @@ pub(crate) fn is_printable(c: char) -> bool {
     )
 }
 
+const PRINTABLE_ASCII_FAST_PATH_MIN_BYTES: usize = 64;
+const BYTE_LANES_ONES: u64 = 0x0101_0101_0101_0101;
+const BYTE_LANES_HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+const BYTE_LANES_TOP_THREE_BITS: u64 = 0xe0e0_e0e0_e0e0_e0e0;
+const BYTE_LANES_DEL: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+
+#[inline]
+fn has_zero_byte(word: u64) -> bool {
+    word.wrapping_sub(BYTE_LANES_ONES) & !word & BYTE_LANES_HIGH_BITS != 0
+}
+
+#[inline]
+fn is_suspicious_scalar_byte(byte: u8) -> bool {
+    (byte < 0x20 && !matches!(byte, b'\t' | b'\n' | b'\r')) || byte >= 0x7f
+}
+
+/// Return the first character that is not YAML `c-printable`.
+///
+/// Character iteration is cheaper for short strings. For longer strings, inspect eight ASCII
+/// bytes at a time. Words that may contain a control, DEL, or non-ASCII byte are checked exactly;
+/// a non-ASCII suffix falls back to the canonical character predicate.
+#[inline]
+pub(crate) fn find_non_printable(s: &str) -> Option<char> {
+    if s.len() < PRINTABLE_ASCII_FAST_PATH_MIN_BYTES {
+        return s.chars().find(|&character| !is_printable(character));
+    }
+
+    let bytes = s.as_bytes();
+    let mut chunks = bytes.chunks_exact(8);
+    let mut byte_offset = 0;
+    let mut suspicious_offset = None;
+
+    for chunk in &mut chunks {
+        let word = u64::from_ne_bytes(chunk.try_into().expect("chunk length is eight"));
+        let may_have_suspicious_byte = word & BYTE_LANES_HIGH_BITS != 0
+            || has_zero_byte(word & BYTE_LANES_TOP_THREE_BITS)
+            || has_zero_byte(word ^ BYTE_LANES_DEL);
+
+        if may_have_suspicious_byte {
+            if let Some(chunk_offset) = chunk
+                .iter()
+                .position(|&byte| is_suspicious_scalar_byte(byte))
+            {
+                suspicious_offset = Some(byte_offset + chunk_offset);
+                break;
+            }
+        }
+        byte_offset += chunk.len();
+    }
+
+    let suspicious_offset = suspicious_offset.or_else(|| {
+        chunks
+            .remainder()
+            .iter()
+            .position(|&byte| is_suspicious_scalar_byte(byte))
+            .map(|remainder_offset| byte_offset + remainder_offset)
+    });
+
+    match suspicious_offset {
+        None => None,
+        Some(offset) if bytes[offset].is_ascii() => Some(char::from(bytes[offset])),
+        // All preceding bytes are printable ASCII, so this is the start of a UTF-8 character.
+        Some(offset) => s[offset..]
+            .chars()
+            .find(|&character| !is_printable(character)),
+    }
+}
+
 /// Check whether the character is NOT a YAML whitespace (` ` / `\t`).
 #[inline]
 #[must_use]
@@ -159,6 +227,8 @@ pub fn is_tag_char(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use super::*;
 
     #[test]
@@ -168,6 +238,94 @@ mod tests {
         assert!(is_yaml_non_break('\u{10000}'));
         assert!(!is_yaml_non_break('\u{FEFF}'));
         assert!(!is_yaml_non_break('\n'));
+    }
+
+    #[test]
+    fn optimized_non_printable_search_matches_yaml_boundaries() {
+        let printable = [
+            '\t',
+            '\n',
+            '\r',
+            ' ',
+            '~',
+            '\u{85}',
+            '\u{a0}',
+            '\u{d7ff}',
+            '\u{e000}',
+            '\u{feff}',
+            '\u{fffd}',
+            '\u{10000}',
+            '\u{10ffff}',
+        ];
+        for character in printable {
+            let mut short = String::from("before");
+            short.push(character);
+            short.push_str("after");
+            assert_eq!(find_non_printable(&short), None, "rejected {character:?}");
+
+            let mut long = "x".repeat(80);
+            long.push(character);
+            long.push_str("after");
+            assert_eq!(find_non_printable(&long), None, "rejected {character:?}");
+        }
+
+        let non_printable = [
+            '\0', '\u{1}', '\u{8}', '\u{b}', '\u{c}', '\u{e}', '\u{1f}', '\u{7f}', '\u{80}',
+            '\u{84}', '\u{86}', '\u{9f}', '\u{fffe}', '\u{ffff}',
+        ];
+        for character in non_printable {
+            let mut short = String::from("before");
+            short.push(character);
+            short.push_str("after");
+            assert_eq!(
+                find_non_printable(&short),
+                Some(character),
+                "accepted {character:?}",
+            );
+
+            let mut long = "x".repeat(80);
+            long.push(character);
+            long.push_str("after");
+            assert_eq!(
+                find_non_printable(&long),
+                Some(character),
+                "accepted {character:?}",
+            );
+        }
+
+        let mut multiple = "x".repeat(80);
+        multiple.push('\u{80}');
+        multiple.push('\u{7f}');
+        assert_eq!(find_non_printable(&multiple), Some('\u{80}'));
+    }
+
+    #[test]
+    fn optimized_non_printable_search_matches_reference_across_chunk_boundaries() {
+        let suffixes = [
+            "plain",
+            "\tafter",
+            "\nafter",
+            "\rafter",
+            "éafter",
+            "\u{85}after",
+            "\u{80}after",
+            "\u{7f}after",
+            "é\u{7f}after",
+            "\u{85}\u{9f}after",
+            "\u{10000}\u{ffff}after",
+        ];
+
+        for prefix_len in 56..=80 {
+            for suffix in suffixes {
+                let input = "x".repeat(prefix_len) + suffix;
+                let expected = input.chars().find(|&character| !is_printable(character));
+                assert_eq!(
+                    find_non_printable(&input),
+                    expected,
+                    "mismatch at prefix length {prefix_len} for {suffix:?}",
+                );
+            }
+        }
     }
 
     #[test]

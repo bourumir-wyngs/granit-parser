@@ -19,8 +19,8 @@ use core::char;
 
 use crate::{
     char_traits::{
-        as_hex, is_anchor_char, is_blank_or_breakz, is_bom, is_break, is_breakz, is_flow, is_hex,
-        is_printable, is_tag_char, is_uri_char,
+        as_hex, find_non_printable, is_anchor_char, is_blank_or_breakz, is_bom, is_break,
+        is_breakz, is_flow, is_hex, is_printable, is_tag_char, is_uri_char,
     },
     error::{ErrorKind, ScanError},
     input::{BorrowedInput, SkipTabs},
@@ -2992,7 +2992,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             string.push_str(&trailing_breaks);
         }
 
-        if let Some(character) = string.chars().find(|&character| !is_printable(character)) {
+        if let Some(character) = find_non_printable(&string) {
             return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedCharacter { character },
@@ -3802,10 +3802,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 .as_deref()
                 .expect("owned plain scalar has an output buffer")
         });
-        if let Some(character) = scalar_text
-            .chars()
-            .find(|&character| !is_printable(character))
-        {
+        if let Some(character) = find_non_printable(scalar_text) {
             return Err(ScanError::from_kind(
                 start_mark,
                 ErrorKind::UnexpectedCharacter { character },
