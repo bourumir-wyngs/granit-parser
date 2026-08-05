@@ -1,4 +1,83 @@
-use granit_parser::{BufferedInput, ErrorKind, Event, Input, Marker, Parser, ScanError, StrInput};
+use std::str::Chars;
+
+use granit_parser::{
+    BorrowedInput, BufferedInput, ErrorKind, Event, Input, Marker, Parser, ScanError, StrInput,
+};
+
+/// Models a third-party input whose optimized chunk hook still follows the 1.0.0 contract.
+///
+/// In 1.0.0 the hook may consume non-printable characters, so the scanner must retain a central
+/// validation backstop even when its built-in inputs become more selective.
+struct LegacyChunkInput<'a>(BufferedInput<Chars<'a>>);
+
+impl<'a> LegacyChunkInput<'a> {
+    fn new(source: &'a str) -> Self {
+        Self(BufferedInput::new(source.chars()))
+    }
+}
+
+impl Input for LegacyChunkInput<'_> {
+    fn lookahead(&mut self, count: usize) {
+        self.0.lookahead(count);
+    }
+
+    fn buflen(&self) -> usize {
+        self.0.buflen()
+    }
+
+    fn bufmaxlen(&self) -> usize {
+        self.0.bufmaxlen()
+    }
+
+    fn raw_read_ch(&mut self) -> char {
+        self.0.raw_read_ch()
+    }
+
+    fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
+        self.0.raw_read_non_breakz_ch()
+    }
+
+    fn skip(&mut self) {
+        self.0.skip();
+    }
+
+    fn skip_n(&mut self, count: usize) {
+        self.0.skip_n(count);
+    }
+
+    fn peek(&self) -> char {
+        self.0.peek()
+    }
+
+    fn peek_nth(&self, n: usize) -> char {
+        self.0.peek_nth(n)
+    }
+
+    fn fetch_plain_scalar_chunk(
+        &mut self,
+        out: &mut String,
+        count: usize,
+        flow_level_gt_0: bool,
+    ) -> (bool, usize) {
+        let mut chars_consumed = 0;
+        for _ in 0..count {
+            self.lookahead(1);
+            if self.next_is_blank_or_breakz() || !self.next_can_be_plain_scalar(flow_level_gt_0) {
+                return (true, chars_consumed);
+            }
+            out.push(self.peek());
+            self.skip();
+            chars_consumed += 1;
+        }
+        (false, chars_consumed)
+    }
+}
+
+impl<'a> BorrowedInput<'a> for LegacyChunkInput<'_> {
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'a str> {
+        None
+    }
+}
 
 fn first_str_error(input: &str) -> ScanError {
     Parser::new_from_str(input)
@@ -115,14 +194,18 @@ fn buffered_buflen_matches_str_input_lookahead_window() {
 
 #[test]
 fn non_printable_source_characters_are_rejected_by_both_inputs() {
-    for character in ['\0', '\u{1}'] {
+    let prefix = "x".repeat(80);
+    for character in [
+        '\0', '\u{1}', '\u{1f}', '\u{7f}', '\u{80}', '\u{84}', '\u{86}', '\u{9f}', '\u{fffe}',
+        '\u{ffff}',
+    ] {
         let inputs = [
-            format!("key: before{character}after\n"),
-            format!("'before{character}after'\n"),
-            format!("\"before{character}after\"\n"),
-            format!("key: |\n  before{character}after\n"),
-            format!("key: >\n  before{character}after\n"),
-            format!("# before{character}after\nkey: value\n"),
+            format!("key: {prefix}{character}after\n"),
+            format!("'{prefix}{character}after'\n"),
+            format!("\"{prefix}{character}after\"\n"),
+            format!("key: |\n  {prefix}{character}after\n"),
+            format!("key: >\n  {prefix}{character}after\n"),
+            format!("# {prefix}{character}after\nkey: value\n"),
         ];
 
         for input in &inputs {
@@ -137,6 +220,22 @@ fn non_printable_source_characters_are_rejected_by_both_inputs() {
                 "iterator input accepted {input:?}",
             );
         }
+    }
+}
+
+#[test]
+fn central_validation_defends_legacy_input_chunk_overrides() {
+    let prefix = "x".repeat(80);
+    for character in ['\u{1}', '\u{7f}', '\u{80}', '\u{9f}'] {
+        let input = format!("key: {prefix}{character}after\n");
+        let error = Parser::new(LegacyChunkInput::new(&input))
+            .find_map(Result::err)
+            .expect("input should fail");
+        assert_eq!(
+            error.kind(),
+            &ErrorKind::UnexpectedCharacter { character },
+            "legacy chunk override accepted {character:?}",
+        );
     }
 }
 

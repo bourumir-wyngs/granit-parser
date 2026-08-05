@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+**Fixes**:
+
+- Reduced the cost of validating large plain and block scalar contents by using an ASCII fast path
+  while retaining the scanner-level validation backstop required by custom `Input`
+  implementations.
+
 ## v1.0.0
 
 **Breaking Changes**:
