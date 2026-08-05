@@ -118,7 +118,7 @@ pub(crate) fn is_printable(c: char) -> bool {
     )
 }
 
-const PRINTABLE_ASCII_FAST_PATH_MIN_BYTES: usize = 64;
+const PRINTABLE_ASCII_FAST_PATH_MIN_BYTES: usize = 32;
 const BYTE_LANES_ONES: u64 = 0x0101_0101_0101_0101;
 const BYTE_LANES_HIGH_BITS: u64 = 0x8080_8080_8080_8080;
 const BYTE_LANES_TOP_THREE_BITS: u64 = 0xe0e0_e0e0_e0e0_e0e0;
