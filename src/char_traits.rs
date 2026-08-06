@@ -151,7 +151,8 @@ pub(crate) fn find_non_printable(s: &str) -> Option<char> {
     let mut suspicious_offset = None;
 
     for chunk in &mut chunks {
-        let word = u64::from_ne_bytes(chunk.try_into().expect("chunk length is eight"));
+        // u64 will always be 8 bytes, this unwrap cannot trigger.
+        let word = u64::from_ne_bytes(chunk.try_into().unwrap());
         let may_have_suspicious_byte = word & BYTE_LANES_HIGH_BITS != 0
             || has_zero_byte(word & BYTE_LANES_TOP_THREE_BITS)
             || has_zero_byte(word ^ BYTE_LANES_DEL);
