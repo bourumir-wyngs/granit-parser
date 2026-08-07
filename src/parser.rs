@@ -8,7 +8,7 @@ use crate::{
     error::{ErrorKind, ScanError},
     input::{str::StrInput, BorrowedInput},
     scanner::{Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
-    BufferedInput, FallibleBufferedInput,
+    BufferedInput, FallibleBufferedInput, Options,
 };
 
 use alloc::{
@@ -486,15 +486,13 @@ impl<'input> Event<'input> {
     }
 }
 
-// Preserve span ordering for normal-sized comment groups. Longer runs in syntactically ambiguous
-// positions are rejected before they can grow the parser queue without bound.
-const MAX_BUFFERED_COMMENT_EVENTS: usize = 32;
-
 /// A YAML parser.
 #[derive(Debug)]
 pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The underlying scanner from which we pull tokens.
     scanner: Scanner<'input, T>,
+    /// Maximum number of comments retained while resolving an ambiguous collection entry.
+    max_buffered_comment_events: usize,
     /// The stack of _previous_ states we were in.
     ///
     /// States are pushed in the context of subobjects to this stack. The top-most element is the
@@ -898,8 +896,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Create a parser over a custom input source.
     #[must_use]
     pub fn new(src: T) -> Self {
+        Self::with_options(src, Options::default())
+    }
+
+    /// Create a parser over a custom input source with configurable resource limits.
+    ///
+    /// Use [`crate::options!`] to construct `options` without depending on exhaustive struct
+    /// literal syntax.
+    #[must_use]
+    pub fn with_options(src: T, options: Options) -> Self {
+        let max_buffered_comment_events = options.max_buffered_comment_events;
+
         Parser {
-            scanner: Scanner::new(src),
+            scanner: Scanner::with_options(src, options),
+            max_buffered_comment_events,
             states: Vec::new(),
             state: State::StreamStart,
             token: None,
@@ -1090,7 +1100,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 Ok(_) | Err(_) => return Ok(events),
             }
 
-            if events.len() == MAX_BUFFERED_COMMENT_EVENTS {
+            if events.len() >= self.max_buffered_comment_events {
                 return Err(ScanError::from_kind(
                     self.peek_token()?.0.start,
                     ErrorKind::TooManyComments,

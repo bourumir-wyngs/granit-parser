@@ -56,9 +56,11 @@
 //!
 //! # Limits
 //!
-//! To keep streaming parsing memory bounded, syntactically ambiguous collection-entry positions
-//! that require comment lookahead accept at most 32 consecutive comments before the following node
-//! is resolved. Longer runs return a [`ScanError`] instead of being buffered without bound.
+//! [`Options`] controls limits on buffered comments, simple-key lookahead, and flow-collection
+//! nesting. The defaults allow 32 buffered comment events, 1024 characters of simple-key
+//! lookahead, and 255 nested flow collections. Existing constructors use these defaults;
+//! [`Parser::with_options`] and [`Scanner::with_options`] accept customized options created with
+//! [`options!`].
 //!
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
@@ -97,12 +99,15 @@ mod char_traits;
 mod debug;
 mod error;
 pub mod input;
+mod macros;
+mod options;
 mod parser;
 mod parser_stack;
 mod scanner;
 
 pub use crate::error::{ErrorKind, InputIoError, ScanError};
 pub use crate::input::{str::StrInput, BorrowedInput, BufferedInput, FallibleBufferedInput, Input};
+pub use crate::options::Options;
 pub use crate::parser::{
     Event, EventReceiver, ParseResult, Parser, ParserTrait, SpannedEventReceiver, StructureStyle,
     Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,

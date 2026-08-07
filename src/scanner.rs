@@ -24,10 +24,8 @@ use crate::{
     },
     error::{ErrorKind, ScanError},
     input::{BorrowedInput, SkipTabs},
+    Options,
 };
-
-/// Maximum number of characters the scanner may look ahead while disambiguating a simple key.
-const SIMPLE_KEY_MAX_LOOKAHEAD: usize = 1024;
 
 /// The source style used for a YAML scalar.
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
@@ -711,7 +709,7 @@ enum ImplicitMappingState {
     /// We are inside the implicit mapping.
     ///
     /// Note that this state is not set immediately (we need to have encountered the `:` to know).
-    Inside(u8),
+    Inside(usize),
 }
 
 /// The YAML scanner.
@@ -733,6 +731,8 @@ pub struct Scanner<'input, T> {
     ///
     /// This must implement [`Input`].
     input: T,
+    /// Resource limits used while scanning.
+    options: Options,
     /// The position of the cursor within the reader.
     mark: Marker,
     /// Buffer for tokens to be returned.
@@ -775,8 +775,8 @@ pub struct Scanner<'input, T> {
     indent: isize,
     /// List of all block indentation levels we are in (except the current one).
     indents: smallvec::SmallVec<[Indent; 8]>,
-    /// Level of nesting of flow sequences.
-    flow_level: u8,
+    /// Level of nesting of flow collections.
+    flow_level: usize,
     /// The number of tokens that have been returned from the scanner.
     ///
     /// This excludes the tokens from [`Self::tokens`].
@@ -1105,10 +1105,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Create a scanner over the given input source.
     #[must_use]
     pub fn new(input: T) -> Self {
+        Self::with_options(input, Options::default())
+    }
+
+    /// Create a scanner over the given input source with configurable resource limits.
+    ///
+    /// [`Options::max_buffered_comment_events`] has no effect when using a scanner directly,
+    /// because comment-event buffering is performed by [`crate::Parser`].
+    #[must_use]
+    pub fn with_options(input: T, options: Options) -> Self {
         let initial_byte_offset = input.byte_offset();
         let comments_possible = input.may_contain_comments();
         Scanner {
             input,
+            options,
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             failed: false,
@@ -1636,8 +1646,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let is_line_stale = self.flow_level == 0 && sk.mark.line < self.mark.line;
             // The length cap applies in flow contexts too; otherwise token buffering can grow
             // without bound while the scanner waits to see whether a later ':' resolves the key.
-            let is_length_stale =
-                self.mark.index().saturating_sub(sk.mark.index()) > SIMPLE_KEY_MAX_LOOKAHEAD;
+            let is_length_stale = self.mark.index().saturating_sub(sk.mark.index())
+                > self.options.simple_key_max_lookahead;
 
             if sk.possible && (is_line_stale || is_length_stale) {
                 if sk.required {
@@ -2691,11 +2701,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn increase_flow_level(&mut self) -> ScanResult {
+        if self.flow_level >= self.options.flow_nesting_limit {
+            return Err(self.scan_error(ErrorKind::RecursionLimitExceeded));
+        }
+
         self.simple_keys.push(SimpleKey::new(Marker::new(0, 0, 0)));
-        self.flow_level = self
-            .flow_level
-            .checked_add(1)
-            .ok_or_else(|| self.scan_error(ErrorKind::RecursionLimitExceeded))?;
+        self.flow_level += 1;
         Ok(())
     }
 
@@ -4125,7 +4136,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// This function does not pop the state in [`implicit_flow_mapping_states`].
     ///
     /// [`implicit_flow_mapping_states`]: Self::implicit_flow_mapping_states
-    fn end_implicit_mapping(&mut self, mark: Marker, flow_level: u8) {
+    fn end_implicit_mapping(&mut self, mark: Marker, flow_level: usize) {
         if self
             .implicit_flow_mapping_states
             .last()
@@ -4385,7 +4396,7 @@ mod test {
             "scanner consumed all {total_chars} chars before yielding the first flow scalar"
         );
         assert!(
-            read.get() <= super::SIMPLE_KEY_MAX_LOOKAHEAD + 128,
+            read.get() <= scanner.options.simple_key_max_lookahead + 128,
             "scanner read {} chars before yielding the first flow scalar",
             read.get()
         );

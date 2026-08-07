@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+**API Additions**:
+
+- Added the non-exhaustive `Options` type and `options!` macro for configuring buffered-comment,
+  simple-key-lookahead, and flow-nesting limits through `Parser::with_options` and
+  `Scanner::with_options`. Existing constructors retain their previous defaults.
+
 **Fixes**:
 
 - Reduced the cost of validating large plain and block scalar contents by using an ASCII fast path
