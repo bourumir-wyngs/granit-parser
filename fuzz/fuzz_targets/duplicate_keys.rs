@@ -7,6 +7,7 @@ use granit_parser::Parser;
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_LEN: usize = 8 * 1024;
+const MAX_SIMPLE_KEY_BYTES: usize = 384;
 
 fn quoted_scalar(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
@@ -22,6 +23,9 @@ fn quoted_scalar(value: &str) -> String {
             '\x0c' => quoted.push_str("\\f"),
             '\r' => quoted.push_str("\\r"),
             '\x1b' => quoted.push_str("\\e"),
+            '\u{85}' => quoted.push_str("\\N"),
+            '\u{2028}' => quoted.push_str("\\L"),
+            '\u{2029}' => quoted.push_str("\\P"),
             '"' => quoted.push_str("\\\""),
             '\\' => quoted.push_str("\\\\"),
             '\u{feff}' | '\u{fffe}' | '\u{ffff}' => quoted.push('_'),
@@ -47,6 +51,14 @@ fn assert_duplicate_scalar_key_is_preserved(input: &str) {
     assert_eq!(scalars[0], scalars[2]);
 }
 
+fn simple_key_payload(value: &str) -> &str {
+    let mut end = value.len().min(MAX_SIMPLE_KEY_BYTES);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 // The parser is event-based and intentionally preserves duplicate mapping keys.
 // Select one construction per iteration: valid escaped keys exercise successful
 // block/flow parsing, while raw cases retain malformed and nested syntax coverage.
@@ -65,14 +77,16 @@ fuzz_target!(|data: &[u8]| {
 
     let yaml = match selector % 5 {
         0 => {
-            let key = quoted_scalar(payload);
-            let yaml = format!("{key}: first\n{key}: second\n");
+            let key = quoted_scalar(simple_key_payload(payload));
+            let value = quoted_scalar(payload);
+            let yaml = format!("{key}: {value}\n{key}: {value}\n");
             assert_duplicate_scalar_key_is_preserved(&yaml);
             yaml
         }
         1 => {
-            let key = quoted_scalar(payload);
-            let yaml = format!("{{{key}: first, {key}: second}}\n");
+            let key = quoted_scalar(simple_key_payload(payload));
+            let value = quoted_scalar(payload);
+            let yaml = format!("{{{key}: {value}, {key}: {value}}}\n");
             assert_duplicate_scalar_key_is_preserved(&yaml);
             yaml
         }

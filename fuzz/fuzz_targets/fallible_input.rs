@@ -124,9 +124,12 @@ fn quoted_document(payload: &str) -> String {
             '\n' => yaml.push_str("\\n"),
             '\r' => yaml.push_str("\\r"),
             '\t' => yaml.push_str("\\t"),
+            '\u{85}' => yaml.push_str("\\N"),
+            '\u{2028}' => yaml.push_str("\\L"),
+            '\u{2029}' => yaml.push_str("\\P"),
             '\u{20}'..='\u{7e}'
-            | '\u{85}'
-            | '\u{a0}'..='\u{d7ff}'
+            | '\u{a0}'..='\u{2027}'
+            | '\u{202a}'..='\u{d7ff}'
             | '\u{e000}'..='\u{fffd}'
             | '\u{10000}'..='\u{10ffff}' => yaml.push(character),
             _ => yaml.push('\u{fffd}'),
