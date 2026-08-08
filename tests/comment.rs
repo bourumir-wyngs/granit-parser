@@ -1,8 +1,8 @@
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
-    BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Parser, Placement,
-    ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
+    BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Options, Parser,
+    Placement, ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
 };
 
 fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
@@ -914,7 +914,8 @@ fn empty_flow_mapping_value_after_comment_preserves_span_order() {
 
 #[test]
 fn max_buffered_empty_node_comment_runs_preserve_span_order() {
-    let trailing_comments = long_comment_run(1, 31);
+    let default_limit = Options::default().max_buffered_comment_events;
+    let trailing_comments = long_comment_run(1, default_limit - 1);
     let cases = [
         format!("key: # c0\n{trailing_comments}next: value\n"),
         format!("- # c0\n{trailing_comments}- value\n"),
@@ -966,7 +967,8 @@ fn explicit_key_comment_run_does_not_hide_tab_indentation_error() {
 
 #[test]
 fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
-    let trailing_comments = long_comment_run(1, 128);
+    let default_limit = Options::default().max_buffered_comment_events;
+    let trailing_comments = long_comment_run(1, default_limit * 4);
     let cases = [
         (
             "block mapping value",

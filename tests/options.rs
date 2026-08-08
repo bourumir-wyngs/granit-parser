@@ -13,7 +13,7 @@ fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
     assert!(defaults.emit_comments);
-    assert_eq!(defaults.max_buffered_comment_events, 32);
+    assert_eq!(defaults.max_buffered_comment_events, 96);
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
     assert_eq!(defaults.flow_nesting_limit, 255);
     assert_eq!(granit_parser::options! {}, defaults);
@@ -79,8 +79,10 @@ fn common_input_constructors_accept_options() {
 
 #[test]
 fn buffered_comment_limit_can_be_raised() {
+    let default_limit = Options::default().max_buffered_comment_events;
+    let raised_limit = default_limit + 1;
     let mut yaml = String::from("key: # c0\n");
-    for index in 1..33 {
+    for index in 1..=default_limit {
         yaml.push_str("# c");
         yaml.push_str(&index.to_string());
         yaml.push('\n');
@@ -89,22 +91,22 @@ fn buffered_comment_limit_can_be_raised() {
 
     let error = Parser::new(StrInput::new(&yaml))
         .find_map(Result::err)
-        .expect("default options should reject comment 33");
+        .expect("default options should reject the comment above their limit");
     assert_eq!(error.kind(), &ErrorKind::TooManyComments);
 
     let options = granit_parser::options! {
-        max_buffered_comment_events: 33,
+        max_buffered_comment_events: raised_limit,
     };
     let events = Parser::with_options(StrInput::new(&yaml), options)
         .collect::<Result<Vec<_>, _>>()
-        .expect("custom options should accept 33 buffered comments");
+        .expect("custom options should accept the raised buffered-comment limit");
 
     assert_eq!(
         events
             .iter()
             .filter(|(event, _)| matches!(event, Event::Comment(..)))
             .count(),
-        33
+        raised_limit
     );
 }
 
