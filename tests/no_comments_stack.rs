@@ -36,6 +36,32 @@ fn assert_has_no_comments(events: &[(Event<'_>, Span)]) {
     );
 }
 
+const CHILD_WITH_TRAILING_COMMENT: &str = "child\n... # trailing\n";
+
+fn stack_with_parent() -> Stack {
+    let mut stack = Stack::with_options(no_comment_options());
+    stack.push_str_parser(Parser::new_from_str("parent\n"), "parent".to_owned());
+    stack
+}
+
+fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
+    let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
+    assert_has_no_comments(&events);
+
+    for expected in ["child", "parent"] {
+        assert!(events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == expected)));
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|(event, _)| matches!(event, Event::StreamEnd))
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn default_stack_preserves_replayed_comments() {
     let mut stack = Stack::new();
@@ -128,12 +154,49 @@ fn no_comments_options_reach_owned_includes() {
 }
 
 #[test]
+fn suppressed_string_comment_after_nested_document_end_is_not_a_second_document() {
+    let mut stack = stack_with_parent();
+    stack.push_str_parser(
+        Parser::new_from_str(CHILD_WITH_TRAILING_COMMENT),
+        "string child".to_owned(),
+    );
+
+    assert_nested_trailing_comment_is_suppressed(stack);
+}
+
+#[test]
+fn suppressed_iterator_comment_after_nested_document_end_is_not_a_second_document() {
+    let mut stack = stack_with_parent();
+    let child = CHILD_WITH_TRAILING_COMMENT
+        .chars()
+        .collect::<Vec<_>>()
+        .into_iter();
+    stack.push_iter_parser(Parser::new_from_iter(child), "iterator child".to_owned());
+
+    assert_nested_trailing_comment_is_suppressed(stack);
+}
+
+#[test]
+fn suppressed_custom_comment_after_nested_document_end_is_not_a_second_document() {
+    let mut stack = stack_with_parent();
+    stack.push_custom_parser(
+        Parser::new_from_str(CHILD_WITH_TRAILING_COMMENT),
+        "custom child".to_owned(),
+    );
+
+    assert_nested_trailing_comment_is_suppressed(stack);
+}
+
+#[test]
 fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document() {
-    let mut stack = Stack::with_options(no_comment_options());
-    stack.push_str_parser(Parser::new_from_str("parent: value\n"), "parent".to_owned());
+    let mut stack = stack_with_parent();
     stack.push_replay_parser(
         ReplayParser::new(
             vec![
+                (
+                    Event::Scalar(Cow::Borrowed("child"), ScalarStyle::Plain, 0, None),
+                    span(),
+                ),
                 (Event::DocumentEnd, span()),
                 (
                     Event::Comment(Cow::Borrowed(" trailing"), Placement::Last),
@@ -143,12 +206,8 @@ fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document(
             ],
             1,
         ),
-        "child".to_owned(),
+        "replay child".to_owned(),
     );
 
-    let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
-    assert_has_no_comments(&events);
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "parent")));
+    assert_nested_trailing_comment_is_suppressed(stack);
 }
