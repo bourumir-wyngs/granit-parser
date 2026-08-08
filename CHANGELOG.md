@@ -11,6 +11,9 @@
   without capturing their text or emitting comment tokens/events, bypassing comment-event
   buffering. `ParserStack::with_options` propagates this behavior to included sources and filters
   replayed comment events.
+- Added `Parser::new_from_str_with_options`, `Parser::new_from_iter_with_options`, and
+  `Parser::new_from_fallible_iter_with_options` for configuring common input sources without
+  constructing input adapters directly.
 
 **Fixes**:
 

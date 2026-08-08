@@ -848,8 +848,14 @@ impl<'input> Parser<'input, StrInput<'input>> {
     /// Create a parser over a borrowed string slice.
     #[must_use]
     pub fn new_from_str(value: &'input str) -> Self {
-        debug_print!("\x1B[;31m>>>>>>>>>> New parser from str\x1B[;0m");
-        Parser::new(StrInput::new(value))
+        Self::new_from_str_with_options(value, Options::default())
+    }
+
+    /// Create a parser over a borrowed string slice with configurable behavior and resource
+    /// limits.
+    #[must_use]
+    pub fn new_from_str_with_options(value: &'input str, options: Options) -> Self {
+        Parser::with_options(StrInput::new(value), options)
     }
 }
 
@@ -860,8 +866,14 @@ where
     /// Create a parser over an iterator of characters.
     #[must_use]
     pub fn new_from_iter(iter: T) -> Self {
-        debug_print!("\x1B[;31m>>>>>>>>>> New parser from iter\x1B[;0m");
-        Parser::new(BufferedInput::new(iter))
+        Self::new_from_iter_with_options(iter, Options::default())
+    }
+
+    /// Create a parser over an iterator of characters with configurable behavior and resource
+    /// limits.
+    #[must_use]
+    pub fn new_from_iter_with_options(iter: T, options: Options) -> Self {
+        Parser::with_options(BufferedInput::new(iter), options)
     }
 }
 
@@ -876,8 +888,18 @@ where
     /// [`ErrorKind`]. The iterator is not polled again after its first error.
     #[must_use]
     pub fn new_from_fallible_iter(iter: T) -> Self {
-        debug_print!("\x1B[;31m>>>>>>>>>> New parser from fallible iter\x1B[;0m");
-        Parser::new(FallibleBufferedInput::new(iter))
+        Self::new_from_fallible_iter_with_options(iter, Options::default())
+    }
+
+    /// Create a parser over a fallible iterator of characters with configurable behavior and
+    /// resource limits.
+    ///
+    /// The iterator's `None` return value means clean end-of-input. An `Err` item reports a
+    /// terminal source failure and is returned by the parser as a [`ScanError`] carrying the same
+    /// [`ErrorKind`]. The iterator is not polled again after its first error.
+    #[must_use]
+    pub fn new_from_fallible_iter_with_options(iter: T, options: Options) -> Self {
+        Parser::with_options(FallibleBufferedInput::new(iter), options)
     }
 }
 

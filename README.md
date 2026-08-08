@@ -47,11 +47,11 @@ recognized and validated as YAML syntax, but `Scanner` produces no comment token
 produces no comment events:
 
 ```rust
-use granit_parser::{options, Parser, StrInput};
+use granit_parser::{options, Parser};
 
 let yaml = "key: value # ignored\n";
-let parser = Parser::with_options(
-    StrInput::new(yaml),
+let parser = Parser::new_from_str_with_options(
+    yaml,
     options! { emit_comments: false },
 );
 ```

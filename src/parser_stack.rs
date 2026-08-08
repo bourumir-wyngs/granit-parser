@@ -261,7 +261,7 @@ where
 
         let (events, next_anchor_offset) = match content {
             Cow::Borrowed(content) => {
-                let mut parser = Parser::with_options(StrInput::new(content), self.options.clone());
+                let mut parser = Parser::new_from_str_with_options(content, self.options.clone());
                 if let Some(anchor_offset) = inherited_anchor_offset {
                     parser.set_anchor_offset(anchor_offset);
                 }
@@ -277,8 +277,8 @@ where
                 (events, parser.anchor_offset())
             }
             Cow::Owned(content) => {
-                let input = BufferedInput::new(content.chars().collect::<Vec<_>>().into_iter());
-                let mut parser = Parser::with_options(input, self.options.clone());
+                let mut parser =
+                    Parser::new_from_iter_with_options(content.chars(), self.options.clone());
                 if let Some(anchor_offset) = inherited_anchor_offset {
                     parser.set_anchor_offset(anchor_offset);
                 }

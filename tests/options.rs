@@ -1,5 +1,14 @@
 use granit_parser::{ErrorKind, Event, Options, Parser, StrInput};
 
+fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
+    assert!(events
+        .iter()
+        .all(|(event, _)| !matches!(event, Event::Comment(..))));
+    assert!(events
+        .iter()
+        .any(|(event, _)| { matches!(event, Event::Scalar(value, ..) if value == "value") }));
+}
+
 #[test]
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
@@ -42,6 +51,30 @@ fn new_uses_default_options() {
         Parser::with_options(StrInput::new(yaml), Options::default()).collect();
 
     assert_eq!(from_new, from_options);
+}
+
+#[test]
+fn common_input_constructors_accept_options() {
+    let yaml = String::from("# ignored\nvalue\n");
+    let options = granit_parser::options! {
+        emit_comments: false,
+    };
+
+    let string_events = Parser::new_from_str_with_options(&yaml, options.clone())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("string constructor should parse with custom options");
+    assert_comment_free_value(&string_events);
+
+    let iterator_events = Parser::new_from_iter_with_options(yaml.chars(), options.clone())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("iterator constructor should parse with custom options");
+    assert_comment_free_value(&iterator_events);
+
+    let fallible_events =
+        Parser::new_from_fallible_iter_with_options(yaml.chars().map(Ok), options)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fallible iterator constructor should parse with custom options");
+    assert_comment_free_value(&fallible_events);
 }
 
 #[test]
