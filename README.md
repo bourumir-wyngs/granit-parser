@@ -42,6 +42,20 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 Comments are emitted as [`Event::Comment(text, placement)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
 
+Applications that do not use comments can disable their capture and emission. Comments are still
+recognized and validated as YAML syntax, but `Scanner` produces no comment tokens and `Parser`
+produces no comment events:
+
+```rust
+use granit_parser::{options, Parser};
+
+let yaml = "key: value # ignored\n";
+let parser = Parser::new_from_str_with_options(
+    yaml,
+    options! { emit_comments: false },
+);
+```
+
 Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
 ```rust

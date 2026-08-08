@@ -10,10 +10,12 @@
 /// ```rust
 /// let options = granit_parser::options! {
 ///     max_buffered_comment_events: 64,
+///     emit_comments: false,
 ///     simple_key_max_lookahead: 2048,
 /// };
 ///
 /// assert_eq!(options.max_buffered_comment_events, 64);
+/// assert!(!options.emit_comments);
 /// assert_eq!(options.simple_key_max_lookahead, 2048);
 /// assert_eq!(options.flow_nesting_limit, 255);
 /// ```

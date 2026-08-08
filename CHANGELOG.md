@@ -7,6 +7,13 @@
 - Added the non-exhaustive `Options` type and `options!` macro for configuring buffered-comment,
   simple-key-lookahead, and flow-nesting limits through `Parser::with_options` and
   `Scanner::with_options`. Existing constructors retain their previous defaults.
+- Added `Options::emit_comments`. Disabling it makes scanners recognize and validate comments
+  without capturing their text or emitting comment tokens/events, bypassing comment-event
+  buffering. `ParserStack::with_options` propagates this behavior to included sources and filters
+  replayed comment events.
+- Added `Parser::new_from_str_with_options`, `Parser::new_from_iter_with_options`, and
+  `Parser::new_from_fallible_iter_with_options` for configuring common input sources without
+  constructing input adapters directly.
 
 **Fixes**:
 

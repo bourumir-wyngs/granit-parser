@@ -1,4 +1,4 @@
-/// Limits controlling parser and scanner resource usage.
+/// Options controlling parser and scanner behavior and resource usage.
 ///
 /// Construct this type with [`crate::options!`] so that code remains compatible when new options
 /// are added in future releases.
@@ -8,15 +8,24 @@
 /// ```rust
 /// let options = granit_parser::options! {
 ///     max_buffered_comment_events: 64,
+///     emit_comments: false,
 ///     flow_nesting_limit: 512,
 /// };
 ///
 /// assert_eq!(options.max_buffered_comment_events, 64);
+/// assert!(!options.emit_comments);
 /// assert_eq!(options.flow_nesting_limit, 512);
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
+    /// Whether scanners emit comment tokens and parsers emit comment events.
+    ///
+    /// The default is `true`. When this is `false`, comments are still recognized and validated
+    /// as YAML syntax, but their text is not captured and no comment tokens or events are emitted.
+    /// Comment bytes are still consumed, so this is not an input-size or processing-time limit.
+    /// [`Self::max_buffered_comment_events`] has no effect while comment emission is disabled.
+    pub emit_comments: bool,
     /// Maximum number of consecutive comment events buffered while resolving an ambiguous
     /// collection entry.
     ///
@@ -37,6 +46,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            emit_comments: true,
             max_buffered_comment_events: 32,
             simple_key_max_lookahead: 1024,
             flow_nesting_limit: 255,

@@ -3,6 +3,7 @@ use crate::{
     input::{str::StrInput, BorrowedInput, BufferedInput},
     parser::{Event, ParseResult, Parser, ParserTrait, SpannedEventReceiver},
     scanner::Span,
+    Options,
 };
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
@@ -158,16 +159,18 @@ where
 ///
 /// That is exactly what we want for `!include`-style subtree injection.
 ///
-/// Included parser events, including [`Event::Comment`] events, are replayed through the same
-/// event stream as parent events. Their [`Span`] values remain local to the included source, just
-/// like every other event span from an included parser. `ParserStack` does not attach file names,
-/// source IDs, or other include provenance to events or spans. Errors do retain the nested source
-/// names through [`ScanError::source_stack`].
+/// By default, included parser events, including [`Event::Comment`] events, are replayed through
+/// the same event stream as parent events. Comment events are suppressed when comment emission is
+/// disabled through [`ParserStack::with_options`]. Included [`Span`] values remain local to the
+/// included source, just like every other event span from an included parser. `ParserStack` does
+/// not attach file names, source IDs, or other include provenance to events or spans. Errors do
+/// retain the nested source names through [`ScanError::source_stack`].
 pub struct ParserStack<'input, I = core::iter::Empty<char>, T = StrInput<'input>>
 where
     I: Iterator<Item = char>,
     T: BorrowedInput<'input>,
 {
+    options: Options,
     parsers: Vec<AnyParser<'input, I, T>>,
     current: Option<(Event<'input>, Span)>,
     current_error: Option<ScanError>,
@@ -184,7 +187,20 @@ where
     /// Creates a new, empty parser stack.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_options(Options::default())
+    }
+
+    /// Creates a new, empty parser stack with the supplied parsing options.
+    ///
+    /// Options are applied to sources parsed internally by [`Self::push_include`]. When comment
+    /// emission is disabled, the stack also suppresses comment events from parsers and replay
+    /// streams supplied by the caller. Caller-supplied parsers retain their own scanning options;
+    /// construct them with comment emission disabled as well to avoid capturing comments before
+    /// the stack filters their events.
+    #[must_use]
+    pub fn with_options(options: Options) -> Self {
         Self {
+            options,
             parsers: Vec::new(),
             current: None,
             current_error: None,
@@ -217,9 +233,9 @@ where
 
     /// Resolve an include by name and push the resulting parser onto the stack.
     ///
-    /// Comment events from the included content are preserved. Their spans are local to the
-    /// included content returned by the resolver, matching the existing behavior for all included
-    /// document events.
+    /// Comment events from the included content follow the setting passed to
+    /// [`Self::with_options`]. Their spans are local to the included content returned by the
+    /// resolver, matching the existing behavior for all included document events.
     ///
     /// # Errors
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
@@ -245,7 +261,7 @@ where
 
         let (events, next_anchor_offset) = match content {
             Cow::Borrowed(content) => {
-                let mut parser = Parser::new_from_str(content);
+                let mut parser = Parser::new_from_str_with_options(content, self.options.clone());
                 if let Some(anchor_offset) = inherited_anchor_offset {
                     parser.set_anchor_offset(anchor_offset);
                 }
@@ -262,7 +278,7 @@ where
             }
             Cow::Owned(content) => {
                 let mut parser =
-                    Parser::new_from_iter(content.chars().collect::<Vec<_>>().into_iter());
+                    Parser::new_from_iter_with_options(content.chars(), self.options.clone());
                 if let Some(anchor_offset) = inherited_anchor_offset {
                     parser.set_anchor_offset(anchor_offset);
                 }
@@ -367,7 +383,11 @@ where
             parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::Custom { parser, name });
-        self.current = Some(current);
+        self.current = if self.options.emit_comments || !matches!(current.0, Event::Comment(..)) {
+            Some(current)
+        } else {
+            None
+        };
     }
 
     /// Return the anchor offset that a newly pushed parser should inherit.
@@ -460,11 +480,37 @@ where
                     }
 
                     // Continue the parent parser if it has more documents.
-                    let peek_res = match self.parsers.last_mut().unwrap() {
-                        AnyParser::String { parser, .. } => parser.peek(),
-                        AnyParser::Iter { parser, .. } => parser.peek(),
-                        AnyParser::Custom { parser, .. } => parser.peek(),
-                        AnyParser::Replay { parser, .. } => parser.peek(),
+                    let peek_res = loop {
+                        // The root-parser case returned above, and this loop never mutates the
+                        // outer parser stack, so a nested parser must remain available here.
+                        let parser = self.parsers.last_mut().unwrap();
+                        let peek = match parser {
+                            AnyParser::String { parser, .. } => parser.peek(),
+                            AnyParser::Iter { parser, .. } => parser.peek(),
+                            AnyParser::Custom { parser, .. } => parser.peek(),
+                            AnyParser::Replay { parser, .. } => parser.peek(),
+                        };
+
+                        if self.options.emit_comments
+                            || !matches!(peek, Some(Ok((Event::Comment(..), _))))
+                        {
+                            break peek;
+                        }
+
+                        match parser {
+                            AnyParser::String { parser, .. } => {
+                                let _ = parser.next_event();
+                            }
+                            AnyParser::Iter { parser, .. } => {
+                                let _ = parser.next_event();
+                            }
+                            AnyParser::Custom { parser, .. } => {
+                                let _ = parser.next_event();
+                            }
+                            AnyParser::Replay { parser, .. } => {
+                                let _ = parser.next_event();
+                            }
+                        }
                     };
 
                     match peek_res {
@@ -487,6 +533,9 @@ where
                     }
                 }
                 Some(Ok(event)) => {
+                    if !self.options.emit_comments && matches!(event.0, Event::Comment(..)) {
+                        continue;
+                    }
                     if self.parsers.len() > 1
                         && matches!(event.0, Event::StreamStart | Event::DocumentStart(..))
                     {
