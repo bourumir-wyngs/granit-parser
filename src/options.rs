@@ -29,7 +29,7 @@ pub struct Options {
     /// Maximum number of consecutive comment events buffered while resolving an ambiguous
     /// collection entry.
     ///
-    /// The default is 32. A value of zero rejects the first comment that would need buffering.
+    /// The default is 96. A value of zero rejects the first comment that would need buffering.
     pub max_buffered_comment_events: usize,
     /// Maximum number of characters inspected while resolving a simple key.
     ///
@@ -47,7 +47,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             emit_comments: true,
-            max_buffered_comment_events: 32,
+            max_buffered_comment_events: 96,
             simple_key_max_lookahead: 1024,
             flow_nesting_limit: 255,
         }

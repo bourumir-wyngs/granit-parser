@@ -59,7 +59,7 @@
 //! [`Options`] controls comment emission and limits on buffered comments, simple-key lookahead,
 //! and flow-collection nesting. Comment tokens and events are emitted by default; setting
 //! [`Options::emit_comments`] to `false` recognizes and validates comments without capturing their
-//! text or emitting them. The defaults allow 32 buffered comment events, 1024 characters of
+//! text or emitting them. The defaults allow 96 buffered comment events, 1024 characters of
 //! simple-key lookahead, and 255 nested flow collections. Existing constructors use these
 //! defaults. [`Parser::new_from_str_with_options`], [`Parser::new_from_iter_with_options`],
 //! [`Parser::new_from_fallible_iter_with_options`], [`Parser::with_options`],
