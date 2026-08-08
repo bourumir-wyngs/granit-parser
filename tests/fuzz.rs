@@ -1,5 +1,5 @@
 use core::str;
-use granit_parser::{Event, Parser, ScanError};
+use granit_parser::{ErrorKind, Event, Parser, ScanError};
 
 /// Run the parser through the string.
 ///
@@ -92,4 +92,13 @@ fn fuzz_3() {
     let raw_input: &[u8] = &[124, 13, 32, 210, 180, 65];
     let s = str::from_utf8(raw_input).unwrap();
     let _ = run_parser(s);
+}
+
+#[test]
+fn fuzz_4() {
+    // A streaming input must probe for comments after the indentless `-`, while `StrInput` can
+    // prove that this source contains no comments. The probe used to surface the later scanner
+    // error before emitting `SequenceStart`, making invalid-input event prefixes backend-dependent.
+    let error = run_parser("a:\n-\nb").unwrap_err();
+    assert_eq!(error.kind(), &ErrorKind::SimpleKeyExpected);
 }
