@@ -3,17 +3,20 @@ use granit_parser::{ErrorKind, Event, Options, Parser, StrInput};
 #[test]
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
+    assert!(defaults.emit_comments);
     assert_eq!(defaults.max_buffered_comment_events, 32);
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
     assert_eq!(defaults.flow_nesting_limit, 255);
     assert_eq!(granit_parser::options! {}, defaults);
 
     let options = granit_parser::options! {
+        emit_comments: false,
         max_buffered_comment_events: 7,
         simple_key_max_lookahead: 11,
         flow_nesting_limit: 13,
     };
 
+    assert!(!options.emit_comments);
     assert_eq!(options.max_buffered_comment_events, 7);
     assert_eq!(options.simple_key_max_lookahead, 11);
     assert_eq!(options.flow_nesting_limit, 13);

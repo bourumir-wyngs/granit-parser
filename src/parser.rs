@@ -899,7 +899,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Self::with_options(src, Options::default())
     }
 
-    /// Create a parser over a custom input source with configurable resource limits.
+    /// Create a parser over a custom input source with configurable behavior and resource limits.
     ///
     /// Use [`crate::options!`] to construct `options` without depending on exhaustive struct
     /// literal syntax.

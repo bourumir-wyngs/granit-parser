@@ -747,6 +747,10 @@ pub struct Scanner<'input, T> {
     /// Error found after one or more already-scanned comment tokens.
     deferred_error: Option<ScanError>,
     /// Whether the input may contain `#` comment indicators.
+    ///
+    /// This remains a source-content hint when comment emission is disabled. In that mode it is
+    /// conservatively set to `true`, because the `false` fast path may only be used when the
+    /// source is known not to contain comments.
     comments_possible: bool,
 
     /// Whether we have already emitted the `StreamStart` token.
@@ -849,6 +853,16 @@ impl<'input, T: BorrowedInput<'input>> core::iter::FusedIterator for Scanner<'in
 
 /// A convenience alias for scanner functions that may fail without returning a value.
 type ScanResult = Result<(), ScanError>;
+
+/// Result of skipping inter-token whitespace and comments.
+///
+/// These facts are intentionally distinct: an ignored comment still changes some scanner
+/// decisions even though it did not produce a token that can be returned to the caller.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SkipToNextTokenOutcome {
+    saw_comment: bool,
+    queued_comment: bool,
+}
 
 #[derive(Debug)]
 enum FlowScalarBuf {
@@ -1108,14 +1122,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Self::with_options(input, Options::default())
     }
 
-    /// Create a scanner over the given input source with configurable resource limits.
+    /// Create a scanner over the given input source with configurable resource limits and comment
+    /// emission behavior.
     ///
     /// [`Options::max_buffered_comment_events`] has no effect when using a scanner directly,
     /// because comment-event buffering is performed by [`crate::Parser`].
     #[must_use]
     pub fn with_options(input: T, options: Options) -> Self {
         let initial_byte_offset = input.byte_offset();
-        let comments_possible = input.may_contain_comments();
+        // Avoid the full-string `may_contain_comments` pre-scan when comments will not be emitted.
+        // `true` also keeps comment validation on the scanner's comment-aware path.
+        let comments_possible = !options.emit_comments || input.may_contain_comments();
         Scanner {
             input,
             options,
@@ -1323,6 +1340,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(())
     }
 
+    /// Consume the comment at the current position and return whether it was queued as a token.
+    fn consume_comment(&mut self) -> Result<bool, ScanError> {
+        if self.options.emit_comments {
+            self.push_comment_token()?;
+            Ok(true)
+        } else {
+            self.skip_comment()?;
+            Ok(false)
+        }
+    }
+
     fn skip_comment(&mut self) -> ScanResult {
         debug_assert_eq!(self.input.peek(), '#');
 
@@ -1358,7 +1386,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Return whether this scanner may emit comment tokens.
     #[inline]
     pub(crate) fn comments_possible(&self) -> bool {
-        self.comments_possible
+        self.options.emit_comments && self.comments_possible
     }
 
     // Read and consume a line break (either `\r`, `\n` or `\r\n`).
@@ -1440,7 +1468,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.fetch_stream_start();
             return Ok(());
         }
-        if self.skip_to_next_token(true)? {
+        if self.skip_to_next_token(true)?.queued_comment {
             return Ok(());
         }
 
@@ -1661,14 +1689,18 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Skip over whitespace (`\t`, ` `, `\n`, `\r`) until the next non-comment token.
     ///
-    /// Comments encountered while skipping are queued as [`TokenType::Comment`] tokens so the
-    /// parser can emit them as presentation events. If `stop_after_comment` is true, the function
-    /// returns after queuing one comment so callers can emit it before scanning later comments.
+    /// When comment emission is enabled, encountered comments are queued as
+    /// [`TokenType::Comment`] tokens so the parser can emit them as presentation events. If
+    /// `stop_after_comment` is true, the function returns after queuing one comment so callers can
+    /// emit it before scanning later comments. Otherwise comments are consumed without capture.
     ///
     /// # Errors
     /// This function returns an error if a tab is encountered where there should not be
     /// one.
-    fn skip_to_next_token(&mut self, stop_after_comment: bool) -> Result<bool, ScanError> {
+    fn skip_to_next_token(
+        &mut self,
+        stop_after_comment: bool,
+    ) -> Result<SkipToNextTokenOutcome, ScanError> {
         // Hot-path helper: consume a single logical line break and apply simple-key rules.
         // (Kept local to ensure the compiler can inline it easily.)
         let consume_linebreak = |this: &mut Self| {
@@ -1679,6 +1711,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         };
 
+        let mut outcome = SkipToNextTokenOutcome::default();
         loop {
             let ch = self.input.look_ch();
             if self.explicit_key_tab_check_pending {
@@ -1728,14 +1761,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 }
 
                 '#' => {
-                    self.push_comment_token()?;
+                    outcome.saw_comment = true;
+                    let queued = self.consume_comment()?;
+                    outcome.queued_comment |= queued;
 
                     // Micro-opt: comment-only lines are common; consume the following line break here.
                     if matches!(self.input.look_ch(), '\n' | '\r') {
                         consume_linebreak(self);
                     }
-                    if stop_after_comment {
-                        return Ok(true);
+                    if stop_after_comment && queued {
+                        return Ok(outcome);
                     }
                 }
 
@@ -1773,13 +1808,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        Ok(false)
+        Ok(outcome)
     }
 
     /// Skip over YAML whitespace (` `, `\n`, `\r`).
     ///
-    /// If `stop_after_comment` is true, the function returns after queuing one comment so callers
-    /// can emit it before scanning later comments.
+    /// If comment emission and `stop_after_comment` are both enabled, the function returns after
+    /// queuing one comment so callers can emit it before scanning later comments. Disabled
+    /// comments are consumed without capture.
     ///
     /// # Errors
     /// This function returns an error if no whitespace was found.
@@ -1804,8 +1840,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     if need_whitespace {
                         self.skip_comment()?;
                     } else {
-                        self.push_comment_token()?;
-                        if stop_after_comment {
+                        let queued = self.consume_comment()?;
+                        if stop_after_comment && queued {
                             return Ok(true);
                         }
                     }
@@ -1850,7 +1886,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return Err(self.scan_error(ErrorKind::CommentNotSeparated));
         }
 
-        self.push_comment_token()?;
+        self.consume_comment()?;
         Ok(whitespace)
     }
 
@@ -3156,7 +3192,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // From spec: To ensure JSON compatibility, if a key inside a flow mapping is JSON-like,
         // YAML allows the following value to be specified adjacent to the “:”.
-        if self.skip_to_next_token(true)? {
+        if self.skip_to_next_token(true)?.saw_comment {
             self.adjacent_value_allowed_at = usize::MAX;
         } else {
             self.adjacent_value_allowed_at = self.mark.index();
@@ -4547,6 +4583,23 @@ mod test {
     }
 
     #[test]
+    fn disabled_comments_do_not_require_input_slicing() {
+        let options = crate::options! { emit_comments: false };
+        let scanner = Scanner::with_options(
+            SlicingOnlyInput::new("# ignored\nkey: value\n", false),
+            options,
+        );
+
+        let tokens = scanner
+            .collect::<Result<Vec<_>, _>>()
+            .expect("ignored comments should not capture their payload");
+
+        assert!(tokens
+            .iter()
+            .all(|token| !matches!(token.1, TokenType::Comment(_))));
+    }
+
+    #[test]
     fn queued_token_roundtrips_public_token_variants() {
         let span = Span::new(Marker::new(0, 1, 0), Marker::new(7, 1, 7));
         let tokens = [
@@ -4632,7 +4685,7 @@ mod test {
     fn token_skip_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\n"));
 
-        assert!(scanner.skip_to_next_token(true).unwrap());
+        assert!(scanner.skip_to_next_token(true).unwrap().queued_comment);
 
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
@@ -4695,6 +4748,21 @@ mod test {
             token,
             QueuedTokenType::Comment(comment) if comment.text == " quoted"
         )));
+    }
+
+    #[test]
+    fn ignored_flow_scalar_comment_still_disables_adjacent_value_lookahead() {
+        let options = crate::options! { emit_comments: false };
+        let mut scanner =
+            Scanner::with_options(StrInput::new("\"key\"\n# ignored\n: value\n"), options);
+
+        scanner.fetch_flow_scalar(false).unwrap();
+
+        assert_eq!(scanner.adjacent_value_allowed_at, usize::MAX);
+        assert!(scanner
+            .tokens
+            .iter()
+            .all(|QueuedToken(_, token)| { !matches!(token, QueuedTokenType::Comment(_)) }));
     }
 
     #[test]
