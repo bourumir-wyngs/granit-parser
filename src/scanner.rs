@@ -1468,8 +1468,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.fetch_stream_start();
             return Ok(());
         }
-        if self.skip_to_next_token(true)?.queued_comment {
-            return Ok(());
+        loop {
+            let outcome = self.skip_to_next_token()?;
+            if outcome.queued_comment || (outcome.saw_comment && !self.tokens.is_empty()) {
+                return Ok(());
+            }
+            if !outcome.saw_comment {
+                break;
+            }
+            // No token is waiting, so an ignored leading comment is not enough to satisfy this
+            // fetch. Continue until a token is produced or another scanner condition stops us.
         }
 
         debug_print!(
@@ -1690,17 +1698,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Skip over whitespace (`\t`, ` `, `\n`, `\r`) until the next non-comment token.
     ///
     /// When comment emission is enabled, encountered comments are queued as
-    /// [`TokenType::Comment`] tokens so the parser can emit them as presentation events. If
-    /// `stop_after_comment` is true, the function returns after queuing one comment so callers can
-    /// emit it before scanning later comments. Otherwise comments are consumed without capture.
+    /// [`TokenType::Comment`] tokens so the parser can emit them as presentation events. The
+    /// function returns after one comment, whether it was queued or ignored, so callers can
+    /// publish completed syntax before scanning later input that may fail.
     ///
     /// # Errors
     /// This function returns an error if a tab is encountered where there should not be
     /// one.
-    fn skip_to_next_token(
-        &mut self,
-        stop_after_comment: bool,
-    ) -> Result<SkipToNextTokenOutcome, ScanError> {
+    fn skip_to_next_token(&mut self) -> Result<SkipToNextTokenOutcome, ScanError> {
         // Hot-path helper: consume a single logical line break and apply simple-key rules.
         // (Kept local to ensure the compiler can inline it easily.)
         let consume_linebreak = |this: &mut Self| {
@@ -1769,9 +1774,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     if matches!(self.input.look_ch(), '\n' | '\r') {
                         consume_linebreak(self);
                     }
-                    if stop_after_comment && queued {
-                        return Ok(outcome);
-                    }
+                    return Ok(outcome);
                 }
 
                 _ => break,
@@ -1813,13 +1816,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Skip over YAML whitespace (` `, `\n`, `\r`).
     ///
-    /// If comment emission and `stop_after_comment` are both enabled, the function returns after
-    /// queuing one comment so callers can emit it before scanning later comments. Disabled
-    /// comments are consumed without capture.
+    /// The function returns after one separated comment, whether it was queued or ignored, so a
+    /// caller can publish completed syntax before validating later input.
     ///
     /// # Errors
     /// This function returns an error if no whitespace was found.
-    fn skip_yaml_whitespace(&mut self, stop_after_comment: bool) -> Result<bool, ScanError> {
+    fn skip_yaml_whitespace(&mut self) -> Result<bool, ScanError> {
         let mut need_whitespace = true;
         loop {
             match self.input.look_ch() {
@@ -1840,10 +1842,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     if need_whitespace {
                         self.skip_comment()?;
                     } else {
-                        let queued = self.consume_comment()?;
-                        if stop_after_comment && queued {
-                            return Ok(true);
-                        }
+                        self.consume_comment()?;
+                        return Ok(true);
                     }
                 }
                 _ => break,
@@ -3192,7 +3192,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // From spec: To ensure JSON compatibility, if a key inside a flow mapping is JSON-like,
         // YAML allows the following value to be specified adjacent to the “:”.
-        if self.skip_to_next_token(true)?.saw_comment {
+        if self.skip_to_next_token()?.saw_comment {
             self.adjacent_value_allowed_at = usize::MAX;
         } else {
             self.adjacent_value_allowed_at = self.mark.index();
@@ -3909,7 +3909,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
-        let stopped_after_comment = self.skip_yaml_whitespace(true)?;
+        let stopped_after_comment = self.skip_yaml_whitespace()?;
         if self.input.peek() == '\t' {
             return Err(self.scan_error(ErrorKind::TabNotAllowed));
         }
@@ -4659,7 +4659,7 @@ mod test {
     fn comment_skipping_path_consumes_comment_without_tokenizing_it() {
         let mut scanner = Scanner::new(StrInput::new("# skipped\nnext: value\n"));
 
-        scanner.skip_yaml_whitespace(false).unwrap();
+        scanner.skip_yaml_whitespace().unwrap();
 
         assert!(scanner.tokens.is_empty());
         assert_eq!(scanner.mark.line(), 2);
@@ -4670,7 +4670,7 @@ mod test {
     fn yaml_whitespace_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new(" # queued\n# later\n"));
 
-        assert!(scanner.skip_yaml_whitespace(true).unwrap());
+        assert!(scanner.skip_yaml_whitespace().unwrap());
 
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
@@ -4685,7 +4685,7 @@ mod test {
     fn token_skip_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\n"));
 
-        assert!(scanner.skip_to_next_token(true).unwrap().queued_comment);
+        assert!(scanner.skip_to_next_token().unwrap().queued_comment);
 
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
@@ -4694,6 +4694,54 @@ mod test {
         ));
         assert_eq!(scanner.mark.line(), 2);
         assert_eq!(scanner.mark.col(), 0);
+    }
+
+    #[test]
+    fn token_skip_stops_after_one_ignored_comment_without_queuing_it() {
+        let options = crate::options! { emit_comments: false };
+        let mut scanner =
+            Scanner::with_options(StrInput::new("# first\n# second\nvalue\n"), options);
+
+        let outcome = scanner.skip_to_next_token().unwrap();
+
+        assert!(outcome.saw_comment);
+        assert!(!outcome.queued_comment);
+        assert!(scanner.tokens.is_empty());
+        assert_eq!((scanner.mark.line(), scanner.mark.col()), (2, 0));
+        assert_eq!(scanner.input.look_ch(), '#');
+    }
+
+    #[test]
+    fn yaml_whitespace_stops_after_one_separated_ignored_comment() {
+        let options = crate::options! { emit_comments: false };
+        let mut scanner =
+            Scanner::with_options(StrInput::new(" # first\n# second\nvalue\n"), options);
+
+        assert!(scanner.skip_yaml_whitespace().unwrap());
+
+        assert!(scanner.tokens.is_empty());
+        assert_eq!((scanner.mark.line(), scanner.mark.col()), (1, 8));
+        assert_eq!(scanner.input.look_ch(), '\n');
+    }
+
+    #[test]
+    fn scanner_skips_consecutive_leading_ignored_comments_before_next_token() {
+        let options = crate::options! { emit_comments: false };
+        let mut scanner =
+            Scanner::with_options(StrInput::new("# first\n# second\nvalue\n"), options);
+
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart
+        ));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Scalar(ScalarStyle::Plain, ref value) if value == "value"
+        ));
+        assert!(scanner
+            .tokens
+            .iter()
+            .all(|QueuedToken(_, token)| !matches!(token, QueuedTokenType::Comment(_))));
     }
 
     #[test]

@@ -1,6 +1,8 @@
+use std::{cell::Cell, rc::Rc};
+
 use granit_parser::{
-    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser, ScalarStyle,
-    ScanError, Scanner, StrInput, Token, TokenType,
+    BorrowedInput, BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser,
+    ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType,
 };
 
 fn no_comments() -> Options {
@@ -36,6 +38,60 @@ fn scan_iter(source: &str, options: Options) -> Result<Vec<Token<'static>>, Scan
     Scanner::with_options(BufferedInput::new(source.chars()), options).collect()
 }
 
+fn scan_non_comment_prefix_until_error<'input, T>(
+    mut scanner: Scanner<'input, T>,
+) -> (Vec<Token<'input>>, usize, ScanError)
+where
+    T: BorrowedInput<'input>,
+{
+    let mut prefix = Vec::new();
+    let mut comment_count = 0;
+
+    loop {
+        match scanner.next() {
+            Some(Ok(token)) => {
+                if matches!(token.token_type(), TokenType::Comment(_)) {
+                    comment_count += 1;
+                } else {
+                    prefix.push(token);
+                }
+            }
+            Some(Err(error)) => {
+                assert!(scanner.next().is_none(), "scanner must fuse after an error");
+                return (prefix, comment_count, error);
+            }
+            None => panic!("expected scanner error"),
+        }
+    }
+}
+
+fn parse_non_comment_prefix_until_error<'input, T>(
+    mut parser: Parser<'input, T>,
+) -> (Vec<(Event<'input>, Span)>, usize, ScanError)
+where
+    T: BorrowedInput<'input>,
+{
+    let mut prefix = Vec::new();
+    let mut comment_count = 0;
+
+    loop {
+        match parser.next() {
+            Some(Ok(event)) => {
+                if matches!(event.0, Event::Comment(..)) {
+                    comment_count += 1;
+                } else {
+                    prefix.push(event);
+                }
+            }
+            Some(Err(error)) => {
+                assert!(parser.next().is_none(), "parser must fuse after an error");
+                return (prefix, comment_count, error);
+            }
+            None => panic!("expected parser error"),
+        }
+    }
+}
+
 fn assert_no_comment_events(events: &[Event<'_>]) {
     assert!(
         events
@@ -64,6 +120,95 @@ fn assert_parser_error(source: &str, expected: &ErrorKind) {
         .find_map(Result::err)
         .expect("iterator parser should reject invalid YAML");
     assert_eq!(iter_error.kind(), expected, "iterator input: {source:?}");
+}
+
+type ExpectedScalar = Option<(ScalarStyle, &'static str)>;
+
+fn has_completed_token(tokens: &[Token<'_>], expected_scalar: &ExpectedScalar) -> bool {
+    match expected_scalar {
+        Some((style, value)) => tokens.iter().any(|token| {
+            matches!(token.token_type(), TokenType::Scalar(actual_style, actual_value)
+                if actual_style == style && actual_value == value)
+        }),
+        None => {
+            tokens
+                .iter()
+                .any(|token| matches!(token.token_type(), TokenType::BlockMappingStart))
+                && tokens
+                    .iter()
+                    .any(|token| matches!(token.token_type(), TokenType::Key))
+        }
+    }
+}
+
+fn has_completed_event(events: &[(Event<'_>, Span)], expected_scalar: &ExpectedScalar) -> bool {
+    match expected_scalar {
+        Some((style, value)) => events.iter().any(|(event, _)| {
+            matches!(event, Event::Scalar(actual_value, actual_style, ..)
+                if actual_style == style && actual_value == value)
+        }),
+        None => events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::MappingStart(..))),
+    }
+}
+
+fn assert_scanner_prefix<'input, T>(
+    context: &str,
+    enabled: Scanner<'input, T>,
+    disabled: Scanner<'input, T>,
+    expected_error: &ErrorKind,
+    expected_scalar: &ExpectedScalar,
+) where
+    T: BorrowedInput<'input>,
+{
+    let (enabled_tokens, enabled_comments, enabled_error) =
+        scan_non_comment_prefix_until_error(enabled);
+    let (disabled_tokens, disabled_comments, disabled_error) =
+        scan_non_comment_prefix_until_error(disabled);
+
+    assert_eq!(enabled_error.kind(), expected_error, "{context}");
+    assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
+    assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
+    assert_eq!(disabled_tokens, enabled_tokens, "{context}");
+    assert!(
+        enabled_comments > 0,
+        "{context}: fixture emitted no comments"
+    );
+    assert_eq!(disabled_comments, 0, "{context}");
+    assert!(
+        has_completed_token(&enabled_tokens, expected_scalar),
+        "{context}: completed token was missing"
+    );
+}
+
+fn assert_parser_prefix<'input, T>(
+    context: &str,
+    enabled: Parser<'input, T>,
+    disabled: Parser<'input, T>,
+    expected_error: &ErrorKind,
+    expected_scalar: &ExpectedScalar,
+) where
+    T: BorrowedInput<'input>,
+{
+    let (enabled_events, enabled_comments, enabled_error) =
+        parse_non_comment_prefix_until_error(enabled);
+    let (disabled_events, disabled_comments, disabled_error) =
+        parse_non_comment_prefix_until_error(disabled);
+
+    assert_eq!(enabled_error.kind(), expected_error, "{context}");
+    assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
+    assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
+    assert_eq!(disabled_events, enabled_events, "{context}");
+    assert!(
+        enabled_comments > 0,
+        "{context}: fixture emitted no comments"
+    );
+    assert_eq!(disabled_comments, 0, "{context}");
+    assert!(
+        has_completed_event(&enabled_events, expected_scalar),
+        "{context}: completed event was missing"
+    );
 }
 
 fn comment_run(count: usize) -> String {
@@ -213,6 +358,59 @@ fn suppressing_comments_does_not_relax_comment_syntax_validation() {
 }
 
 #[test]
+fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
+    for (name, source, expected_error, expected_scalar) in [
+        (
+            "completed explicit key",
+            "? # ignored\n\tbad\n",
+            ErrorKind::TabNotAllowed,
+            None,
+        ),
+        (
+            "completed quoted scalar",
+            "\"value\"\n# ignored\n@\n",
+            ErrorKind::UnexpectedCharacter { character: '@' },
+            Some((ScalarStyle::DoubleQuoted, "value")),
+        ),
+        (
+            "completed plain scalar",
+            "foo\n# ignored\n@\n",
+            ErrorKind::UnexpectedCharacter { character: '@' },
+            Some((ScalarStyle::Plain, "foo")),
+        ),
+    ] {
+        assert_scanner_prefix(
+            &format!("{name}, string scanner"),
+            Scanner::with_options(StrInput::new(source), Options::default()),
+            Scanner::with_options(StrInput::new(source), no_comments()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_scanner_prefix(
+            &format!("{name}, iterator scanner"),
+            Scanner::with_options(BufferedInput::new(source.chars()), Options::default()),
+            Scanner::with_options(BufferedInput::new(source.chars()), no_comments()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_parser_prefix(
+            &format!("{name}, string parser"),
+            Parser::with_options(StrInput::new(source), Options::default()),
+            Parser::with_options(StrInput::new(source), no_comments()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_parser_prefix(
+            &format!("{name}, iterator parser"),
+            Parser::with_options(BufferedInput::new(source.chars()), Options::default()),
+            Parser::with_options(BufferedInput::new(source.chars()), no_comments()),
+            &expected_error,
+            &expected_scalar,
+        );
+    }
+}
+
+#[test]
 fn suppressed_streaming_comment_preserves_source_errors() {
     let limit = ErrorKind::InputByteLimitExceeded { limit: 13 };
     let source = "# unfinished\n";
@@ -280,4 +478,62 @@ fn hash_characters_inside_scalars_remain_data_when_comments_are_disabled() {
         parse_iter(yaml, no_comments()).expect("iterator parser should accept scalars");
     assert_no_comment_events(&iter_events);
     assert_literal_hash_scalars(&iter_events);
+}
+
+#[test]
+fn completed_plain_scalar_is_returned_before_long_suppressed_comment_tail_is_read() {
+    let yaml = format!("foo\n{}...\n", comment_run(4_096));
+    let total_chars = yaml.chars().count();
+    let chars_read = Rc::new(Cell::new(0));
+    let observed_chars_read = Rc::clone(&chars_read);
+    let input = yaml.chars().inspect(move |_| {
+        observed_chars_read.set(observed_chars_read.get() + 1);
+    });
+    let mut parser = Parser::with_options(BufferedInput::new(input), no_comments());
+
+    loop {
+        let (event, _) = parser
+            .next_event()
+            .expect("parser should return the completed scalar")
+            .expect("the comment tail should not fail");
+        match event {
+            Event::Comment(..) => panic!("disabled comments must not be emitted"),
+            Event::Scalar(value, ScalarStyle::Plain, ..) if value == "foo" => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        chars_read.get() < 128,
+        "parser read {} of {total_chars} characters before returning the completed scalar",
+        chars_read.get(),
+    );
+}
+
+#[test]
+fn completed_plain_scalar_is_returned_before_fallible_suppressed_comment_tail_fails() {
+    let yaml = format!("foo\n{}", comment_run(4_096));
+    let source_error = ErrorKind::InputByteLimitExceeded { limit: 64 };
+    let input = yaml
+        .chars()
+        .map(Ok)
+        .chain(core::iter::once(Err(source_error.clone())));
+    let mut parser = Parser::with_options(FallibleBufferedInput::new(input), no_comments());
+
+    loop {
+        match parser
+            .next_event()
+            .expect("parser should return the completed scalar")
+        {
+            Ok((Event::Comment(..), _)) => panic!("disabled comments must not be emitted"),
+            Ok((Event::Scalar(value, ScalarStyle::Plain, ..), _)) if value == "foo" => break,
+            Ok(_) => {}
+            Err(error) => panic!("source failure overtook the completed scalar: {error}"),
+        }
+    }
+
+    let error = parser
+        .find_map(Result::err)
+        .expect("source failure after the comment tail must remain visible");
+    assert_eq!(error.kind(), &source_error);
 }
