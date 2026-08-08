@@ -41,8 +41,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-        fetch-depth: 0
-        submodules: 'recursive'
+          fetch-depth: 0
+          submodules: 'recursive'
 
       - name: Install nightly Rust
         run: rustup toolchain install nightly --profile minimal --no-self-update
