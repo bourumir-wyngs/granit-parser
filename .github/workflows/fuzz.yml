@@ -38,8 +38,11 @@ jobs:
       CARGO_TERM_COLOR: always
       FUZZ_SECONDS: 1200
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+        fetch-depth: 0
+        submodules: 'recursive'
 
       - name: Install nightly Rust
         run: rustup toolchain install nightly --profile minimal --no-self-update
