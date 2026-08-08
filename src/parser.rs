@@ -506,6 +506,12 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     current: Option<(Event<'input>, Span)>,
     /// The next parser error to emit after it has been observed by `peek`.
     current_error: Option<ScanError>,
+    /// A scanner error discovered while ordering events that must be emitted first.
+    ///
+    /// Unlike `current_error`, this has not been exposed through `peek`. It is consumed by
+    /// `next_event_impl` after already-buffered events so `peek`, iteration, and `load` all retain
+    /// the same ordering.
+    deferred_error: Option<ScanError>,
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
     queued_events: VecDeque<(Event<'input>, Span)>,
 
@@ -548,7 +554,8 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     ///
     /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
     /// been returned from [`Self::next_event`] or [`Self::next`]. If the terminal result is stored
-    /// in [`Self::current`] or [`Self::current_error`], this is set to `false`.
+    /// in [`Self::current`], [`Self::current_error`], or [`Self::deferred_error`], this is set to
+    /// `false`.
     stream_end_emitted: bool,
     /// Make tags global across all documents.
     keep_tags: bool,
@@ -937,6 +944,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             token: None,
             current: None,
             current_error: None,
+            deferred_error: None,
             queued_events: VecDeque::new(),
 
             pending_key_indent: None,
@@ -1023,6 +1031,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             None => {
                 if let Some(event) = self.queued_events.pop_front() {
                     Ok(self.apply_pending_key_indent(event))
+                } else if let Some(error) = self.deferred_error.take() {
+                    return Err(error);
                 } else if self.state == State::End {
                     self.parse()
                 } else if let Some(comment) = self.maybe_next_comment_event()? {
@@ -1770,11 +1780,25 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEntry) if indentless_sequence => {
                 self.skip();
-                let comments = self.next_comment_events()?;
                 let start = (
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
                     mark.with_tag_start(tag_start),
                 );
+                let comments = match self.next_comment_events() {
+                    Ok(comments) => comments,
+                    Err(error) if !matches!(error.kind(), ErrorKind::TooManyComments) => {
+                        // `StrInput` can prove that a source has no comments and skips this
+                        // lookahead, while streaming inputs must probe for one. If that probe
+                        // discovers a later scanner error, the input backend must not determine
+                        // whether this already-recognized sequence start is emitted first.
+                        debug_assert!(self.deferred_error.is_none());
+                        self.deferred_error = Some(error);
+                        self.pending_empty_scalar_span = Some(mark);
+                        self.state = State::IndentlessSequenceEntryNode;
+                        return Ok(start);
+                    }
+                    Err(error) => return Err(error),
+                };
                 if comments.is_empty() {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::IndentlessSequenceEntryNode;
@@ -2499,6 +2523,7 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
 
         let has_buffered_result = self.current.is_some()
             || self.current_error.is_some()
+            || self.deferred_error.is_some()
             || !self.queued_events.is_empty();
         if self.scanner.stream_ended() && !has_buffered_result {
             // The scanner has already reached EOF before the document loop, so emit the terminal

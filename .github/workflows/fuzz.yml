@@ -18,15 +18,31 @@ concurrency:
 
 jobs:
   fuzz:
-    name: Build and smoke-run fuzz targets
+    name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aliases_merges
+          - directives_tags
+          - duplicate_keys
+          - fallible_input
+          - flow_collections
+          - large_scalars
+          - options
+          - parse_any
+          - scan_any
     env:
       CARGO_TERM_COLOR: always
       FUZZ_SECONDS: 1200
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+        fetch-depth: 0
+        submodules: 'recursive'
 
       - name: Install nightly Rust
         run: rustup toolchain install nightly --profile minimal --no-self-update
@@ -37,13 +53,20 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo +nightly install cargo-fuzz
 
-      - name: Build fuzz targets
-        run: cargo +nightly fuzz build
+      - name: Build fuzz target
+        run: cargo +nightly fuzz build "${{ matrix.target }}"
 
-      - name: Smoke-run fuzz targets
+      - name: Smoke-run fuzz target
         shell: bash
         run: |
-          set -euo pipefail
-          for target in aliases_merges duplicate_keys flow_collections large_scalars; do
-            cargo +nightly fuzz run "${target}" -- -max_total_time="${FUZZ_SECONDS}" -timeout=10 -rss_limit_mb=4096
-          done
+          mkdir -p "fuzz/corpus/${{ matrix.target }}"
+          cargo +nightly fuzz run "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" tests/yaml-test-suite/src -- \
+            -dict=fuzz/yaml.dict -max_total_time="${FUZZ_SECONDS}" -timeout=10 -rss_limit_mb=4096
+
+      - name: Upload crash artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

@@ -49,6 +49,21 @@ impl<'input> TryEventReceiver<'input> for AcceptAll {
     }
 }
 
+/// A receiver used to prove that a buffered structural event precedes a deferred scanner error.
+struct RejectSequenceStart;
+
+impl<'input> TryEventReceiver<'input> for RejectSequenceStart {
+    type Error = &'static str;
+
+    fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
+        if matches!(ev, Event::SequenceStart(..)) {
+            Err("sequence start reached")
+        } else {
+            Ok(())
+        }
+    }
+}
+
 // --- input.rs: default `Input::skip_ws_to_eol` (only reachable through `BufferedInput`,
 // --- since `StrInput` overrides it and the scanner uses `skip_ws_to_eol_blanks` whenever
 // --- comments are possible).
@@ -212,6 +227,32 @@ fn try_load_returns_error_buffered_by_peek() {
     assert_eq!(err, TryLoadError::Scan(buffered_error));
 
     // The buffered error is consumed; the parser is exhausted afterwards.
+    assert!(parser.next_event().is_none());
+}
+
+#[test]
+fn try_load_emits_peeked_sequence_start_before_deferred_scanner_error() {
+    let mut parser = Parser::new_from_iter("a:\n-\nb".chars());
+
+    // Drive through the common prefix. Peeking the sequence start also discovers and defers the
+    // later scanner error on streaming inputs.
+    loop {
+        match parser.peek() {
+            Some(Ok((Event::SequenceStart(..), _))) => break,
+            Some(Ok(_)) => {
+                parser.next_event().unwrap().unwrap();
+            }
+            Some(Err(error)) => panic!("sequence start was skipped: {error}"),
+            None => panic!("expected an indentless sequence start"),
+        }
+    }
+
+    let mut receiver = RejectSequenceStart;
+    let error = parser.try_load(&mut receiver, true).unwrap_err();
+    assert_eq!(error, TryLoadError::Receiver("sequence start reached"));
+
+    let scan_error = parser.next_event().unwrap().unwrap_err();
+    assert_eq!(scan_error.kind(), &ErrorKind::SimpleKeyExpected);
     assert!(parser.next_event().is_none());
 }
 

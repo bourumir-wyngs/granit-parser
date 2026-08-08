@@ -137,6 +137,31 @@ fn buffered_comment_limit_honors_lower_and_zero_boundaries() {
 }
 
 #[test]
+fn zero_comment_limit_still_precedes_indentless_sequence_start() {
+    let options = granit_parser::options! {
+        max_buffered_comment_events: 0,
+    };
+    let mut events = Vec::new();
+    let error = Parser::with_options(StrInput::new("a:\n- # one\n"), options)
+        .find_map(|result| match result {
+            Ok((event, _)) => {
+                events.push(event);
+                None
+            }
+            Err(error) => Some(error),
+        })
+        .expect("the first buffered comment should exceed limit zero");
+
+    assert_eq!(error.kind(), &ErrorKind::TooManyComments);
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, Event::SequenceStart(..))),
+        "the resource-limit error must not be deferred behind the sequence start"
+    );
+}
+
+#[test]
 fn simple_key_lookahead_can_be_raised() {
     let key = "k".repeat(1025);
     let yaml = format!("a: b\n{key}: value\n");

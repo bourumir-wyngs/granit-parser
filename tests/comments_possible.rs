@@ -177,6 +177,7 @@ fn invalid_no_comment_fast_path_matches_comment_enabled_event_prefixes() {
             "directive after implicit document",
             "a: b\n%YAML 1.2\n---\nc: d\n",
         ),
+        ("invalid first indentless sequence entry", "a:\n-\nb"),
         ("reserved indicator", "@\n"),
     ] {
         assert_no_hash(source, name);
