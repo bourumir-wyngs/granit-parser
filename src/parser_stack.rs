@@ -481,6 +481,8 @@ where
 
                     // Continue the parent parser if it has more documents.
                     let peek_res = loop {
+                        // The root-parser case returned above, and this loop never mutates the
+                        // outer parser stack, so a nested parser must remain available here.
                         let parser = self.parsers.last_mut().unwrap();
                         let peek = match parser {
                             AnyParser::String { parser, .. } => parser.peek(),
