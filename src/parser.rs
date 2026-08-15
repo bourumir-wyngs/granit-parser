@@ -1503,6 +1503,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        // Resume a document start paused to emit comments before handling markers that are only
+        // ignorable between documents. In particular, `...` is invalid while `---` is still
+        // required after directives and must not be consumed by the loop below.
+        if self.has_pending_document_directives() {
+            return self.explicit_document_start();
+        }
+
         while let QueuedTokenType::DocumentEnd = self.peek_token()?.1 {
             self.skip();
         }
@@ -1515,10 +1522,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         // another document starts; presentation-only comments must not create an implicit document.
         if let Some(comment) = self.maybe_next_comment_event()? {
             return Ok(comment);
-        }
-
-        if self.has_pending_document_directives() {
-            return self.explicit_document_start();
         }
 
         match *self.peek_token()? {

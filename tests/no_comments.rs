@@ -320,6 +320,61 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
 }
 
 #[test]
+fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
+    fn assert_error<'input, T>(
+        context: &str,
+        enabled: Parser<'input, T>,
+        disabled: Parser<'input, T>,
+    ) where
+        T: BorrowedInput<'input>,
+    {
+        let (enabled_events, enabled_comments, enabled_error) =
+            parse_non_comment_prefix_until_error(enabled);
+        let (disabled_events, disabled_comments, disabled_error) =
+            parse_non_comment_prefix_until_error(disabled);
+
+        assert_eq!(enabled_comments, 1, "{context}");
+        assert_eq!(disabled_comments, 0, "{context}");
+        assert_eq!(disabled_events, enabled_events, "{context}");
+        assert!(
+            matches!(enabled_events.as_slice(), [(Event::StreamStart, _)]),
+            "unexpected parser prefix: {context}"
+        );
+
+        assert_eq!(
+            enabled_error.kind(),
+            &ErrorKind::ExpectedDocumentStart,
+            "{context}"
+        );
+        assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
+        assert_eq!(
+            (
+                enabled_error.marker().index(),
+                enabled_error.marker().line(),
+                enabled_error.marker().col(),
+            ),
+            (5, 3, 0),
+            "error should point at the document-end marker: {context}"
+        );
+        assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
+    }
+
+    // Minimized from options fuzz artifact 2bcfc3e81fd77f0f8066d92f74a7615f2a248234.
+    let yaml = "%a\n#\n...";
+
+    assert_error(
+        "string parser",
+        Parser::with_options(StrInput::new(yaml), Options::default()),
+        Parser::with_options(StrInput::new(yaml), no_comments()),
+    );
+    assert_error(
+        "buffered parser",
+        Parser::with_options(BufferedInput::new(yaml.chars()), Options::default()),
+        Parser::with_options(BufferedInput::new(yaml.chars()), no_comments()),
+    );
+}
+
+#[test]
 fn disabled_comments_preserve_non_comment_event_spans() {
     // The first fixture is minimized from the options fuzz failure. The second covers the other
     // synthetic-span consumer: an empty document whose content is only a comment.
