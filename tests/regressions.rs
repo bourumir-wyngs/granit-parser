@@ -1,5 +1,5 @@
 use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span, StructureStyle};
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 fn collect_ok_events(yaml: &str) -> Vec<(Event<'_>, Span)> {
     Parser::new_from_str(yaml)
@@ -66,6 +66,46 @@ fn alias_anchor_edge_cases() {
     assert!(redefinition
         .iter()
         .any(|(event, _)| matches!(event, Event::Alias(2))));
+}
+
+fn assert_emitted_aliases_reference_preceding_anchor_nodes(yaml: &str) {
+    let mut anchors = BTreeSet::new();
+    for result in Parser::new_from_str(yaml) {
+        let Ok((event, _)) = result else {
+            // Rejecting malformed YAML is valid, but every event emitted before the error must
+            // still satisfy the alias invariant.
+            return;
+        };
+
+        if matches!(event, Event::DocumentStart(..)) {
+            anchors.clear();
+        }
+
+        if let Some(anchor) = event.anchor_id() {
+            anchors.insert(anchor);
+        }
+
+        if let Event::Alias(anchor) = event {
+            assert!(
+                anchors.contains(&anchor),
+                "alias {anchor} was emitted before its anchor node for {yaml:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn anchor_without_node_does_not_make_later_alias_valid() {
+    // Minimized from the flow_collections fuzz failure.
+    assert_emitted_aliases_reference_preceding_anchor_nodes("[k: &a #\n*a]\n");
+}
+
+#[test]
+fn overwritten_pending_anchor_does_not_make_later_alias_valid() {
+    // Minimized from the directives_tags fuzz failures. The second anchor replaces
+    // the pending first anchor before the scalar event is emitted.
+    let yaml = "node:\n  &a !t #\n  &b value\nalias: *a\n";
+    assert_emitted_aliases_reference_preceding_anchor_nodes(yaml);
 }
 
 #[test]

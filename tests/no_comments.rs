@@ -300,6 +300,92 @@ fn disabled_comments_match_enabled_yaml_semantics_after_filtering_comments() {
 }
 
 #[test]
+fn comment_after_leading_document_end_does_not_start_implicit_document() {
+    // Minimized from an options fuzz failure: `document_start` first consumes `...`, which can
+    // expose a comment that was not visible to the parser's normal pre-dispatch comment check.
+    let yaml = "...\n#";
+
+    let mut enabled = parse_str(yaml, Options::default())
+        .expect("leading document end and comment should not open a document");
+    assert!(matches!(
+        enabled.as_slice(),
+        [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
+    ));
+    enabled.retain(|event| !matches!(event, Event::Comment(..)));
+
+    let disabled = parse_str(yaml, no_comments())
+        .expect("comment suppression should preserve the empty stream");
+
+    assert_eq!(disabled, enabled);
+}
+
+#[test]
+fn disabled_comments_preserve_non_comment_event_spans() {
+    // The first fixture is minimized from the options fuzz failure. The second covers the other
+    // synthetic-span consumer: an empty document whose content is only a comment.
+    for yaml in [".\n#", "---\n# comment\n"] {
+        let mut enabled = Parser::with_options(StrInput::new(yaml), Options::default())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("enabled string parser should accept YAML");
+        assert!(
+            enabled
+                .iter()
+                .any(|(event, _)| matches!(event, Event::Comment(..))),
+            "regression fixture must emit a comment event: {yaml:?}"
+        );
+        enabled.retain(|(event, _)| !matches!(event, Event::Comment(..)));
+
+        let disabled = Parser::with_options(StrInput::new(yaml), no_comments())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("disabled string parser should accept YAML");
+
+        assert_eq!(disabled, enabled, "{yaml:?}");
+    }
+}
+
+#[test]
+fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
+    // The own-line case preserves the older options fuzz failure. The right-comment case reaches
+    // the separate batched-comment error path, and the node-property case protects its interaction
+    // with comment-separated anchors and tags.
+    for (name, yaml) in [
+        ("own-line comment", " :\n#\n  a\u{1}\nx"),
+        ("right comment", " : #\n  a\u{1}\nx"),
+        ("pending node properties", "&a !t\n# comment\na\u{1}\n"),
+        ("after leading document end", "...\n# comment\na\u{1}\n"),
+    ] {
+        let (enabled_events, enabled_comments, enabled_error) =
+            parse_non_comment_prefix_until_error(Parser::with_options(
+                StrInput::new(yaml),
+                Options::default(),
+            ));
+        let (disabled_events, disabled_comments, disabled_error) =
+            parse_non_comment_prefix_until_error(Parser::with_options(
+                StrInput::new(yaml),
+                no_comments(),
+            ));
+
+        assert!(
+            enabled_comments > 0,
+            "regression fixture emitted no comments: {name}"
+        );
+        assert_eq!(disabled_comments, 0, "{name}");
+        assert_eq!(disabled_events, enabled_events, "{name}");
+        assert_eq!(disabled_error.kind(), enabled_error.kind(), "{name}");
+        assert_eq!(disabled_error.marker(), enabled_error.marker(), "{name}");
+
+        let expected_error = ErrorKind::UnexpectedCharacter { character: '\u{1}' };
+        assert_eq!(enabled_error.kind(), &expected_error, "{name}");
+        assert!(
+            enabled_events
+                .iter()
+                .all(|(event, _)| !matches!(event, Event::MappingEnd | Event::DocumentEnd)),
+            "parser emitted closing events after the error: {name}"
+        );
+    }
+}
+
+#[test]
 fn disabled_comments_bypass_zero_buffer_limit_in_every_ambiguous_entry() {
     let comments = comment_run(64);
     let cases = [

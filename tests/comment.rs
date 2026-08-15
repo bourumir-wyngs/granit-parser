@@ -1303,3 +1303,44 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
         .iter()
         .any(|(event, _)| matches!(event, Event::Alias(alias_id) if *alias_id == anchored_value)));
 }
+
+#[test]
+fn parser_combines_complementary_node_properties_across_comments() {
+    for yaml in ["&a # anchor\n!t value\n", "!t # tag\n&a value\n"] {
+        let events = parser_events(yaml).expect("complementary node properties should parse");
+        assert!(events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Comment(..))));
+
+        let (anchor_id, tag) = events
+            .iter()
+            .find_map(|(event, _)| match event {
+                Event::Scalar(value, _, anchor_id, Some(tag)) if value == "value" => {
+                    Some((*anchor_id, tag.original()))
+                }
+                _ => None,
+            })
+            .expect("value should retain both node properties");
+
+        assert_ne!(anchor_id, 0);
+        assert_eq!(tag, "!t");
+    }
+}
+
+#[test]
+fn parser_preserves_self_reference_after_anchor_comment() {
+    let events = parser_events("&a # anchor\n[*a]\n")
+        .expect("comment-separated self-reference should parse");
+    let anchor_id = events
+        .iter()
+        .find_map(|(event, _)| match event {
+            Event::SequenceStart(_, anchor_id, _) => Some(*anchor_id),
+            _ => None,
+        })
+        .expect("anchored sequence should be emitted");
+
+    assert_ne!(anchor_id, 0);
+    assert!(events
+        .iter()
+        .any(|(event, _)| matches!(event, Event::Alias(alias_id) if *alias_id == anchor_id)));
+}

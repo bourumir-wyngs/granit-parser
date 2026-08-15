@@ -531,8 +531,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_property_end: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
-    /// End marker of the most recently produced event.
-    last_event_end: Option<Marker>,
+    /// End marker of the most recently produced non-comment event.
+    ///
+    /// Synthetic syntax events use this marker, so presentation-only comments must not affect it.
+    last_non_comment_event_end: Option<Marker>,
     /// Pending YAML version captured before comments preceding an explicit document start.
     pending_document_version: Option<YamlVersion>,
     /// Whether document directives were already initialized before comments preceding `---`.
@@ -953,7 +955,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             pending_node_tag_start: None,
             pending_node_property_end: None,
             pending_empty_scalar_span: None,
-            last_event_end: None,
+            last_non_comment_event_end: None,
             pending_document_version: None,
             pending_document_directives: false,
             pending_document_tag_handles: BTreeSet::new(),
@@ -1044,7 +1046,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             Some(v) => Ok(v),
         }?;
 
-        Ok(self.remember_event_end(event))
+        Ok(self.remember_non_comment_event_end(event))
     }
 
     fn apply_pending_key_indent<'a>(&mut self, (ev, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
@@ -1057,13 +1059,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         (ev, span)
     }
 
-    fn remember_event_end<'a>(&mut self, (event, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
-        self.last_event_end = Some(span.end);
+    fn remember_non_comment_event_end<'a>(
+        &mut self,
+        (event, span): (Event<'a>, Span),
+    ) -> (Event<'a>, Span) {
+        if !matches!(event, Event::Comment(..)) {
+            self.last_non_comment_event_end = Some(span.end);
+        }
         (event, span)
     }
 
     /// Peek at the next token from the scanner.
     fn peek_token(&mut self) -> Result<&QueuedToken<'_>, ScanError> {
+        if let Some(error) = &self.deferred_error {
+            return Err(error.clone());
+        }
+
         match self.token {
             None => {
                 self.token = Some(self.scan_next_token()?);
@@ -1129,7 +1140,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match self.peek_token() {
                 Ok(token) if matches!(token.1, QueuedTokenType::Comment(_)) => {}
                 Err(error) if events.is_empty() => return Err(error),
-                Ok(_) | Err(_) => return Ok(events),
+                Err(error) => {
+                    debug_assert!(self.deferred_error.is_none());
+                    self.deferred_error = Some(error);
+                    return Ok(events);
+                }
+                Ok(_) => return Ok(events),
             }
 
             if events.len() >= self.max_buffered_comment_events {
@@ -1143,6 +1159,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 .next_comment_event()?
                 .expect("comment token disappeared after peek");
             events.push(comment);
+            if self.deferred_error.is_some() {
+                return Ok(events);
+            }
         }
     }
 
@@ -1221,8 +1240,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             return Placement::Right;
         }
 
-        let Ok(next) = self.peek_token() else {
-            return placement;
+        let next = match self.peek_token() {
+            Ok(next) => next,
+            Err(error) => {
+                debug_assert!(self.deferred_error.is_none());
+                self.deferred_error = Some(error);
+                return placement;
+            }
         };
         if matches!(next.1, QueuedTokenType::StreamEnd) {
             return Placement::Last;
@@ -1486,6 +1510,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         // Anchors are scoped to a single document.
         self.anchors.clear();
 
+        // Skipping a leading document-end marker can expose a comment that the normal
+        // `next_event_impl` pre-dispatch check could not see yet. Emit it before deciding whether
+        // another document starts; presentation-only comments must not create an implicit document.
+        if let Some(comment) = self.maybe_next_comment_event()? {
+            return Ok(comment);
+        }
+
         if self.has_pending_document_directives() {
             return self.explicit_document_start();
         }
@@ -1627,7 +1658,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         {
             self.pop_state();
             let span = self
-                .last_event_end
+                .last_non_comment_event_end
                 .map_or_else(|| Span::empty(mark.start), Span::empty);
             Ok((Event::empty_scalar(), span))
         } else {
@@ -1648,7 +1679,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 span
             }
             QueuedToken(span, _) => self
-                .last_event_end
+                .last_non_comment_event_end
                 .map_or_else(|| Span::empty(span.start), Span::empty),
         };
 
@@ -1724,7 +1755,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let mut tag_start = self.pending_node_tag_start.take();
         let mut property_end = self.pending_node_property_end.take();
         match *self.peek_token()? {
-            QueuedToken(_, QueuedTokenType::Alias(_)) => {
+            QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id == 0 && tag.is_none() => {
                 self.pop_state();
                 let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() else {
                     unreachable!("alias token disappeared after peek")
@@ -1734,13 +1765,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Some(id) => Ok((Event::Alias(*id), span)),
                 };
             }
-            QueuedToken(_, QueuedTokenType::Anchor(_)) => {
+            QueuedToken(_, QueuedTokenType::Anchor(_)) if anchor_id == 0 => {
                 let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() else {
                     unreachable!("anchor token disappeared after peek")
                 };
                 anchor_id = self.register_anchor(name, &span)?;
                 property_end = Some(span.end);
-                if matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
+                if tag.is_none() && matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
                     let QueuedToken(tag_span, QueuedTokenType::Tag(handle, suffix)) =
                         self.fetch_token()
                     else {
@@ -1755,20 +1786,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     return Ok(comment);
                 }
             }
-            QueuedToken(mark, QueuedTokenType::Tag(..)) => {
+            QueuedToken(mark, QueuedTokenType::Tag(..)) if tag.is_none() => {
                 let QueuedTokenType::Tag(handle, suffix) = self.fetch_token().1 else {
                     unreachable!("tag token disappeared after peek")
                 };
                 tag_start = Some(mark.start);
                 property_end = Some(mark.end);
                 tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
-                    let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
-                    else {
-                        unreachable!("anchor token disappeared after peek")
-                    };
-                    anchor_id = self.register_anchor(name, &mark)?;
-                    property_end = Some(mark.end);
+                if anchor_id == 0 {
+                    if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
+                        let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
+                        else {
+                            unreachable!("anchor token disappeared after peek")
+                        };
+                        anchor_id = self.register_anchor(name, &mark)?;
+                        property_end = Some(mark.end);
+                    }
                 }
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
@@ -2615,11 +2648,11 @@ mod test {
 
     #[test]
     fn deferred_parse_node_can_emit_comment_before_flow_node() {
-        let mut parser = Parser::new_from_str("# deferred\nvalue\n");
+        let mut parser = Parser::new_from_str("---\n# deferred\nvalue\n");
         assert_eq!(parser.stream_start().unwrap().0, Event::StreamStart);
         assert_eq!(
             parser.document_start(true).unwrap().0,
-            Event::DocumentStart(false, None)
+            Event::DocumentStart(true, None)
         );
 
         let (event, _) = parser
