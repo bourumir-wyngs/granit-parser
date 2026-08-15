@@ -2824,9 +2824,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn fetch_block_scalar(&mut self, literal: bool) -> ScanResult {
         self.save_simple_key();
         self.allow_simple_key();
+        let token_index = self.tokens.len();
         let tok = self.scan_block_scalar(literal)?;
 
-        self.tokens.push_back(tok.into());
+        self.insert_token(token_index, tok);
         Ok(())
     }
 

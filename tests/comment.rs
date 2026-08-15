@@ -364,13 +364,22 @@ fn scanner_emits_comments_after_block_scalar_headers() {
     let yaml = "key: | # block scalar header\n  body\n";
     let tokens = scanner_tokens(yaml).expect("valid YAML should scan without errors");
 
-    assert!(tokens.iter().any(|token| {
-        matches!(token.token_type(), TokenType::Comment(comment)
-            if comment.text() == " block scalar header")
-    }));
-    assert!(tokens.iter().any(|token| {
-        matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Literal, value) if value == "body\n")
-    }));
+    let scalar_index = tokens
+        .iter()
+        .position(|token| {
+            matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Literal, value)
+                if value == "body\n")
+        })
+        .expect("literal scalar token should be emitted");
+    let comment_index = tokens
+        .iter()
+        .position(|token| {
+            matches!(token.token_type(), TokenType::Comment(comment)
+                if comment.text() == " block scalar header")
+        })
+        .expect("block scalar header comment should be emitted");
+
+    assert!(scalar_index < comment_index);
 }
 
 #[test]

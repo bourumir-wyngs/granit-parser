@@ -497,6 +497,92 @@ fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
 }
 
 #[test]
+fn disabled_comments_preserve_required_block_scalar_error_prefix() {
+    fn assert_scanner<'input, T>(
+        context: &str,
+        enabled: Scanner<'input, T>,
+        disabled: Scanner<'input, T>,
+    ) where
+        T: BorrowedInput<'input>,
+    {
+        let (enabled_tokens, _, enabled_error) = scan_non_comment_prefix_until_error(enabled);
+        let (disabled_tokens, disabled_comments, disabled_error) =
+            scan_non_comment_prefix_until_error(disabled);
+
+        assert_eq!(
+            enabled_error.kind(),
+            &ErrorKind::SimpleKeyExpected,
+            "{context}"
+        );
+        assert_eq!(enabled_error.marker().index(), 2, "{context}");
+        assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
+        assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
+        assert_eq!(disabled_comments, 0, "{context}");
+        assert_eq!(disabled_tokens, enabled_tokens, "{context}");
+        assert!(
+            enabled_tokens.iter().all(|token| !matches!(
+                token.token_type(),
+                TokenType::Scalar(ScalarStyle::Literal, _)
+            )),
+            "block scalar escaped before its required-key error: {context}"
+        );
+    }
+
+    fn assert_parser<'input, T>(
+        context: &str,
+        enabled: Parser<'input, T>,
+        disabled: Parser<'input, T>,
+    ) where
+        T: BorrowedInput<'input>,
+    {
+        let (enabled_events, _, enabled_error) = parse_non_comment_prefix_until_error(enabled);
+        let (disabled_events, disabled_comments, disabled_error) =
+            parse_non_comment_prefix_until_error(disabled);
+
+        assert_eq!(
+            enabled_error.kind(),
+            &ErrorKind::SimpleKeyExpected,
+            "{context}"
+        );
+        assert_eq!(enabled_error.marker().index(), 2, "{context}");
+        assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
+        assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
+        assert_eq!(disabled_comments, 0, "{context}");
+        assert_eq!(disabled_events, enabled_events, "{context}");
+        assert!(
+            enabled_events
+                .iter()
+                .all(|(event, _)| !matches!(event, Event::Scalar(_, ScalarStyle::Literal, ..))),
+            "block scalar escaped before its required-key error: {context}"
+        );
+    }
+
+    // Minimized from options fuzz artifact 5f02d987814c1292d7dd4cfa376cded917d93229.
+    let yaml = "-\n| #";
+
+    assert_scanner(
+        "string scanner",
+        Scanner::with_options(StrInput::new(yaml), Options::default()),
+        Scanner::with_options(StrInput::new(yaml), no_comments()),
+    );
+    assert_scanner(
+        "buffered scanner",
+        Scanner::with_options(BufferedInput::new(yaml.chars()), Options::default()),
+        Scanner::with_options(BufferedInput::new(yaml.chars()), no_comments()),
+    );
+    assert_parser(
+        "string parser",
+        Parser::with_options(StrInput::new(yaml), Options::default()),
+        Parser::with_options(StrInput::new(yaml), no_comments()),
+    );
+    assert_parser(
+        "buffered parser",
+        Parser::with_options(BufferedInput::new(yaml.chars()), Options::default()),
+        Parser::with_options(BufferedInput::new(yaml.chars()), no_comments()),
+    );
+}
+
+#[test]
 fn suppressed_streaming_comment_preserves_source_errors() {
     let limit = ErrorKind::InputByteLimitExceeded { limit: 13 };
     let source = "# unfinished\n";
