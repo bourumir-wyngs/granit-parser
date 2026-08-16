@@ -15,6 +15,7 @@
 - Added `Parser::new_from_str_with_options`, `Parser::new_from_iter_with_options`, and
   `Parser::new_from_fallible_iter_with_options` for configuring common input sources without
   constructing input adapters directly.
+- Fuzz testing hardening.
 
 **Fixes**:
 

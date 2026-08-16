@@ -120,3 +120,9 @@ pub use crate::parser_stack::{ParserStack, ReplayParser};
 pub use crate::scanner::{
     Comment, Marker, Placement, ScalarStyle, Scanner, Span, Token, TokenType,
 };
+
+// Keep every Rust example in the package README covered by `cargo test --doc` without duplicating
+// the README in the rendered crate-level documentation.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
