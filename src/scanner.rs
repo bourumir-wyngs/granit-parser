@@ -993,9 +993,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_tag_handle_directive_cow(
         &mut self,
         mark: &Marker,
+        budget: &mut usize,
     ) -> Result<Cow<'input, str>, ScanError> {
         let Some(start) = self.input.byte_offset() else {
-            return Ok(Cow::Owned(self.scan_tag_handle(true, mark)?));
+            return Ok(Cow::Owned(
+                self.scan_tag_handle_directive_owned(mark, budget)?,
+            ));
         };
 
         if self.input.look_ch() != '!' {
@@ -1003,24 +1006,29 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         // Consume the leading '!'.
+        self.spend_directive_bytes(budget, 1, *mark)?;
         self.skip_non_blank();
 
         // Consume ns-word-char (ASCII alphanumeric, '_' or '-') characters.
         // This mirrors `StrInput::fetch_while_is_alpha` but avoids allocation.
         self.input.lookahead(1);
         while self.input.next_is_alpha() {
+            self.spend_directive_bytes(budget, 1, *mark)?;
             self.skip_non_blank();
             self.input.lookahead(1);
         }
 
         // Optional trailing '!'.
         if self.input.peek() == '!' {
+            self.spend_directive_bytes(budget, 1, *mark)?;
             self.skip_non_blank();
         }
 
         let Some(end) = self.input.byte_offset() else {
-            // Should be impossible if `byte_offset()` was `Some` above, but keep safe fallback.
-            return Ok(Cow::Owned(self.scan_tag_handle(true, mark)?));
+            return Err(ScanError::from_kind(
+                *mark,
+                ErrorKind::InputSlicingUnavailable,
+            ));
         };
 
         let Some(slice) = self.try_borrow_slice(start, end) else {
@@ -1048,6 +1056,43 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(Cow::Borrowed(slice))
     }
 
+    /// Owned `%TAG`-handle scanner for streaming inputs, with allocation bounded by `budget`.
+    fn scan_tag_handle_directive_owned(
+        &mut self,
+        mark: &Marker,
+        budget: &mut usize,
+    ) -> Result<String, ScanError> {
+        let mut string = String::new();
+        if self.input.look_ch() != '!' {
+            return Err(ScanError::from_kind(*mark, ErrorKind::ExpectedTagBang));
+        }
+
+        self.spend_directive_bytes(budget, 1, *mark)?;
+        string.push('!');
+        self.skip_non_blank();
+
+        self.input.lookahead(1);
+        while self.input.next_is_alpha() {
+            self.spend_directive_bytes(budget, 1, *mark)?;
+            string.push(self.input.peek());
+            self.skip_non_blank();
+            self.input.lookahead(1);
+        }
+
+        if self.input.peek() == '!' {
+            self.spend_directive_bytes(budget, 1, *mark)?;
+            string.push('!');
+            self.skip_non_blank();
+        } else if string != "!" {
+            return Err(ScanError::from_kind(
+                *mark,
+                ErrorKind::ExpectedTagDirectiveBang,
+            ));
+        }
+
+        Ok(string)
+    }
+
     /// Scan a tag prefix for a `%TAG` directive as a `Cow<str>`.
     ///
     /// This borrows from `StrInput` only when no URI escape sequences are encountered. If a `%`
@@ -1055,13 +1100,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     fn scan_tag_prefix_directive_cow(
         &mut self,
         start_mark: &Marker,
+        budget: &mut usize,
     ) -> Result<Cow<'input, str>, ScanError> {
         let Some(start) = self.input.byte_offset() else {
-            return Ok(Cow::Owned(self.scan_tag_prefix(start_mark)?));
+            return Ok(Cow::Owned(
+                self.scan_tag_prefix_directive_owned(start_mark, budget)?,
+            ));
         };
 
         // The prefix must start with either '!' (local) or a valid global tag char.
         if self.input.look_ch() == '!' {
+            self.spend_directive_bytes(budget, 1, *start_mark)?;
             self.skip_non_blank();
         } else if !is_tag_char(self.input.peek()) {
             return Err(ScanError::from_kind(
@@ -1071,6 +1120,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         } else if self.input.peek() == '%' {
             // Needs decoding. Fall back to allocating path below.
         } else {
+            self.spend_directive_bytes(budget, 1, *start_mark)?;
             self.skip_non_blank();
         }
 
@@ -1079,6 +1129,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.input.peek() == '%' {
                 break;
             }
+            self.spend_directive_bytes(budget, 1, *start_mark)?;
             self.skip_non_blank();
         }
 
@@ -1096,8 +1147,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             while is_uri_char(self.input.look_ch()) {
                 if self.input.peek() == '%' {
-                    out.push(self.scan_uri_escapes(start_mark)?);
+                    out.push(self.scan_uri_escapes_with_budget(start_mark, Some(budget))?);
                 } else {
+                    self.spend_directive_bytes(budget, 1, *start_mark)?;
                     out.push(self.input.peek());
                     self.skip_non_blank();
                 }
@@ -1106,7 +1158,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let Some(end) = self.input.byte_offset() else {
-            return Ok(Cow::Owned(self.scan_tag_prefix(start_mark)?));
+            return Err(ScanError::from_kind(
+                *start_mark,
+                ErrorKind::InputSlicingUnavailable,
+            ));
         };
 
         let Some(slice) = self.try_borrow_slice(start, end) else {
@@ -1118,6 +1173,44 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         Ok(Cow::Borrowed(slice))
+    }
+
+    /// Owned `%TAG`-prefix scanner for streaming inputs, with allocation bounded by `budget`.
+    fn scan_tag_prefix_directive_owned(
+        &mut self,
+        start_mark: &Marker,
+        budget: &mut usize,
+    ) -> Result<String, ScanError> {
+        let mut string = String::new();
+
+        if self.input.look_ch() == '!' {
+            self.spend_directive_bytes(budget, 1, *start_mark)?;
+            string.push('!');
+            self.skip_non_blank();
+        } else if !is_tag_char(self.input.peek()) {
+            return Err(ScanError::from_kind(
+                *start_mark,
+                ErrorKind::InvalidGlobalTagCharacter,
+            ));
+        } else if self.input.peek() == '%' {
+            string.push(self.scan_uri_escapes_with_budget(start_mark, Some(budget))?);
+        } else {
+            self.spend_directive_bytes(budget, 1, *start_mark)?;
+            string.push(self.input.peek());
+            self.skip_non_blank();
+        }
+
+        while is_uri_char(self.input.look_ch()) {
+            if self.input.peek() == '%' {
+                string.push(self.scan_uri_escapes_with_budget(start_mark, Some(budget))?);
+            } else {
+                self.spend_directive_bytes(budget, 1, *start_mark)?;
+                string.push(self.input.peek());
+                self.skip_non_blank();
+            }
+        }
+
+        Ok(string)
     }
     /// Create a scanner over the given input source.
     #[must_use]
@@ -1957,7 +2050,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let name = self.scan_directive_name(&mut budget)?;
         let tok = match name.as_ref() {
             "YAML" => self.scan_version_directive_value(&start_mark)?,
-            "TAG" => self.scan_tag_directive_value(&start_mark)?,
+            "TAG" => self.scan_tag_directive_value(&start_mark, &mut budget)?,
             _ => {
                 let mut params = Vec::new();
                 while self.input.next_is_blank() {
@@ -1965,9 +2058,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     self.mark.offsets.chars += n_blanks;
                     self.mark.col += n_blanks;
                     self.mark.offsets.bytes = self.input.byte_offset();
-                    budget = budget.saturating_sub(n_blanks);
 
                     if !is_blank_or_breakz(self.input.peek()) {
+                        self.spend_directive_bytes(&mut budget, n_blanks, start_mark)?;
                         if params.len() >= self.options.max_reserved_directive_params {
                             return Err(ScanError::from_kind(
                                 start_mark,
@@ -2042,6 +2135,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 limit: self.options.max_directive_bytes,
             },
         )
+    }
+
+    /// Spend source bytes from a directive-retention budget before growing owned storage.
+    fn spend_directive_bytes(
+        &self,
+        budget: &mut usize,
+        bytes: usize,
+        start_mark: Marker,
+    ) -> ScanResult {
+        let Some(remaining) = budget.checked_sub(bytes) else {
+            return Err(self.directive_byte_limit(start_mark));
+        };
+        *budget = remaining;
+        Ok(())
     }
 
     /// Fetch a run of [`is_yaml_non_space`] characters into `out`, spending `budget` bytes.
@@ -2120,20 +2227,26 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(val)
     }
 
-    fn scan_tag_directive_value(&mut self, mark: &Marker) -> Result<Token<'input>, ScanError> {
+    fn scan_tag_directive_value(
+        &mut self,
+        mark: &Marker,
+        budget: &mut usize,
+    ) -> Result<Token<'input>, ScanError> {
         let n_blanks = self.input.skip_while_blank();
         self.mark.offsets.chars += n_blanks;
         self.mark.col += n_blanks;
         self.mark.offsets.bytes = self.input.byte_offset();
+        self.spend_directive_bytes(budget, n_blanks, *mark)?;
 
-        let handle = self.scan_tag_handle_directive_cow(mark)?;
+        let handle = self.scan_tag_handle_directive_cow(mark, budget)?;
 
         let n_blanks = self.input.skip_while_blank();
         self.mark.offsets.chars += n_blanks;
         self.mark.col += n_blanks;
         self.mark.offsets.bytes = self.input.byte_offset();
+        self.spend_directive_bytes(budget, n_blanks, *mark)?;
 
-        let prefix = self.scan_tag_prefix_directive_cow(mark)?;
+        let prefix = self.scan_tag_prefix_directive_cow(mark, budget)?;
 
         self.input.lookahead(1);
 
@@ -2447,45 +2560,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(string)
     }
 
-    /// Scan for a tag prefix (6.8.2.2).
-    ///
-    /// There are 2 kinds of tag prefixes:
-    ///   - Local: Starts with a `!`, contains only URI chars (`!foo`)
-    ///   - Global: Starts with a tag char, contains then URI chars (`!foo,2000:app/`)
-    fn scan_tag_prefix(&mut self, start_mark: &Marker) -> Result<String, ScanError> {
-        let mut string = String::new();
-
-        if self.input.look_ch() == '!' {
-            // If we have a local tag, insert and skip `!`.
-            string.push(self.input.peek());
-            self.skip_non_blank();
-        } else if !is_tag_char(self.input.peek()) {
-            // Otherwise, check if the first global tag character is valid.
-            return Err(ScanError::from_kind(
-                *start_mark,
-                ErrorKind::InvalidGlobalTagCharacter,
-            ));
-        } else if self.input.peek() == '%' {
-            // If it is valid and an escape sequence, escape it.
-            string.push(self.scan_uri_escapes(start_mark)?);
-        } else {
-            // Otherwise, push the first character.
-            string.push(self.input.peek());
-            self.skip_non_blank();
-        }
-
-        while is_uri_char(self.input.look_ch()) {
-            if self.input.peek() == '%' {
-                string.push(self.scan_uri_escapes(start_mark)?);
-            } else {
-                string.push(self.input.peek());
-                self.skip_non_blank();
-            }
-        }
-
-        Ok(string)
-    }
-
     /// Scan for a verbatim tag.
     ///
     /// The prefixing `!<` must _not_ have been skipped.
@@ -2555,6 +2629,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn scan_uri_escapes(&mut self, mark: &Marker) -> Result<char, ScanError> {
+        self.scan_uri_escapes_with_budget(mark, None)
+    }
+
+    fn scan_uri_escapes_with_budget(
+        &mut self,
+        mark: &Marker,
+        mut directive_budget: Option<&mut usize>,
+    ) -> Result<char, ScanError> {
         let mut width = 0usize;
         let mut bytes = [0u8; 4];
         let mut bytes_len = 0usize;
@@ -2566,6 +2648,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             if !(self.input.peek() == '%' && is_hex(c) && is_hex(nc)) {
                 return Err(ScanError::from_kind(*mark, ErrorKind::InvalidTagEscape));
+            }
+
+            if let Some(budget) = directive_budget.as_deref_mut() {
+                self.spend_directive_bytes(budget, 3, *mark)?;
             }
 
             let byte = u8::try_from((as_hex(c) << 4) + as_hex(nc))

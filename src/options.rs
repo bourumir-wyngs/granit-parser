@@ -51,8 +51,11 @@ pub struct Options {
     /// queued when nested block collections end together. Parsers also count indentless block
     /// sequences, which do not add scanner indentation state.
     pub block_nesting_limit: usize,
-    /// Maximum number of bytes a directive name and reserved-directive parameter list may span.
-    /// The default is 1024. Real directives are far shorter than the default.
+    /// Maximum number of UTF-8 source bytes retained for a directive name and payload.
+    ///
+    /// The default is 1024. Separating blanks before retained values count toward the limit.
+    /// `%YAML` version components instead have a fixed nine-digit limit and are stored as integers.
+    /// Real directives are far shorter than the default.
     pub max_directive_bytes: usize,
     /// Maximum number of parameters retained for a single reserved directive.
     ///

@@ -4,8 +4,9 @@
 
 **Security**:
 
-- Bounded the memory the scanner could use to retain directives. 
-- Block-collection nesting limit
+- Bounded scanner memory retained for directives with configurable directive-byte and
+  reserved-parameter limits.
+- Added a configurable block-collection nesting limit.
 
 ## 1.1.0
 

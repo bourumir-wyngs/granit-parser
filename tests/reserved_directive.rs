@@ -1,8 +1,13 @@
-use granit_parser::{options, Options, Parser, ScanError};
+use granit_parser::{options, ErrorKind, Options, Parser, ScanError};
 
 /// Drive the parser to completion and return the first error, if any.
 fn first_error(yaml: &str, options: Options) -> Option<ScanError> {
     Parser::new_from_str_with_options(yaml, options).find_map(Result::err)
+}
+
+/// Drive an iterator-backed parser to completion and return the first error, if any.
+fn first_iter_error(yaml: &str, options: Options) -> Option<ScanError> {
+    Parser::new_from_iter_with_options(yaml.chars(), options).find_map(Result::err)
 }
 
 // ZYU8: Directive variants
@@ -215,4 +220,46 @@ fn ordinary_directives_are_unaffected_by_the_limits() {
     let yaml = "%YAML 1.2\n%TAG !e! tag:example.com,2000:app/\n%FOO bar baz\n---\nkey: value\n";
 
     assert!(first_error(yaml, Options::default()).is_none());
+}
+
+#[test]
+fn tag_directive_handle_and_prefix_are_capped_for_borrowed_and_streaming_inputs() {
+    let oversized = [
+        format!("%TAG !{}! x\n---\n", "a".repeat(100_000)),
+        format!("%TAG !e! tag:{}\n---\n", "a".repeat(100_000)),
+    ];
+
+    for yaml in &oversized {
+        for error in [
+            first_error(yaml, Options::default()),
+            first_iter_error(yaml, Options::default()),
+        ] {
+            let error = error.expect("expected a directive byte-limit error");
+            assert_eq!(
+                error.kind(),
+                &ErrorKind::DirectiveByteLimitExceeded { limit: 1024 }
+            );
+        }
+    }
+}
+
+#[test]
+fn tag_directive_byte_limit_counts_separators_and_raw_escape_bytes() {
+    let yaml = "%TAG !e! %C3%BF\n---\n";
+    let exact = options! { max_directive_bytes: 14 };
+
+    assert!(first_error(yaml, exact.clone()).is_none());
+    assert!(first_iter_error(yaml, exact).is_none());
+
+    let too_small = options! { max_directive_bytes: 13 };
+    for error in [
+        first_error(yaml, too_small.clone()),
+        first_iter_error(yaml, too_small),
+    ] {
+        let error = error.expect("expected a directive byte-limit error");
+        assert_eq!(
+            error.kind(),
+            &ErrorKind::DirectiveByteLimitExceeded { limit: 13 }
+        );
+    }
 }

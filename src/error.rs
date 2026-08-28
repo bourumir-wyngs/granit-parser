@@ -245,7 +245,7 @@ pub enum ErrorKind {
     MissingDirectiveName,
     /// A directive name contained an invalid character.
     InvalidDirectiveName,
-    /// A directive line exceeded the configured byte limit.
+    /// A retained directive name and payload exceeded the configured byte limit.
     DirectiveByteLimitExceeded {
         /// Maximum number of directive bytes accepted by the scanner.
         limit: usize,

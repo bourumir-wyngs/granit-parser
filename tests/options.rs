@@ -17,6 +17,8 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
     assert_eq!(defaults.flow_nesting_limit, 255);
     assert_eq!(defaults.block_nesting_limit, 255);
+    assert_eq!(defaults.max_directive_bytes, 1024);
+    assert_eq!(defaults.max_reserved_directive_params, 16);
     assert_eq!(granit_parser::options! {}, defaults);
 
     let options = granit_parser::options! {
@@ -25,6 +27,8 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
         simple_key_max_lookahead: 11,
         flow_nesting_limit: 13,
         block_nesting_limit: 17,
+        max_directive_bytes: 19,
+        max_reserved_directive_params: 23,
     };
 
     assert!(!options.emit_comments);
@@ -32,6 +36,8 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     assert_eq!(options.simple_key_max_lookahead, 11);
     assert_eq!(options.flow_nesting_limit, 13);
     assert_eq!(options.block_nesting_limit, 17);
+    assert_eq!(options.max_directive_bytes, 19);
+    assert_eq!(options.max_reserved_directive_params, 23);
 }
 
 #[test]
