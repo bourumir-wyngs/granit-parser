@@ -5,6 +5,7 @@
 **Security**:
 
 - Bounded the memory the scanner could use to retain directives. 
+- Block-collection nesting limit
 
 ## 1.1.0
 

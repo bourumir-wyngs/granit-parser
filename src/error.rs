@@ -291,7 +291,7 @@ pub enum ErrorKind {
         /// The bracket that opened the flow collection.
         open: char,
     },
-    /// The supported flow nesting limit was exceeded.
+    /// A configured flow or block collection nesting limit was exceeded.
     RecursionLimitExceeded,
     /// A block entry indicator appeared inside a flow collection.
     BlockEntryInFlowCollection,

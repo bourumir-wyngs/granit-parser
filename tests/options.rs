@@ -1,4 +1,4 @@
-use granit_parser::{ErrorKind, Event, Options, Parser, StrInput};
+use granit_parser::{ErrorKind, Event, Options, Parser, Scanner, StrInput, TokenType};
 
 fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
     assert!(events
@@ -16,6 +16,7 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     assert_eq!(defaults.max_buffered_comment_events, 96);
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
     assert_eq!(defaults.flow_nesting_limit, 255);
+    assert_eq!(defaults.block_nesting_limit, 255);
     assert_eq!(granit_parser::options! {}, defaults);
 
     let options = granit_parser::options! {
@@ -23,12 +24,14 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
         max_buffered_comment_events: 7,
         simple_key_max_lookahead: 11,
         flow_nesting_limit: 13,
+        block_nesting_limit: 17,
     };
 
     assert!(!options.emit_comments);
     assert_eq!(options.max_buffered_comment_events, 7);
     assert_eq!(options.simple_key_max_lookahead, 11);
     assert_eq!(options.flow_nesting_limit, 13);
+    assert_eq!(options.block_nesting_limit, 17);
 }
 
 #[test]
@@ -249,4 +252,112 @@ fn flow_nesting_limit_honors_lower_and_zero_boundaries() {
         .find_map(Result::err)
         .expect("the first flow collection should exceed limit zero");
     assert_eq!(error.kind(), &ErrorKind::RecursionLimitExceeded);
+}
+
+#[test]
+fn default_options_reject_excessive_compact_block_nesting() {
+    let yaml = format!("{}value", "- ".repeat(256));
+    let mut starts = 0;
+
+    let error = Parser::new(StrInput::new(&yaml))
+        .find_map(|result| match result {
+            Ok((Event::SequenceStart(..), _)) => {
+                starts += 1;
+                None
+            }
+            Ok(_) => None,
+            Err(error) => Some(error),
+        })
+        .expect("default options should reject block nesting level 256");
+
+    assert_eq!(error.kind(), &ErrorKind::RecursionLimitExceeded);
+    assert_eq!(starts, 255, "the over-limit collection must not start");
+}
+
+#[test]
+fn block_nesting_limit_can_be_raised() {
+    let yaml = format!("{}value", "- ".repeat(256));
+    let options = granit_parser::options! {
+        block_nesting_limit: 256,
+    };
+
+    let events = Parser::with_options(StrInput::new(&yaml), options)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("custom options should accept block nesting level 256");
+
+    assert_eq!(
+        events
+            .iter()
+            .filter(|(event, _)| matches!(event, Event::SequenceStart(..)))
+            .count(),
+        256
+    );
+}
+
+#[test]
+fn block_nesting_limit_honors_collection_and_zero_boundaries() {
+    let options = granit_parser::options! {
+        block_nesting_limit: 1,
+    };
+    Parser::with_options(StrInput::new("- value"), options)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("one block collection should be accepted at limit one");
+
+    for yaml in ["root:\n- value\n", "root:\n  - value\n"] {
+        let options = granit_parser::options! {
+            block_nesting_limit: 1,
+        };
+        let error = Parser::with_options(StrInput::new(yaml), options)
+            .find_map(Result::err)
+            .expect("a nested block collection should exceed limit one");
+        assert_eq!(error.kind(), &ErrorKind::RecursionLimitExceeded);
+    }
+
+    let options = granit_parser::options! {
+        block_nesting_limit: 0,
+    };
+    let error = Parser::with_options(StrInput::new("key: value"), options)
+        .find_map(Result::err)
+        .expect("the first block collection should exceed limit zero");
+    assert_eq!(error.kind(), &ErrorKind::RecursionLimitExceeded);
+}
+
+#[test]
+fn scanner_enforces_block_nesting_limit_for_compact_collections() {
+    for yaml in ["- - value", "? ? value", ": : value"] {
+        let options = granit_parser::options! {
+            block_nesting_limit: 1,
+        };
+        let mut starts = 0;
+        let error = Scanner::with_options(StrInput::new(yaml), options)
+            .find_map(|result| match result {
+                Ok(token)
+                    if matches!(
+                        token.token_type(),
+                        TokenType::BlockSequenceStart | TokenType::BlockMappingStart
+                    ) =>
+                {
+                    starts += 1;
+                    None
+                }
+                Ok(_) => None,
+                Err(error) => Some(error),
+            })
+            .expect("the scanner should reject the second compact block collection");
+
+        assert_eq!(error.kind(), &ErrorKind::RecursionLimitExceeded);
+        assert_eq!(starts, 1, "the over-limit collection must not start");
+    }
+}
+
+#[test]
+fn block_nesting_limit_is_reused_after_collections_close() {
+    let yaml = "---\n- first\n...\n---\nkey: value\n";
+    let options = granit_parser::options! {
+        block_nesting_limit: 1,
+    };
+
+    Parser::with_options(StrInput::new(yaml), options)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("closed collections should release their nesting budget");
 }

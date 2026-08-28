@@ -10,11 +10,13 @@
 ///     max_buffered_comment_events: 64,
 ///     emit_comments: false,
 ///     flow_nesting_limit: 512,
+///     block_nesting_limit: 256,
 /// };
 ///
 /// assert_eq!(options.max_buffered_comment_events, 64);
 /// assert!(!options.emit_comments);
 /// assert_eq!(options.flow_nesting_limit, 512);
+/// assert_eq!(options.block_nesting_limit, 256);
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +43,14 @@ pub struct Options {
     ///
     /// The default is 255. A value of zero rejects the first flow collection opener.
     pub flow_nesting_limit: usize,
+    /// Maximum number of simultaneously nested block collections parsed, or block indentation
+    /// levels retained by a scanner used directly.
+    ///
+    /// The default is 255. A value of zero rejects the first block sequence or mapping. This
+    /// bounds both indentation state retained while scanning and the number of closing tokens
+    /// queued when nested block collections end together. Parsers also count indentless block
+    /// sequences, which do not add scanner indentation state.
+    pub block_nesting_limit: usize,
     /// Maximum number of bytes a directive name and reserved-directive parameter list may span.
     /// The default is 1024. Real directives are far shorter than the default.
     pub max_directive_bytes: usize,
@@ -58,6 +68,7 @@ impl Default for Options {
             max_buffered_comment_events: 96,
             simple_key_max_lookahead: 1024,
             flow_nesting_limit: 255,
+            block_nesting_limit: 255,
             max_directive_bytes: 1024,
             max_reserved_directive_params: 16,
         }

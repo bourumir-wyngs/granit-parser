@@ -18,6 +18,7 @@
 /// assert!(!options.emit_comments);
 /// assert_eq!(options.simple_key_max_lookahead, 2048);
 /// assert_eq!(options.flow_nesting_limit, 255);
+/// assert_eq!(options.block_nesting_limit, 255);
 /// ```
 #[macro_export]
 macro_rules! options {

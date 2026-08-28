@@ -2,9 +2,7 @@ use granit_parser::{options, Options, Parser, ScanError};
 
 /// Drive the parser to completion and return the first error, if any.
 fn first_error(yaml: &str, options: Options) -> Option<ScanError> {
-    Parser::new_from_str_with_options(yaml, options)
-        .filter_map(Result::err)
-        .next()
+    Parser::new_from_str_with_options(yaml, options).find_map(Result::err)
 }
 
 // ZYU8: Directive variants

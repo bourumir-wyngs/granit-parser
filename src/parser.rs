@@ -493,6 +493,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     scanner: Scanner<'input, T>,
     /// Maximum number of comments retained while resolving an ambiguous collection entry.
     max_buffered_comment_events: usize,
+    /// Maximum number of simultaneously open block collections.
+    block_nesting_limit: usize,
+    /// Number of block collections currently open in the parser state machine.
+    block_level: usize,
     /// The stack of _previous_ states we were in.
     ///
     /// States are pushed in the context of subobjects to this stack. The top-most element is the
@@ -937,10 +941,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     #[must_use]
     pub fn with_options(src: T, options: Options) -> Self {
         let max_buffered_comment_events = options.max_buffered_comment_events;
+        let block_nesting_limit = options.block_nesting_limit;
 
         Parser {
             scanner: Scanner::with_options(src, options),
             max_buffered_comment_events,
+            block_nesting_limit,
+            block_level: 0,
             states: Vec::new(),
             state: State::StreamStart,
             token: None,
@@ -1288,6 +1295,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Push a new state atop the state stack.
     fn push_state(&mut self, state: State) {
         self.states.push(state);
+    }
+
+    fn start_block_collection(&mut self, mark: Marker) -> Result<(), ScanError> {
+        if self.block_level >= self.block_nesting_limit {
+            return Err(ScanError::from_kind(
+                mark,
+                ErrorKind::RecursionLimitExceeded,
+            ));
+        }
+        self.block_level += 1;
+        Ok(())
+    }
+
+    fn end_block_collection(&mut self) {
+        debug_assert!(self.block_level > 0);
+        self.block_level -= 1;
     }
 
     fn defer_parse_node<'a>(
@@ -1815,6 +1838,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEntry) if indentless_sequence => {
+                self.start_block_collection(mark.start)?;
                 self.skip();
                 let start = (
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
@@ -1890,6 +1914,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             QueuedToken(mark, QueuedTokenType::BlockSequenceStart) if block => {
+                self.start_block_collection(mark.start)?;
                 self.state = State::BlockSequenceFirstEntry;
                 self.skip();
                 Ok(Self::attach_tag_start(
@@ -1899,6 +1924,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             QueuedToken(mark, QueuedTokenType::BlockMappingStart) if block => {
+                self.start_block_collection(mark.start)?;
                 self.state = State::BlockMappingFirstKey;
                 self.skip();
                 Ok(Self::attach_tag_start(
@@ -1968,6 +1994,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 Ok((Event::empty_scalar(), Span::empty(mark.start)))
             }
             QueuedToken(mark, QueuedTokenType::BlockEnd) => {
+                self.end_block_collection();
                 self.pop_state();
                 self.skip();
                 Ok((Event::MappingEnd, mark))
@@ -2269,6 +2296,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 }
             }
             QueuedToken(mark, _) => {
+                self.end_block_collection();
                 self.pop_state();
                 Ok((Event::SequenceEnd, mark))
             }
@@ -2317,6 +2345,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEnd) => {
+                self.end_block_collection();
                 self.pop_state();
                 self.skip();
                 Ok((Event::SequenceEnd, mark))

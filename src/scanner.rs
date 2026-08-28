@@ -782,6 +782,8 @@ pub struct Scanner<'input, T> {
     indents: smallvec::SmallVec<[Indent; 8]>,
     /// Level of nesting of flow collections.
     flow_level: usize,
+    /// Number of open block collections that will each generate a `BlockEnd` token.
+    block_level: usize,
     /// The number of tokens that have been returned from the scanner.
     ///
     /// This excludes the tokens from [`Self::tokens`].
@@ -1152,6 +1154,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             indent: -1,
             indents: smallvec::SmallVec::new(),
             flow_level: 0,
+            block_level: 0,
             tokens_parsed: 0,
             token_available: false,
             leading_whitespace: true,
@@ -2832,7 +2835,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
 
         // generate BLOCK-SEQUENCE-START if indented
-        self.roll_indent(mark.col, None, TokenType::BlockSequenceStart, mark);
+        self.roll_indent(mark.col, None, TokenType::BlockSequenceStart, mark)?;
         let token_index = self.tokens.len();
         let found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
         self.input.lookahead(2);
@@ -3951,7 +3954,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 None,
                 TokenType::BlockMappingStart,
                 start_mark,
-            );
+            )?;
         } else {
             // The scanner, upon emitting a `Key`, will prepend a `MappingStart` event.
             self.set_current_flow_mapping_started(true);
@@ -4066,7 +4069,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Some(sk.token_number),
                 TokenType::BlockMappingStart,
                 sk.mark,
-            );
+            )?;
             self.roll_one_col_indent();
 
             self.simple_keys.last_mut().unwrap().possible = false;
@@ -4090,7 +4093,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     None,
                     TokenType::BlockMappingStart,
                     start_mark,
-                );
+                )?;
             }
             self.roll_one_col_indent();
 
@@ -4118,9 +4121,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         number: Option<usize>,
         tok: TokenType<'input>,
         mark: Marker,
-    ) {
+    ) -> ScanResult {
         if self.flow_level > 0 {
-            return;
+            return Ok(());
         }
 
         // If the last indent was a non-block indent, remove it.
@@ -4136,10 +4139,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if self.indent < col as isize {
+            if self.block_level >= self.options.block_nesting_limit {
+                return Err(ScanError::from_kind(
+                    mark,
+                    ErrorKind::RecursionLimitExceeded,
+                ));
+            }
             self.indents.push(Indent {
                 indent: self.indent,
                 needs_block_end: true,
             });
+            self.block_level += 1;
             self.indent = col as isize;
             let tokens_parsed = self.tokens_parsed;
             match number {
@@ -4147,6 +4157,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 None => self.tokens.push_back(Token(Span::empty(mark), tok).into()),
             }
         }
+        Ok(())
     }
 
     /// Pop indentation levels from the stack as much as needed.
@@ -4162,6 +4173,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let indent = self.indents.pop().unwrap();
             self.indent = indent.indent;
             if indent.needs_block_end {
+                debug_assert!(self.block_level > 0);
+                self.block_level -= 1;
                 self.tokens
                     .push_back(Token(Span::empty(self.mark), TokenType::BlockEnd).into());
             }
