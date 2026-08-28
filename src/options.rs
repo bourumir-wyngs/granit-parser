@@ -41,6 +41,14 @@ pub struct Options {
     ///
     /// The default is 255. A value of zero rejects the first flow collection opener.
     pub flow_nesting_limit: usize,
+    /// Maximum number of bytes a directive name and reserved-directive parameter list may span.
+    /// The default is 1024. Real directives are far shorter than the default.
+    pub max_directive_bytes: usize,
+    /// Maximum number of parameters retained for a single reserved directive.
+    ///
+    /// The default is 16. The parser ignores reserved directives, so their parameters only reach
+    /// code driving [`crate::Scanner`] directly. A value of zero rejects the first parameter.
+    pub max_reserved_directive_params: usize,
 }
 
 impl Default for Options {
@@ -50,6 +58,8 @@ impl Default for Options {
             max_buffered_comment_events: 96,
             simple_key_max_lookahead: 1024,
             flow_nesting_limit: 255,
+            max_directive_bytes: 1024,
+            max_reserved_directive_params: 16,
         }
     }
 }

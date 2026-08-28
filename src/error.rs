@@ -245,6 +245,16 @@ pub enum ErrorKind {
     MissingDirectiveName,
     /// A directive name contained an invalid character.
     InvalidDirectiveName,
+    /// A directive line exceeded the configured byte limit.
+    DirectiveByteLimitExceeded {
+        /// Maximum number of directive bytes accepted by the scanner.
+        limit: usize,
+    },
+    /// A reserved directive carried more parameters than the configured limit.
+    TooManyReservedDirectiveParams {
+        /// Maximum number of reserved directive parameters accepted by the scanner.
+        limit: usize,
+    },
     /// A YAML version component exceeded the supported length.
     YamlVersionTooLong,
     /// A YAML version component was missing.
@@ -462,6 +472,14 @@ impl fmt::Display for ErrorKind {
             ),
             Self::InvalidDirectiveName => f.write_str(
                 "while scanning a directive, found unexpected non-alphabetical character",
+            ),
+            Self::DirectiveByteLimitExceeded { limit } => write!(
+                f,
+                "directive exceeds the configured limit of {limit} bytes"
+            ),
+            Self::TooManyReservedDirectiveParams { limit } => write!(
+                f,
+                "reserved directive exceeds the configured limit of {limit} parameters"
             ),
             Self::YamlVersionTooLong => {
                 f.write_str("while scanning a YAML directive, found extremely long version number")

@@ -1,4 +1,11 @@
-use granit_parser::{Parser, ScanError};
+use granit_parser::{options, Options, Parser, ScanError};
+
+/// Drive the parser to completion and return the first error, if any.
+fn first_error(yaml: &str, options: Options) -> Option<ScanError> {
+    Parser::new_from_str_with_options(yaml, options)
+        .filter_map(Result::err)
+        .next()
+}
 
 // ZYU8: Directive variants
 // In YAML 1.2, a directive name is any non\u{2011}space, non\u{2011}line\u{2011}break sequence of characters
@@ -101,4 +108,113 @@ fn yaml_reserved_directive_with_param_at_eof() {
         .unwrap()
         .info()
         .contains("did not find expected <document start>"));
+}
+
+// The parser ignores reserved directives, but the scanner still has to materialize one `String`
+// per parameter to build the token. Without a limit, `%X` followed by two-byte ` a` parameters
+// buys an allocation and a vector slot for every two input bytes, all inside a single token and
+// therefore before any event-level budget can see it.
+#[test]
+fn reserved_directive_params_are_capped_by_default() {
+    let mut yaml = String::from("%X");
+    for _ in 0..100_000 {
+        yaml.push_str(" a");
+    }
+    yaml.push_str("\n---\n");
+
+    let err = first_error(&yaml, Options::default()).expect("expected a limit error");
+    assert!(
+        err.info().contains("reserved directive exceeds"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+#[test]
+fn reserved_directive_param_count_limit_is_configurable() {
+    let options = options! { max_reserved_directive_params: 2 };
+
+    assert!(first_error("%X a b\n---\n", options.clone()).is_none());
+
+    let err = first_error("%X a b c\n---\n", options).expect("expected a limit error");
+    assert!(
+        err.info()
+            .contains("reserved directive exceeds the configured limit of 2 parameters"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+// A single unbounded parameter is a weaker amplification than many small ones, but the scanner
+// would still retain a `String` the size of the input for a token the parser discards.
+#[test]
+fn oversized_reserved_directive_param_is_rejected() {
+    let mut yaml = String::from("%X ");
+    yaml.push_str(&"a".repeat(100_000));
+    yaml.push_str("\n---\n");
+
+    let err = first_error(&yaml, Options::default()).expect("expected a limit error");
+    assert!(
+        err.info()
+            .contains("directive exceeds the configured limit of 1024 bytes"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+#[test]
+fn oversized_directive_name_is_rejected() {
+    let yaml = format!("%{}\n---\n", "A".repeat(100_000));
+
+    let err = first_error(&yaml, Options::default()).expect("expected a limit error");
+    assert!(
+        err.info()
+            .contains("directive exceeds the configured limit of 1024 bytes"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+// The byte limit spans the whole directive, so parameters that individually fit still cannot add
+// up to an unbounded token.
+#[test]
+fn reserved_directive_bytes_are_capped_across_params() {
+    let options = options! { max_reserved_directive_params: usize::MAX };
+    let mut yaml = String::from("%X");
+    for _ in 0..100_000 {
+        yaml.push_str(" aaaaaaaa");
+    }
+    yaml.push_str("\n---\n");
+
+    let err = first_error(&yaml, options).expect("expected a limit error");
+    assert!(
+        err.info()
+            .contains("directive exceeds the configured limit of 1024 bytes"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+#[test]
+fn directive_byte_limit_is_configurable_and_counts_multibyte_chars() {
+    let options = options! { max_directive_bytes: 8 };
+
+    // The name, the separating blank and three two-byte characters exactly fill the budget.
+    assert!(first_error("%X ÿÿÿ\n---\n", options.clone()).is_none());
+
+    let err = first_error("%X ÿÿÿÿ\n---\n", options).expect("expected a limit error");
+    assert!(
+        err.info()
+            .contains("directive exceeds the configured limit of 8 bytes"),
+        "unexpected error: {}",
+        err.info()
+    );
+}
+
+// Real directives are short; the defaults must not disturb them.
+#[test]
+fn ordinary_directives_are_unaffected_by_the_limits() {
+    let yaml = "%YAML 1.2\n%TAG !e! tag:example.com,2000:app/\n%FOO bar baz\n---\nkey: value\n";
+
+    assert!(first_error(yaml, Options::default()).is_none());
 }

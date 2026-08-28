@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+**Security**:
+
+- Bounded the memory the scanner could use to retain directives. 
+
 ## 1.1.0
 
 **API Additions**:

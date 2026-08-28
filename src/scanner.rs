@@ -20,7 +20,8 @@ use core::char;
 use crate::{
     char_traits::{
         as_hex, find_non_printable, is_anchor_char, is_blank_or_breakz, is_bom, is_break,
-        is_breakz, is_flow, is_hex, is_printable, is_tag_char, is_uri_char,
+        is_breakz, is_flow, is_hex, is_printable, is_tag_char, is_uri_char, is_yaml_non_space,
+        is_z,
     },
     error::{ErrorKind, ScanError},
     input::{BorrowedInput, SkipTabs},
@@ -1946,7 +1947,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let start_mark = self.mark;
         self.skip_non_blank();
 
-        let name = self.scan_directive_name()?;
+        // Directives precede every event, so a document could otherwise make the scanner retain
+        // memory proportional to the input before any event, node or scalar budget can apply.
+        let mut budget = self.options.max_directive_bytes;
+
+        let name = self.scan_directive_name(&mut budget)?;
         let tok = match name.as_ref() {
             "YAML" => self.scan_version_directive_value(&start_mark)?,
             "TAG" => self.scan_tag_directive_value(&start_mark)?,
@@ -1957,10 +1962,23 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     self.mark.offsets.chars += n_blanks;
                     self.mark.col += n_blanks;
                     self.mark.offsets.bytes = self.input.byte_offset();
+                    budget = budget.saturating_sub(n_blanks);
 
                     if !is_blank_or_breakz(self.input.peek()) {
+                        if params.len() >= self.options.max_reserved_directive_params {
+                            return Err(ScanError::from_kind(
+                                start_mark,
+                                ErrorKind::TooManyReservedDirectiveParams {
+                                    limit: self.options.max_reserved_directive_params,
+                                },
+                            ));
+                        }
+
                         let mut param = String::new();
-                        let n_chars = self.input.fetch_while_is_yaml_non_space(&mut param);
+                        let Some(n_chars) = self.fetch_directive_word(&mut param, &mut budget)
+                        else {
+                            return Err(self.directive_byte_limit(start_mark));
+                        };
                         self.mark.offsets.chars += n_chars;
                         self.mark.col += n_chars;
                         self.mark.offsets.bytes = self.input.byte_offset();
@@ -2013,11 +2031,52 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         ))
     }
 
-    fn scan_directive_name(&mut self) -> Result<String, ScanError> {
+    /// Build the error reported when a directive outgrows [`Options::max_directive_bytes`].
+    fn directive_byte_limit(&self, start_mark: Marker) -> ScanError {
+        ScanError::from_kind(
+            start_mark,
+            ErrorKind::DirectiveByteLimitExceeded {
+                limit: self.options.max_directive_bytes,
+            },
+        )
+    }
+
+    /// Fetch a run of [`is_yaml_non_space`] characters into `out`, spending `budget` bytes.
+    ///
+    /// This mirrors [`crate::input::Input::fetch_while_is_yaml_non_space`] but stops as soon as
+    /// the run would outgrow `budget`, returning [`None`]. Checking before each push is what keeps
+    /// the allocation bounded: a limit applied after the fetch would already have grown `out` to
+    /// the size of the run.
+    fn fetch_directive_word(&mut self, out: &mut String, budget: &mut usize) -> Option<usize> {
+        let mut n_chars = 0;
+
+        loop {
+            let c = self.input.look_ch();
+            if !is_yaml_non_space(c) || is_z(c) {
+                break;
+            }
+
+            let len = c.len_utf8();
+            if len > *budget {
+                return None;
+            }
+            *budget -= len;
+
+            out.push(c);
+            self.input.skip();
+            n_chars += 1;
+        }
+
+        Some(n_chars)
+    }
+
+    fn scan_directive_name(&mut self, budget: &mut usize) -> Result<String, ScanError> {
         let start_mark = self.mark;
         let mut string = String::new();
 
-        let n_chars = self.input.fetch_while_is_yaml_non_space(&mut string);
+        let Some(n_chars) = self.fetch_directive_word(&mut string, budget) else {
+            return Err(self.directive_byte_limit(start_mark));
+        };
         self.mark.offsets.chars += n_chars;
         self.mark.col += n_chars;
         self.mark.offsets.bytes = self.input.byte_offset();
