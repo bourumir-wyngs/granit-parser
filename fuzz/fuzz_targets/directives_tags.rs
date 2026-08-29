@@ -3,7 +3,7 @@
 mod common;
 
 use common::parse_with_both_inputs;
-use granit_parser::Parser;
+use granit_parser::{ErrorKind, Options, Parser};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_LEN: usize = 8 * 1024;
@@ -53,10 +53,11 @@ fn assert_single_tag(
     expected_suffix: &str,
     expected_original_handle: &str,
     expect_alias: bool,
+    options: Options,
 ) {
-    let events = Parser::new_from_str(input)
+    let events = Parser::new_from_str_with_options(input, options)
         .collect::<Result<Vec<_>, _>>()
-        .expect("generated directive and tag YAML must parse");
+        .expect("generated directive and tag YAML must parse with sufficient resource limits");
     let tagged_events = events
         .iter()
         .filter(|(event, _)| event.tag().is_some())
@@ -105,14 +106,31 @@ fuzz_target!(|data: &[u8]| {
             let prefix = format!("tag:example.com,2026:{}", uri_component(payload));
             let yaml =
                 format!("%YAML 1.2\n%TAG !e! {prefix}\n---\nkey: !e!item {scalar}\n");
-            assert_single_tag(&yaml, &prefix, "item", "!e!", false);
+
+            let mut options = Options::default();
+            let directive_bytes = b"TAG !e! ".len() + prefix.len();
+            if directive_bytes > options.max_directive_bytes {
+                // The default resource-limit error is valid. Require that exact error, then retry
+                // with enough budget so the tag-resolution oracle still exercises this payload.
+                let limit = options.max_directive_bytes;
+                let error = Parser::new_from_str(&yaml)
+                    .collect::<Result<Vec<_>, _>>()
+                    .expect_err("an oversized generated %TAG directive must be rejected");
+                assert_eq!(
+                    error.kind(),
+                    &ErrorKind::DirectiveByteLimitExceeded { limit }
+                );
+                options.max_directive_bytes = directive_bytes;
+            }
+
+            assert_single_tag(&yaml, &prefix, "item", "!e!", false, options);
             yaml
         }
         1 => {
             let scalar = quoted_scalar(payload);
             let uri = format!("tag:example.com,2026:{}", uri_component(payload));
             let yaml = format!("---\n!<{uri}> {scalar}\n");
-            assert_single_tag(&yaml, "", &uri, "", false);
+            assert_single_tag(&yaml, "", &uri, "", false, Options::default());
             yaml
         }
         2 => {
@@ -121,7 +139,7 @@ fuzz_target!(|data: &[u8]| {
             let yaml = format!(
                 "---\nnode:\n  &anchor !{suffix}\n  # generated\n  {scalar}\nalias: *anchor\n"
             );
-            assert_single_tag(&yaml, "!", &suffix, "!", true);
+            assert_single_tag(&yaml, "!", &suffix, "!", true, Options::default());
             yaml
         }
         3 => format!(

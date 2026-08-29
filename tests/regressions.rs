@@ -1,4 +1,6 @@
-use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span, StructureStyle};
+use granit_parser::{
+    ErrorKind, Event, Options, Parser, ScalarStyle, ScanError, Span, StructureStyle,
+};
 use std::{collections::BTreeSet, fs, path::Path};
 
 fn collect_ok_events(yaml: &str) -> Vec<(Event<'_>, Span)> {
@@ -106,6 +108,84 @@ fn overwritten_pending_anchor_does_not_make_later_alias_valid() {
     // the pending first anchor before the scalar event is emitted.
     let yaml = "node:\n  &a !t #\n  &b value\nalias: *a\n";
     assert_emitted_aliases_reference_preceding_anchor_nodes(yaml);
+}
+
+#[test]
+fn directives_tags_fuzz_crash_is_expected_directive_limit() {
+    const INPUT: &[u8] = concat!(
+        "x\0\0\0- name: Eted\n",
+        "  tags: edge\n",
+        "  -MAP\n",
+        "     -DOC\n",
+        "    -STR\n",
+        "  emit: |\n",
+        "    ---\n",
+        "- name: Comment TR\n",
+        "  emit: |\n",
+        "    ---\n",
+        "- name: Comment that looks like a mapping key\n",
+        "  fr:om: '@perlpunk'\n",
+        "  tags: comment error mapping\n",
+        "  fail: true\n",
+        "  yaml: |\n",
+        "    key: value\n",
+        "    this is #not \n",
+        "a: key\n",
+        "  tree: |\n",
+        "    +STRthat looks like a mapping key\n",
+        "  fr:om: '@perlpunk'\n",
+        "  tags: comment error mapping\n",
+        "  fail: true\n",
+        "  yaml: |\n",
+        "    key: value\n",
+        "    this is #not \n",
+        "a: key\n",
+        "  tree: |\n",
+        "    +STR\n",
+        "     +DOC\n",
+        "      +MAP\n",
+        "       =VAL :key\n",
+        "       =VAL :value\n",
+    )
+    .as_bytes();
+
+    let (&selector, payload) = INPUT.split_first().expect("fuzz input is not empty");
+    assert_eq!(selector % 6, 0, "regression input changed fuzz branches");
+    let payload = std::str::from_utf8(payload).expect("fuzz payload is UTF-8");
+
+    let mut component = String::with_capacity(payload.len() * 2 + 1);
+    component.push('x');
+    for byte in payload.bytes() {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        component.push(char::from(HEX[usize::from(byte >> 4)]));
+        component.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+
+    let handle = format!("tag:example.com,2026:{component}");
+    let yaml = format!("%YAML 1.2\n%TAG !e! {handle}\n---\nkey: !e!item {payload:?}\n");
+
+    let mut options = Options::default();
+    let limit = options.max_directive_bytes;
+    let directive_bytes = b"TAG !e! ".len() + handle.len();
+    assert!(directive_bytes > limit);
+    assert_eq!(
+        first_error(&yaml).kind(),
+        &ErrorKind::DirectiveByteLimitExceeded { limit }
+    );
+
+    options.max_directive_bytes = directive_bytes;
+    let events = Parser::new_from_str_with_options(&yaml, options)
+        .map(|result| result.expect("generated YAML should parse with sufficient directive budget"))
+        .collect::<Vec<_>>();
+    let tagged = events
+        .iter()
+        .filter_map(|(event, _)| event.tag())
+        .collect::<Vec<_>>();
+
+    assert_eq!(tagged.len(), 1);
+    assert_eq!(tagged[0].handle(), handle);
+    assert_eq!(tagged[0].suffix(), "item");
+    assert_eq!(tagged[0].original_handle(), "!e!");
 }
 
 #[test]
