@@ -38,6 +38,46 @@ fn scalar_values_with_style(input: &str, style: ScalarStyle) -> Vec<String> {
 }
 
 #[test]
+fn block_scalar_indicators_cannot_start_nodes_in_flow_collections() {
+    for (yaml, indicator) in [
+        ("[|]\n", '|'),
+        ("[>]\n", '>'),
+        ("{|: value}\n", '|'),
+        ("{>: value}\n", '>'),
+        ("{key: |}\n", '|'),
+        ("{key: >}\n", '>'),
+    ] {
+        assert_eq!(
+            first_error(yaml).kind(),
+            &ErrorKind::UnexpectedCharacter {
+                character: indicator,
+            },
+            "input: {yaml:?}",
+        );
+    }
+}
+
+#[test]
+fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
+    assert_eq!(
+        scalar_values("[a|b, a>b, \"|\", '>']\n"),
+        ["a|b", "a>b", "|", ">"],
+    );
+}
+
+#[test]
+fn block_scalars_remain_valid_outside_flow_collections() {
+    assert_eq!(
+        scalar_values_with_style("key: |\n  literal\n", ScalarStyle::Literal),
+        ["literal\n"],
+    );
+    assert_eq!(
+        scalar_values_with_style("key: >\n  folded\n", ScalarStyle::Folded),
+        ["folded\n"],
+    );
+}
+
+#[test]
 fn alias_anchor_edge_cases() {
     assert_eq!(
         first_error("a: *nope\n").info(),
