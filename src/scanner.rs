@@ -1657,7 +1657,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.fetch_plain_scalar()
             }
             c if is_bom(c) => Err(self.scan_error(ErrorKind::BomInsideDocument)),
-            '%' | '@' | '`' => {
+            '|' | '>' | '%' | '@' | '`' => {
                 Err(self.scan_error(ErrorKind::UnexpectedCharacter { character: c }))
             }
             _ => self.fetch_plain_scalar(),

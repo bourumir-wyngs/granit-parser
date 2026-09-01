@@ -1,5 +1,10 @@
 # Changelog
-
+## 1.2.1
+ - Reject | and > when they appear as the first character of an unquoted scalar inside a flow collection. 
+ - Do not reject every | or > encountered by scan_plain_scalar. These characters are legal after the 
+   first character of a plain scalar ([a|b, a>b] ok, [|, >]) not. This is consistent with serde-yaml, also seems
+   correct by YAML specs.
+ 
 ## 1.2.0
 
 **Security**:
