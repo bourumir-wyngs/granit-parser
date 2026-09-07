@@ -159,6 +159,56 @@ fn first_tagged_scalar(events: &[Event<'_>]) -> (String, Tag) {
 // --- Streaming input (`byte_offset() == None`): owned tag scanning paths -------------------
 
 #[test]
+fn primary_handle_override_only_expands_shorthand_tags() {
+    for (source_tag, expected_prefix, expected_suffix) in [
+        ("!", "", "!"),
+        ("!foo", "tag:example.org,2026:", "foo"),
+        ("!!str", "tag:yaml.org,2002:", "str"),
+        ("!<tag:other.org,2026:foo>", "", "tag:other.org,2026:foo"),
+    ] {
+        let yaml = format!("%TAG ! tag:example.org,2026:\n--- {source_tag} 123\n");
+        let events = collect_events(StrInput::new(&yaml)).unwrap();
+        assert_eq!(events, collect_events(buffered(&yaml)).unwrap());
+
+        let (value, tag) = first_tagged_scalar(&events);
+        assert_eq!(value, "123");
+        assert_eq!(tag.parts(), (expected_prefix, expected_suffix));
+        assert_eq!(tag.original(), source_tag);
+        assert_eq!(
+            tag.to_string(),
+            format!("{expected_prefix}{expected_suffix}")
+        );
+    }
+}
+
+#[test]
+fn primary_handle_override_preserves_non_specific_tag_on_all_node_types() {
+    for node in [
+        "!",
+        "! true",
+        "! \"123\"",
+        "! &a 123",
+        "&a ! 123",
+        "! # comment\n123",
+        "! [123]",
+        "! {key: 123}",
+        "! |\n  123",
+    ] {
+        let baseline = format!("--- {node}\n");
+        let expected = collect_events(StrInput::new(&baseline)).unwrap();
+        let yaml = format!("%TAG ! tag:example.org,2026:\n{baseline}");
+        let events = collect_events(StrInput::new(&yaml)).unwrap();
+        assert_eq!(events, expected, "input: {yaml:?}");
+        assert_eq!(events, collect_events(buffered(&yaml)).unwrap());
+
+        let tag = events.iter().find_map(Event::tag).expect("expected a tag");
+        assert_eq!(tag.parts(), ("", "!"));
+        assert_eq!(tag.original_parts(), ("", "!"));
+        assert_eq!(tag.original(), "!");
+    }
+}
+
+#[test]
 fn streaming_tag_directive_resolves_shorthand_tag() {
     let events = collect_events(buffered(
         "%TAG !e! tag:example.com,2000:app/\n---\n!e!foo bar\n",

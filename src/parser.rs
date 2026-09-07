@@ -2492,13 +2492,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 original_handle,
             )
         } else if handle.is_empty() && suffix == "!" {
-            // "!" introduces a local tag. Local tags may have their prefix overridden.
-            match self.tags.get("!") {
-                Some(prefix) => {
-                    Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
-                }
-                None => Tag::with_original_handle(String::new(), suffix, original_handle),
-            }
+            // Bare "!" is a non-specific tag, not a primary handle to expand with %TAG.
+            Tag::with_original_handle(String::new(), suffix, original_handle)
         } else {
             // Lookup handle in our tag directives.
             let prefix = self.tags.get(&**handle);
@@ -2633,9 +2628,9 @@ impl<'input, T: BorrowedInput<'input>> core::iter::FusedIterator for Parser<'inp
 
 #[cfg(test)]
 mod test {
-    use alloc::{borrow::Cow, string::ToString, vec, vec::Vec};
     #[cfg(feature = "error_messages")]
-    use alloc::{format, string::String};
+    use alloc::string::String;
+    use alloc::{borrow::Cow, format, string::ToString, vec, vec::Vec};
     #[cfg(feature = "error_messages")]
     use core::{error::Error as _, fmt};
 
@@ -3892,22 +3887,29 @@ baz: "qux"
     }
 
     #[test]
-    fn test_resolve_tag_uses_overridden_local_prefix() {
+    fn test_resolve_tag_distinguishes_non_specific_and_primary_handle_tags() {
         let mut parser = Parser::new_from_str("");
         parser
             .tags
             .insert("!".into(), "tag:local.example,2024:".into());
 
-        let tag = parser
-            .resolve_tag(
-                Span::empty(Marker::new(0, 1, 0)),
-                &Cow::Borrowed(""),
-                Cow::Borrowed("!"),
-            )
-            .unwrap();
+        for (handle, suffix, expected_prefix, original) in [
+            ("", "!", "", "!"),
+            ("!", "foo", "tag:local.example,2024:", "!foo"),
+        ] {
+            let tag = parser
+                .resolve_tag(
+                    Span::empty(Marker::new(0, 1, 0)),
+                    &Cow::Borrowed(handle),
+                    Cow::Borrowed(suffix),
+                )
+                .unwrap();
 
-        assert_eq!(tag.handle, "tag:local.example,2024:");
-        assert_eq!(tag.suffix, "!");
+            assert_eq!(tag.parts(), (expected_prefix, suffix));
+            assert_eq!(tag.original_parts(), (handle, suffix));
+            assert_eq!(tag.original(), original);
+            assert_eq!(tag.to_string(), format!("{expected_prefix}{suffix}"));
+        }
     }
 
     #[test]

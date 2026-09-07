@@ -1,5 +1,7 @@
 # Changelog
 ## 1.2.1
+ - Preserve the non-specific `!` tag when `%TAG !` overrides the primary tag handle; continue
+   expanding shorthand tags such as `!foo` with the overridden prefix.
  - Allow tabs as separation whitespace after `:` in block and flow mappings, including JSON,
    while retaining tab indentation checks.
  - Stop zero-indented root block scalars at `---` document markers, preserving the next document
