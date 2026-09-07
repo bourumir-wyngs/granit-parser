@@ -67,11 +67,18 @@ fn root_block_scalars_stop_at_document_markers() {
                 ("...\nsecond\n", false, "second"),
             ] {
                 let yaml = format!("{indicator}{chomping}\n{content}{next_document}");
-                let events: Vec<_> = run_parser_with_span(&yaml)
-                    .unwrap()
-                    .into_iter()
-                    .map(|(event, _)| event)
-                    .collect();
+                let spanned_events = run_parser_with_span(&yaml).unwrap();
+                let marker_start = yaml.len() - next_document.len();
+                assert_eq!(
+                    spanned_events[2].1.end.index(),
+                    marker_start,
+                    "input: {yaml:?}"
+                );
+                if explicit {
+                    assert_eq!(spanned_events[4].1.start.index(), marker_start);
+                    assert_eq!(spanned_events[4].1.slice(&yaml), Some("---"));
+                }
+                let events: Vec<_> = spanned_events.into_iter().map(|(event, _)| event).collect();
                 assert_eq!(
                     events,
                     [

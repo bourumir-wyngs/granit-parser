@@ -1,12 +1,16 @@
-use granit_parser::{ErrorKind, Event, Parser, ScanError};
+use granit_parser::{ErrorKind, Event, Parser, ScalarStyle, ScanError, StructureStyle};
 
-fn collect_scalars(input: &str) -> Result<Vec<String>, ScanError> {
+fn collect_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     let str_events = Parser::new_from_str(input).collect::<Result<Vec<_>, _>>();
     let iter_events = Parser::new_from_iter(input.chars()).collect::<Result<Vec<_>, _>>();
     assert_eq!(str_events, iter_events, "input: {input:?}");
-    Ok(str_events?
+    Ok(str_events?.into_iter().map(|(event, _)| event).collect())
+}
+
+fn collect_scalars(input: &str) -> Result<Vec<String>, ScanError> {
+    Ok(collect_events(input)?
         .into_iter()
-        .filter_map(|(event, _)| match event {
+        .filter_map(|event| match event {
             Event::Scalar(value, ..) => Some(value.into_owned()),
             _ => None,
         })
@@ -19,14 +23,35 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
         "1", "-1", "true", "false", "null", "value", "-item", "_value", "äöü",
     ] {
         for separator in ["\t", "\t\t", "\t ", " \t"] {
-            for yaml in [
-                format!("{{\"key\":{separator}{value}}}"),
-                format!("key:{separator}{value}\n"),
-                format!("? key\n:{separator}{value}\n"),
+            for (yaml, mapping_style, key_style) in [
+                (
+                    format!("{{\"key\":{separator}{value}}}"),
+                    StructureStyle::Flow,
+                    ScalarStyle::DoubleQuoted,
+                ),
+                (
+                    format!("key:{separator}{value}\n"),
+                    StructureStyle::Block,
+                    ScalarStyle::Plain,
+                ),
+                (
+                    format!("? key\n:{separator}{value}\n"),
+                    StructureStyle::Block,
+                    ScalarStyle::Plain,
+                ),
             ] {
                 assert_eq!(
-                    collect_scalars(&yaml).unwrap(),
-                    ["key", value],
+                    collect_events(&yaml).unwrap(),
+                    [
+                        Event::StreamStart,
+                        Event::DocumentStart(false, None),
+                        Event::MappingStart(mapping_style, 0, None),
+                        Event::Scalar("key".into(), key_style, 0, None),
+                        Event::Scalar(value.into(), ScalarStyle::Plain, 0, None),
+                        Event::MappingEnd,
+                        Event::DocumentEnd,
+                        Event::StreamEnd,
+                    ],
                     "input: {yaml:?}",
                 );
             }

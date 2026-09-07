@@ -1,6 +1,6 @@
 use granit_parser::{
-    ErrorKind, Event, Options, Parser, ParserStack, ParserTrait, ReplayParser, ScanError, Span,
-    StrInput,
+    ErrorKind, Event, Marker, Options, Parser, ParserStack, ParserTrait, Placement, ReplayParser,
+    ScalarStyle, ScanError, Span, StrInput,
 };
 
 type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
@@ -99,17 +99,9 @@ fn next_with_repeated_peek(stack: &mut Stack) -> Option<Result<(Event<'static>, 
     next
 }
 
-fn first_document_end(yaml: &'static str) -> Span {
-    ordinary_events(yaml)
-        .into_iter()
-        .find(|(event, _)| matches!(event, Event::DocumentEnd))
-        .unwrap()
-        .1
-}
-
 fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
     assert_eq!(error.kind(), &ErrorKind::MultipleDocumentsUnsupported);
-    assert_eq!(*error.marker(), first_document_end(TWO_DOCUMENTS).start);
+    assert_eq!(*error.marker(), Marker::new(6, 2, 0));
     assert_eq!(error.source_stack(), ["parent.yaml", "child.yaml"]);
     assert_eq!(stack.stack(), ["parent.yaml"]);
     assert!(stack.next_event().is_none());
@@ -118,8 +110,17 @@ fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
 
 #[test]
 fn included_trailing_comments_are_emitted_before_parent_resumes() {
-    let mut expected = nested_events(CHILD);
-    expected.extend(ordinary_events(PARENT));
+    // Keep the semantic oracle independent of the parser used by every backend.
+    let expected = vec![
+        Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+        Event::Comment(" trailing".into(), Placement::Right),
+        Event::Comment(" after".into(), Placement::Last),
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::Scalar("parent".into(), ScalarStyle::Plain, 0, None),
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
 
     for backend in BACKENDS {
         let mut stack = stack_with_child(backend, CHILD, Options::default());
@@ -127,7 +128,24 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
         while let Some(event) = next_with_repeated_peek(&mut stack) {
             actual.push(event.unwrap());
         }
-        assert_eq!(actual, expected, "{backend:?}");
+        assert_eq!(
+            actual
+                .iter()
+                .map(|(event, _)| event.clone())
+                .collect::<Vec<_>>(),
+            expected,
+            "{backend:?}"
+        );
+        assert_eq!(
+            actual[1].1,
+            Span::new(Marker::new(10, 2, 4), Marker::new(20, 2, 14)),
+            "{backend:?}: inline comment span"
+        );
+        assert_eq!(
+            actual[2].1,
+            Span::new(Marker::new(21, 3, 0), Marker::new(28, 3, 7)),
+            "{backend:?}: following comment span"
+        );
         assert!(stack.stack().is_empty());
     }
 }
@@ -145,12 +163,20 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
                     Err(error) => break error,
                 }
             };
-            let expected = nested_events(TWO_DOCUMENTS)
-                .into_iter()
-                .filter(|(event, _)| emit_comments || !matches!(event, Event::Comment(..)))
-                .collect::<Vec<_>>();
+            let expected = vec![
+                Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+                Event::Comment(" trailing".into(), Placement::Right),
+                Event::Comment(" after".into(), Placement::Above),
+            ]
+            .into_iter()
+            .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
+            .collect::<Vec<_>>();
             assert_eq!(
-                actual, expected,
+                actual
+                    .into_iter()
+                    .map(|(event, _)| event)
+                    .collect::<Vec<_>>(),
+                expected,
                 "{backend:?}, emit_comments={emit_comments}"
             );
             assert_multiple_documents_error(&mut stack, &error);

@@ -1,5 +1,7 @@
 # Changelog
 ## 1.2.1
+ - Strengthen regression tests with explicit event and span expectations for block-scalar document
+   boundaries, JSON whitespace, and included comments with emission enabled.
  - Recognize separated comments after reserved directives, emit them according to comment options,
    and exclude them from directive parameter and byte limits.
  - Forward trailing comments after included documents through `ParserStack` with default options,
