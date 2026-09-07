@@ -147,6 +147,7 @@ fn assert_no_hash(source: &str, name: &str) {
 fn no_comment_fast_path_matches_comment_enabled_tokens_and_events() {
     for (name, source) in [
         ("block mapping", "a: b\n"),
+        ("tab after value indicator", "a:\tb\n"),
         ("block sequence value", "a:\n  - b\n"),
         ("flow sequence", "[a, b]\n"),
         ("flow mapping", "{a: b}\n"),
@@ -172,7 +173,7 @@ fn invalid_no_comment_fast_path_matches_comment_enabled_event_prefixes() {
     for (name, source) in [
         ("unclosed flow sequence", "a: [1, 2\n"),
         ("extra flow sequence end", "key: [1, 2]]\n"),
-        ("tab after value indicator", "a:\tb\n"),
+        ("tab in value indentation", "a:\n\tb\n"),
         (
             "directive after implicit document",
             "a: b\n%YAML 1.2\n---\nc: d\n",

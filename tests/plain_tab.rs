@@ -1,14 +1,96 @@
-use granit_parser::{Event, Parser, ScanError};
+use granit_parser::{ErrorKind, Event, Parser, ScanError};
 
 fn collect_scalars(input: &str) -> Result<Vec<String>, ScanError> {
-    let mut out = Vec::new();
-    for item in Parser::new_from_str(input) {
-        let ev = item?;
-        if let Event::Scalar(s, ..) = ev.0 {
-            out.push(s.into());
+    let str_events = Parser::new_from_str(input).collect::<Result<Vec<_>, _>>();
+    let iter_events = Parser::new_from_iter(input.chars()).collect::<Result<Vec<_>, _>>();
+    assert_eq!(str_events, iter_events, "input: {input:?}");
+    Ok(str_events?
+        .into_iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ..) => Some(value.into_owned()),
+            _ => None,
+        })
+        .collect())
+}
+
+#[test]
+fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
+    for value in [
+        "1", "-1", "true", "false", "null", "value", "-item", "_value", "äöü",
+    ] {
+        for separator in ["\t", "\t\t", "\t ", " \t"] {
+            for yaml in [
+                format!("{{\"key\":{separator}{value}}}"),
+                format!("key:{separator}{value}\n"),
+                format!("? key\n:{separator}{value}\n"),
+            ] {
+                assert_eq!(
+                    collect_scalars(&yaml).unwrap(),
+                    ["key", value],
+                    "input: {yaml:?}",
+                );
+            }
         }
     }
-    Ok(out)
+}
+
+#[test]
+fn tabs_after_colons_preserve_value_and_comment_parsing() {
+    for (yaml, expected) in [
+        ("key:\t\"value\"\n", "value"),
+        ("key:\t|\n  value\n", "value\n"),
+        ("key:\t[value]\n", "value"),
+        ("[key:\tvalue]\n", "value"),
+        ("? key\n:\tvalue\n", "value"),
+        ("? key\n:\t[value]\n", "value"),
+        ("  key:\tvalue\n", "value"),
+        ("key:\tvalue # comment\n", "value"),
+        ("key:\t# comment\n  value\n", "value"),
+        ("key:\t\n  value\n", "value"),
+        ("{key:\t# comment\nvalue}\n", "value"),
+    ] {
+        assert_eq!(
+            collect_scalars(yaml).unwrap(),
+            ["key", expected],
+            "input: {yaml:?}",
+        );
+    }
+}
+
+#[test]
+fn tabs_after_colons_do_not_allow_tab_indentation() {
+    for yaml in [
+        "key:\n\tvalue\n",
+        "key:\t\n\tvalue\n",
+        "key:\t# comment\n\tvalue\n",
+    ] {
+        assert_eq!(
+            collect_scalars(yaml).unwrap_err().kind(),
+            &ErrorKind::TabInBlockIndentation,
+            "input: {yaml:?}",
+        );
+    }
+}
+
+#[test]
+fn tabs_after_colons_cannot_indent_compact_block_collections() {
+    for (value, expected) in [
+        ("- value", vec!["key", "value"]),
+        ("child: value", vec!["key", "child", "value"]),
+        ("\"child\": value", vec!["key", "child", "value"]),
+    ] {
+        let yaml = format!("? key\n: {value}\n");
+        assert_eq!(collect_scalars(&yaml).unwrap(), expected);
+
+        for separator in ["\t", "\t\t", "\t ", " \t"] {
+            let yaml = format!("? key\n:{separator}{value}\n");
+            assert!(collect_scalars(&yaml).is_err(), "input: {yaml:?}");
+
+            // A line break permits a block collection with its own space indentation.
+            let yaml = format!("? key\n:{separator}# comment\n  {value}\n");
+            assert_eq!(collect_scalars(&yaml).unwrap(), expected, "input: {yaml:?}");
+        }
+    }
 }
 
 #[test]

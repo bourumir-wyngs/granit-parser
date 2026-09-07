@@ -4112,23 +4112,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Skip over ':'.
         self.skip_non_blank();
-        // Error detection: if ':' is followed by tab(s) without any space, and then what looks
-        // like a value, emit a helpful error. The check for '-' or alphanumeric is an intentional
-        // heuristic that catches common cases (e.g., `key:\tvalue`, `key:\t-item`) without
-        // rejecting valid YAML like `key:\t|` (block scalar) or `key:\t"quoted"`.
-        // Note: This heuristic won't catch Unicode value starters like `key:\täöü`, but such
-        // cases will still fail to parse correctly (just with a less specific error message).
+        // Tabs after ':' are separation whitespace. Queue any following comment after the
+        // Value token; indentation on subsequent lines is checked by `skip_to_next_token`.
         let mut trailing_tokens = VecDeque::new();
-        if self.input.look_ch() == '\t' {
+        let mut found_tabs = false;
+        if matches!(self.input.look_ch(), ' ' | '\t') {
             let trailing_token_index = self.tokens.len();
-            let whitespace = self.skip_ws_to_eol(SkipTabs::Yes)?;
+            found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
             trailing_tokens = self.tokens.split_off(trailing_token_index);
-
-            if !whitespace.has_valid_yaml_ws()
-                && (self.input.peek() == '-' || self.input.next_is_alpha())
-            {
-                return Err(self.scan_error(ErrorKind::InvalidMappingValueWhitespace));
-            }
         }
 
         if sk.possible {
@@ -4183,7 +4174,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
             self.roll_one_col_indent();
 
-            if self.flow_level == 0 {
+            // An explicit value may start a compact block collection on this line only when
+            // its indentation contains only spaces. Tabs still separate scalar and flow values.
+            if self.flow_level == 0 && !found_tabs {
                 self.allow_simple_key();
             } else {
                 self.disallow_simple_key();

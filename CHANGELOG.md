@@ -1,5 +1,7 @@
 # Changelog
 ## 1.2.1
+ - Allow tabs as separation whitespace after `:` in block and flow mappings, including JSON,
+   while retaining tab indentation checks.
  - Stop zero-indented root block scalars at `---` document markers, preserving the next document
    and the preceding scalar's content.
  - Reject | and > when they appear as the first character of an unquoted scalar inside a flow collection. 
