@@ -3133,7 +3133,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             if indent == 0 {
                 self.input.lookahead(4);
-                if self.input.next_is_document_end() {
+                if self.input.next_is_document_indicator() {
                     break;
                 }
             }
