@@ -2048,6 +2048,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let mut budget = self.options.max_directive_bytes;
 
         let name = self.scan_directive_name(&mut budget)?;
+        let mut separated_comment = false;
         let tok = match name.as_ref() {
             "YAML" => self.scan_version_directive_value(&start_mark)?,
             "TAG" => self.scan_tag_directive_value(&start_mark, &mut budget)?,
@@ -2058,6 +2059,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     self.mark.offsets.chars += n_blanks;
                     self.mark.col += n_blanks;
                     self.mark.offsets.bytes = self.input.byte_offset();
+
+                    if self.input.peek() == '#' {
+                        separated_comment = true;
+                        break;
+                    }
 
                     if !is_blank_or_breakz(self.input.peek()) {
                         self.spend_directive_bytes(&mut budget, n_blanks, start_mark)?;
@@ -2089,7 +2095,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         };
 
-        self.skip_ws_to_eol(SkipTabs::Yes)?;
+        if separated_comment {
+            // The reserved-parameter loop already consumed the comment's separator.
+            self.consume_comment()?;
+        } else {
+            self.skip_ws_to_eol(SkipTabs::Yes)?;
+        }
 
         if self.input.next_is_breakz() {
             self.input.lookahead(2);

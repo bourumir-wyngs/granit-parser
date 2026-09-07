@@ -1,5 +1,7 @@
 # Changelog
 ## 1.2.1
+ - Recognize separated comments after reserved directives, emit them according to comment options,
+   and exclude them from directive parameter and byte limits.
  - Forward trailing comments after included documents through `ParserStack` with default options,
    while continuing to reject additional documents in an included source.
  - Preserve the non-specific `!` tag when `%TAG !` overrides the primary tag handle; continue
