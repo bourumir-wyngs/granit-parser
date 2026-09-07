@@ -1,5 +1,7 @@
 # Changelog
 ## 1.2.1
+ - Forward trailing comments after included documents through `ParserStack` with default options,
+   while continuing to reject additional documents in an included source.
  - Preserve the non-specific `!` tag when `%TAG !` overrides the primary tag handle; continue
    expanding shorthand tags such as `!foo` with the overridden prefix.
  - Allow tabs as separation whitespace after `:` in block and flow mappings, including JSON,

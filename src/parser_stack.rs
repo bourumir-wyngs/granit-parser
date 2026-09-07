@@ -172,6 +172,8 @@ where
 {
     options: Options,
     parsers: Vec<AnyParser<'input, I, T>>,
+    /// Stack depths and end spans of nested documents whose trailing comments are being read.
+    pending_document_ends: Vec<(usize, Span)>,
     current: Option<(Event<'input>, Span)>,
     current_error: Option<ScanError>,
     stream_end_emitted: bool,
@@ -202,6 +204,7 @@ where
         Self {
             options,
             parsers: Vec::new(),
+            pending_document_ends: Vec::new(),
             current: None,
             current_error: None,
             stream_end_emitted: false,
@@ -431,6 +434,13 @@ where
     /// Panics if the parser stack is empty.
     #[track_caller]
     fn pop_parser_and_propagate_anchor_offset(&mut self) {
+        if self
+            .pending_document_ends
+            .last()
+            .is_some_and(|(depth, _)| *depth == self.parsers.len())
+        {
+            self.pending_document_ends.pop();
+        }
         let popped = self.parsers.pop().unwrap();
         self.propagate_anchor_offset_from_popped(&popped);
     }
@@ -450,6 +460,20 @@ where
                 AnyParser::Custom { parser, .. } => parser.next_event(),
                 AnyParser::Replay { parser, .. } => parser.next_event(),
             };
+
+            if let Some(&(depth, span)) = self.pending_document_ends.last() {
+                if depth == self.parsers.len()
+                    && matches!(&res, Some(Ok((event, _)))
+                        if !matches!(event, Event::Comment(..) | Event::StreamEnd))
+                {
+                    let error = self.contextualize_error(ScanError::from_kind(
+                        span.start,
+                        ErrorKind::MultipleDocumentsUnsupported,
+                    ));
+                    self.pop_parser_and_propagate_anchor_offset();
+                    return Err(error);
+                }
+            }
 
             match res {
                 Some(Ok((Event::StreamEnd, span))) => {
@@ -479,58 +503,9 @@ where
                         return Ok((Event::DocumentEnd, span));
                     }
 
-                    // Continue the parent parser if it has more documents.
-                    let peek_res = loop {
-                        // The root-parser case returned above, and this loop never mutates the
-                        // outer parser stack, so a nested parser must remain available here.
-                        let parser = self.parsers.last_mut().unwrap();
-                        let peek = match parser {
-                            AnyParser::String { parser, .. } => parser.peek(),
-                            AnyParser::Iter { parser, .. } => parser.peek(),
-                            AnyParser::Custom { parser, .. } => parser.peek(),
-                            AnyParser::Replay { parser, .. } => parser.peek(),
-                        };
-
-                        if self.options.emit_comments
-                            || !matches!(peek, Some(Ok((Event::Comment(..), _))))
-                        {
-                            break peek;
-                        }
-
-                        match parser {
-                            AnyParser::String { parser, .. } => {
-                                let _ = parser.next_event();
-                            }
-                            AnyParser::Iter { parser, .. } => {
-                                let _ = parser.next_event();
-                            }
-                            AnyParser::Custom { parser, .. } => {
-                                let _ = parser.next_event();
-                            }
-                            AnyParser::Replay { parser, .. } => {
-                                let _ = parser.next_event();
-                            }
-                        }
-                    };
-
-                    match peek_res {
-                        Some(Ok((Event::StreamEnd, _))) | None => {
-                            self.pop_parser_and_propagate_anchor_offset();
-                        }
-                        Some(Ok(_)) => {
-                            let error = self.contextualize_error(ScanError::from_kind(
-                                span.start,
-                                ErrorKind::MultipleDocumentsUnsupported,
-                            ));
-                            self.pop_parser_and_propagate_anchor_offset();
-                            return Err(error);
-                        }
-                        Some(Err(e)) => {
-                            let e = self.contextualize_error(e);
-                            self.pop_parser_and_propagate_anchor_offset();
-                            return Err(e);
-                        }
-                    }
+                    // Emit or suppress trailing comments through the normal event path, while
+                    // retaining this source's end span across calls and pushes of other parsers.
+                    self.pending_document_ends.push((self.parsers.len(), span));
                 }
                 Some(Ok(event)) => {
                     if !self.options.emit_comments && matches!(event.0, Event::Comment(..)) {
