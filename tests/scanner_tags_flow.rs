@@ -209,6 +209,50 @@ fn primary_handle_override_preserves_non_specific_tag_on_all_node_types() {
 }
 
 #[test]
+fn primary_handle_overrides_are_scoped_to_documents_with_nested_non_specific_tags() {
+    let yaml = concat!(
+        "%TAG ! tag:yaml.org,2002:\n",
+        "---\n",
+        "- {! key: !str 123}\n",
+        "- ! [!bool true]\n",
+        "...\n",
+        "%TAG ! tag:example.org,2026:\n",
+        "--- [! 123, !str 123]\n",
+        "--- [! 123, !str 123]\n",
+    );
+    let expected_tags = [
+        ("", "!", "!", None),
+        ("tag:yaml.org,2002:", "str", "!str", Some("str")),
+        ("", "!", "!", None),
+        ("tag:yaml.org,2002:", "bool", "!bool", Some("bool")),
+        ("", "!", "!", None),
+        ("tag:example.org,2026:", "str", "!str", None),
+        ("", "!", "!", None),
+        ("!", "str", "!str", None),
+    ];
+    let events = collect_events(StrInput::new(yaml)).unwrap();
+    assert_eq!(events, collect_events(buffered(yaml)).unwrap());
+    assert_eq!(
+        events,
+        collect_events(OpaqueInput::new(yaml, SliceMode::Delegate)).unwrap(),
+    );
+    let tags = events.iter().filter_map(Event::tag).collect::<Vec<_>>();
+    assert_eq!(tags.len(), expected_tags.len());
+    for (tag, (handle, suffix, original, core_suffix)) in tags.iter().zip(expected_tags) {
+        assert_eq!(tag.parts(), (handle, suffix));
+        assert_eq!(tag.original(), original);
+        assert_eq!(tag.core_suffix(), core_suffix);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::DocumentStart(..)))
+            .count(),
+        3,
+    );
+}
+
+#[test]
 fn streaming_tag_directive_resolves_shorthand_tag() {
     let events = collect_events(buffered(
         "%TAG !e! tag:example.com,2000:app/\n---\n!e!foo bar\n",

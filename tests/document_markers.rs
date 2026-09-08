@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span};
+use granit_parser::{Event, Parser, Placement, ScalarStyle, ScanError, Span};
 
 /// Run the parser through the string.
 ///
@@ -93,6 +93,56 @@ fn root_block_scalars_stop_at_document_markers() {
                     ],
                     "input: {yaml:?}",
                 );
+            }
+        }
+    }
+}
+
+#[test]
+fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_markers() {
+    for (indicator, style, body) in [
+        ('|', ScalarStyle::Literal, "\nα\nβ"),
+        ('>', ScalarStyle::Folded, "\nα β"),
+    ] {
+        for (chomping, tail) in [("-", ""), ("", "\n"), ("+", "\n\n")] {
+            for newline in ["\n", "\r\n", "\r"] {
+                let prefix =
+                    format!("{indicator}{chomping}{newline}{newline}α{newline}β{newline}{newline}");
+                let yaml = format!("{prefix}--- # next document{newline}second{newline}");
+                let events = run_parser_with_span(&yaml).unwrap();
+
+                assert_eq!(
+                    events
+                        .iter()
+                        .map(|(event, _)| event.clone())
+                        .collect::<Vec<_>>(),
+                    [
+                        Event::StreamStart,
+                        Event::DocumentStart(false, None),
+                        Event::Scalar(format!("{body}{tail}").into(), style, 0, None),
+                        Event::DocumentEnd,
+                        Event::DocumentStart(true, None),
+                        Event::Comment(" next document".into(), Placement::Right),
+                        Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
+                        Event::DocumentEnd,
+                        Event::StreamEnd,
+                    ],
+                    "input: {yaml:?}",
+                );
+
+                let scalar_span = events[2].1;
+                let document_span = events[4].1;
+                assert_eq!(scalar_span.indent, Some(0));
+                assert_eq!(scalar_span.end.index(), prefix.chars().count());
+                assert_eq!(scalar_span.end.byte_offset(), Some(prefix.len()));
+                assert_eq!(scalar_span.end.line(), 6);
+                assert_eq!(scalar_span.end.col(), 0);
+                assert_eq!(document_span.start, scalar_span.end);
+                assert_eq!(
+                    document_span.byte_range(),
+                    Some(prefix.len()..prefix.len() + 3)
+                );
+                assert_eq!(document_span.slice(&yaml), Some("---"));
             }
         }
     }

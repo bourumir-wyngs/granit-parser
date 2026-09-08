@@ -83,6 +83,70 @@ fn tabs_after_colons_preserve_value_and_comment_parsing() {
 }
 
 #[test]
+fn tabs_after_colons_preserve_empty_values_and_following_entries() {
+    for yaml in [
+        "key:\t",
+        "key:\t\n",
+        "{key:\t}",
+        "[key:\t]",
+        "key:\t# empty\n",
+        "{key:\t# empty\n}",
+        "[key:\t# empty\n]",
+    ] {
+        assert_eq!(
+            collect_scalars(yaml).unwrap(),
+            ["key", "~"],
+            "input: {yaml:?}"
+        );
+    }
+
+    for yaml in [
+        "key:\t# empty\nnext:\tvalue\n",
+        "{key:\t, next:\tvalue}",
+        "{key:\t# empty\n, next:\tvalue}",
+        "[key:\t, next:\tvalue]",
+    ] {
+        assert_eq!(
+            collect_scalars(yaml).unwrap(),
+            ["key", "~", "next", "value"],
+            "input: {yaml:?}",
+        );
+    }
+}
+
+#[test]
+fn tabs_after_colons_preserve_tagged_anchors_and_aliases() {
+    for (yaml, style) in [
+        ("key:\t&a !local value\ncopy:\t*a\n", StructureStyle::Block),
+        ("{key:\t&a !local value, copy:\t*a}", StructureStyle::Flow),
+    ] {
+        assert_eq!(
+            collect_events(yaml).unwrap(),
+            [
+                Event::StreamStart,
+                Event::DocumentStart(false, None),
+                Event::MappingStart(style, 0, None),
+                Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+                Event::Scalar(
+                    "value".into(),
+                    ScalarStyle::Plain,
+                    1,
+                    Some(std::borrow::Cow::Owned(granit_parser::Tag::new(
+                        "!", "local"
+                    ))),
+                ),
+                Event::Scalar("copy".into(), ScalarStyle::Plain, 0, None),
+                Event::Alias(1),
+                Event::MappingEnd,
+                Event::DocumentEnd,
+                Event::StreamEnd,
+            ],
+            "input: {yaml:?}",
+        );
+    }
+}
+
+#[test]
 fn tabs_after_colons_do_not_allow_tab_indentation() {
     for yaml in [
         "key:\n\tvalue\n",

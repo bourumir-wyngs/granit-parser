@@ -185,6 +185,88 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
 }
 
 #[test]
+fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
+    for unexpected in [
+        Event::Scalar("extra".into(), ScalarStyle::Plain, 0, None),
+        Event::StreamStart,
+        Event::DocumentEnd,
+    ] {
+        for emit_comments in [true, false] {
+            let mut events = ordinary_events(CHILD);
+            assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
+            events.push((unexpected.clone(), Span::empty(Marker::new(29, 4, 0))));
+
+            let mut stack = Stack::with_options(granit_parser::options! {
+                emit_comments: emit_comments,
+            });
+            stack.push_str_parser(Parser::new_from_str(PARENT), "parent.yaml".to_owned());
+            stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".to_owned());
+
+            let expected = [
+                Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+                Event::Comment(" trailing".into(), Placement::Right),
+                Event::Comment(" after".into(), Placement::Last),
+            ];
+            for event in expected
+                .into_iter()
+                .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
+            {
+                assert_eq!(
+                    next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
+                    event
+                );
+            }
+
+            let error = next_with_repeated_peek(&mut stack).unwrap().unwrap_err();
+            assert_multiple_documents_error(&mut stack, &error);
+        }
+    }
+}
+
+#[test]
+fn nested_second_document_error_uses_its_own_pending_end_and_source() {
+    const GRANDCHILD: &str = "grandchild\n... # grandchild tail\n---\nextra\n";
+
+    for backend in BACKENDS {
+        let mut stack = stack_with_child(backend, CHILD, Options::default());
+        assert_eq!(
+            next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
+            Event::Scalar("child".into(), ScalarStyle::Plain, 0, None)
+        );
+        assert_eq!(
+            next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
+            Event::Comment(" trailing".into(), Placement::Right)
+        );
+        // Both sources now need document-end validation; the grandchild's failure must
+        // retain its own end marker instead of using the suspended child's marker.
+        stack.push_str_parser(
+            Parser::new_from_str(GRANDCHILD),
+            "grandchild.yaml".to_owned(),
+        );
+        for expected in [
+            Event::Scalar("grandchild".into(), ScalarStyle::Plain, 0, None),
+            Event::Comment(" grandchild tail".into(), Placement::Right),
+        ] {
+            assert_eq!(
+                next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
+                expected
+            );
+        }
+
+        let error = next_with_repeated_peek(&mut stack).unwrap().unwrap_err();
+        assert_eq!(error.kind(), &ErrorKind::MultipleDocumentsUnsupported);
+        assert_eq!(*error.marker(), Marker::new(11, 2, 0));
+        assert_eq!(
+            error.source_stack(),
+            ["parent.yaml", "child.yaml", "grandchild.yaml"]
+        );
+        assert_eq!(stack.stack(), ["parent.yaml", "child.yaml"]);
+        assert!(stack.next_event().is_none());
+        assert!(stack.peek().is_none());
+    }
+}
+
+#[test]
 fn pushing_during_a_peeked_trailing_comment_preserves_each_sources_validation() {
     const GRANDCHILD: &str = "grandchild\n... # grandchild tail\n";
 

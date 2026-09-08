@@ -1,5 +1,6 @@
 use granit_parser::{
-    ErrorKind, Event, Options, Parser, ScalarStyle, ScanError, Span, StructureStyle,
+    BufferedInput, ErrorKind, Event, Options, Parser, ScalarStyle, ScanError, Scanner, Span,
+    StrInput, StructureStyle,
 };
 use std::{collections::BTreeSet, fs, path::Path};
 
@@ -39,21 +40,60 @@ fn scalar_values_with_style(input: &str, style: ScalarStyle) -> Vec<String> {
 
 #[test]
 fn block_scalar_indicators_cannot_start_nodes_in_flow_collections() {
-    for (yaml, indicator) in [
-        ("[|]\n", '|'),
-        ("[>]\n", '>'),
-        ("{|: value}\n", '|'),
-        ("{>: value}\n", '>'),
-        ("{key: |}\n", '|'),
-        ("{key: >}\n", '>'),
-    ] {
+    fn assert_terminal_error<T>(
+        mut items: impl Iterator<Item = Result<T, ScanError>>,
+        yaml: &str,
+        indicator: char,
+    ) {
+        let error = items
+            .by_ref()
+            .find_map(Result::err)
+            .unwrap_or_else(|| panic!("expected an error for {yaml:?}"));
         assert_eq!(
-            first_error(yaml).kind(),
+            error.kind(),
             &ErrorKind::UnexpectedCharacter {
-                character: indicator,
+                character: indicator
             },
             "input: {yaml:?}",
         );
+        let offset = yaml.find(indicator).unwrap();
+        let prefix = &yaml[..offset];
+        assert_eq!(error.marker().index(), prefix.chars().count());
+        assert_eq!(
+            error.marker().line(),
+            prefix.bytes().filter(|&byte| byte == b'\n').count() + 1
+        );
+        assert_eq!(
+            error.marker().col(),
+            prefix.rsplit('\n').next().unwrap().chars().count()
+        );
+        if let Some(byte_offset) = error.marker().byte_offset() {
+            assert_eq!(byte_offset, offset);
+        }
+        assert!(items.next().is_none(), "error must be terminal: {yaml:?}");
+        assert!(items.next().is_none(), "iterator must stay fused: {yaml:?}");
+    }
+
+    for indicator in ['|', '>'] {
+        for yaml in [
+            format!("[{indicator}]\n"),
+            format!("[{indicator}text]\n"),
+            format!("{{{indicator}: value}}\n"),
+            format!("{{key: {indicator}}}\n"),
+            format!("[key:\t{indicator}]\n"),
+            format!("[&anchor {indicator}]\n"),
+            format!("[!tag {indicator}]\n"),
+            format!("{{outer: [pré,\r\n  {indicator}text]}}\n"),
+        ] {
+            assert_terminal_error(Parser::new_from_str(&yaml), &yaml, indicator);
+            assert_terminal_error(Parser::new_from_iter(yaml.chars()), &yaml, indicator);
+            assert_terminal_error(Scanner::new(StrInput::new(&yaml)), &yaml, indicator);
+            assert_terminal_error(
+                Scanner::new(BufferedInput::new(yaml.chars())),
+                &yaml,
+                indicator,
+            );
+        }
     }
 }
 
@@ -63,6 +103,38 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
         scalar_values("[a|b, a>b, \"|\", '>']\n"),
         ["a|b", "a>b", "|", ">"],
     );
+
+    for (yaml, expected) in [
+        ("[a|b, a>b]\n", ["a|b", "a>b"]),
+        ("[a | b, a > b]\n", ["a | b", "a > b"]),
+        ("[a\n |b, a\n >b]\n", ["a |b", "a >b"]),
+        ("{a|b: c>d}\n", ["a|b", "c>d"]),
+        ("[é|b, 字>b]\n", ["é|b", "字>b"]),
+    ] {
+        let str_events = Parser::new_from_str(yaml)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let iter_events = Parser::new_from_iter(yaml.chars())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let fallible_events = Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(str_events, iter_events, "input: {yaml:?}");
+        assert_eq!(str_events, fallible_events, "input: {yaml:?}");
+        let scalars: Vec<_> = str_events
+            .iter()
+            .filter_map(|(event, _)| match event {
+                Event::Scalar(value, style, ..) => Some((value.as_ref(), *style)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            scalars,
+            expected.map(|value| (value, ScalarStyle::Plain)),
+            "input: {yaml:?}"
+        );
+    }
 }
 
 #[test]

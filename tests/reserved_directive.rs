@@ -119,16 +119,119 @@ fn reserved_directive_comments_do_not_consume_parameter_or_byte_limits() {
 
 #[test]
 fn reserved_directive_comments_do_not_hide_excess_parameters() {
-    let options = options! { max_reserved_directive_params: 0 };
-    let yaml = "%FUTURE option # comment\n---\nvalue\n";
-    for error in [
-        first_error(yaml, options.clone()),
-        first_iter_error(yaml, options),
+    for yaml in [
+        "%FUTURE option # comment\n---\nvalue\n",
+        "%FUTURE option#value # comment\n---\nvalue\n",
     ] {
-        assert_eq!(
-            error.unwrap().kind(),
-            &ErrorKind::TooManyReservedDirectiveParams { limit: 0 },
-        );
+        for emit_comments in [true, false] {
+            let options = options! {
+                max_reserved_directive_params: 0,
+                emit_comments: emit_comments,
+            };
+            for error in [
+                first_error(yaml, options.clone()),
+                first_iter_error(yaml, options),
+            ] {
+                assert_eq!(
+                    error.unwrap().kind(),
+                    &ErrorKind::TooManyReservedDirectiveParams { limit: 0 },
+                    "input: {yaml:?}, emit_comments: {emit_comments}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
+    for (directive, params) in [("FUTURE", vec![]), ("FUTURE option", vec!["option".into()])] {
+        for comment_text in ["", " café 漢字"] {
+            let yaml = format!("%{directive} #{comment_text}");
+            for emit_comments in [true, false] {
+                let options = options! { emit_comments: emit_comments };
+                let tokens = scanner_tokens(&yaml, options.clone());
+                assert_eq!(
+                    tokens[1].token_type(),
+                    &TokenType::ReservedDirective("FUTURE".into(), params.clone()),
+                );
+                assert_eq!(tokens.len(), 3 + usize::from(emit_comments));
+                assert_eq!(tokens.last().unwrap().token_type(), &TokenType::StreamEnd);
+                if emit_comments {
+                    let TokenType::Comment(comment) = tokens[2].token_type() else {
+                        panic!("expected EOF comment: {yaml:?}");
+                    };
+                    assert_eq!(comment.text(), comment_text);
+                    assert_eq!(comment.placement(), Placement::Right);
+                    assert_eq!(
+                        tokens[2].span().slice(&yaml),
+                        Some(&yaml[1 + directive.len() + 1..])
+                    );
+                }
+                for error in [
+                    first_error(&yaml, options.clone()),
+                    first_iter_error(&yaml, options),
+                ] {
+                    assert_eq!(error.unwrap().kind(), &ErrorKind::ExpectedDocumentStart);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_directive_comments_still_validate_control_characters_when_suppressed() {
+    for character in ['\u{1}', '\u{7f}'] {
+        let yaml = format!("%FUTURE option # café {character}\n---\nvalue\n");
+        for emit_comments in [true, false] {
+            let options = options! { emit_comments: emit_comments };
+            for error in [
+                first_error(&yaml, options.clone()),
+                first_iter_error(&yaml, options),
+            ] {
+                let error = error.expect("invalid comment content must be rejected");
+                assert_eq!(error.kind(), &ErrorKind::UnexpectedCharacter { character });
+                assert_eq!(error.marker().line(), 1);
+                assert_eq!(
+                    error.marker().col(),
+                    "%FUTURE option # café ".chars().count()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_directive_comment_separator_is_excluded_from_utf8_byte_limit() {
+    for directive in ["FUTURE\toption#value", "FÜTURE é"] {
+        let yaml = format!("%{directive}{}# comment\n---\nvalue\n", " \t".repeat(1024));
+        for emit_comments in [true, false] {
+            let exact = options! {
+                max_directive_bytes: directive.len(),
+                max_reserved_directive_params: 1,
+                emit_comments: emit_comments,
+            };
+            let tokens = scanner_tokens(&yaml, exact.clone());
+            assert!(
+                matches!(tokens[1].token_type(), TokenType::ReservedDirective(_, params) if params.len() == 1)
+            );
+            assert!(first_error(&yaml, exact.clone()).is_none());
+            assert!(first_iter_error(&yaml, exact.clone()).is_none());
+
+            let mut too_small = exact;
+            too_small.max_directive_bytes -= 1;
+            for error in [
+                first_error(&yaml, too_small.clone()),
+                first_iter_error(&yaml, too_small),
+            ] {
+                assert_eq!(
+                    error.unwrap().kind(),
+                    &ErrorKind::DirectiveByteLimitExceeded {
+                        limit: directive.len() - 1
+                    },
+                    "input directive: {directive:?}, emit_comments: {emit_comments}",
+                );
+            }
+        }
     }
 }
 
