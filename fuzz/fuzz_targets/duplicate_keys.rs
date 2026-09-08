@@ -1,9 +1,13 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
+#[cfg(not(test))]
 mod common;
+#[cfg(test)]
+use crate::common;
 
 use common::parse_with_both_inputs;
 use granit_parser::Parser;
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_LEN: usize = 8 * 1024;
@@ -62,7 +66,7 @@ fn simple_key_payload(value: &str) -> &str {
 // The parser is event-based and intentionally preserves duplicate mapping keys.
 // Select one construction per iteration: valid escaped keys exercise successful
 // block/flow parsing, while raw cases retain malformed and nested syntax coverage.
-fuzz_target!(|data: &[u8]| {
+pub fn check_input(data: &[u8]) {
     if data.len() > MAX_INPUT_LEN {
         return;
     }
@@ -98,4 +102,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     parse_with_both_inputs(&yaml);
-});
+}
+
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| check_input(data));

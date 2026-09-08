@@ -1,9 +1,15 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
+#[cfg(not(test))]
 mod common;
+#[cfg(test)]
+use crate::common;
+
+use std::str;
 
 use common::parse_with_both_inputs;
-use granit_parser::Parser;
+use granit_parser::{ErrorKind, Parser, ScalarStyle};
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
 const MAX_PAYLOAD_BYTES: usize = 16 << 10;
@@ -12,11 +18,22 @@ const MAX_NESTING_DEPTH: usize = 32;
 // Select one construction per iteration so coverage feedback is attributable
 // to that construction and executions stay cheap. Valid, raw, malformed, and
 // nested flow inputs all remain reachable from short mutations.
-fuzz_target!(|data: &[u8]| {
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| check_input(data));
+
+pub fn check_input(data: &[u8]) {
     let mode = data.first().copied().unwrap_or(0);
     let shape = data.get(1).copied().unwrap_or(0);
     let payload = data.get(2..).unwrap_or_default();
     let payload = cap_at_utf8_boundary(payload, MAX_PAYLOAD_BYTES);
+
+    // Reserve three selectors for semantic regressions while retaining the
+    // existing six constructions and their ordinary corpus selectors.
+    if matches!(mode, 252..=254) {
+        let yaml = generated_regression(mode, shape, payload);
+        parse_with_both_inputs(&yaml);
+        return;
+    }
 
     let (yaml, must_be_valid) = match mode % 6 {
         0 => (valid_sequence(payload), true),
@@ -39,7 +56,87 @@ fuzz_target!(|data: &[u8]| {
             .expect("generated flow collection must parse");
     }
     parse_with_both_inputs(&yaml);
-});
+}
+
+fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
+    // Keep generated plain keys below the default simple-key lookahead limit.
+    let suffix: String = payload
+        .iter()
+        .take(256)
+        .map(|byte| char::from(b'a' + byte % 26))
+        .collect();
+    if mode == 252 {
+        let indicator = if shape & 1 == 0 { '|' } else { '>' };
+        let yaml = match (shape >> 1) % 3 {
+            0 => format!("[{indicator}{suffix}]"),
+            1 => format!("{{key: {indicator}{suffix}}}"),
+            _ => format!("{{{indicator}{suffix}: value}}"),
+        };
+        let error = Parser::new_from_str(&yaml)
+            .collect::<Result<Vec<_>, _>>()
+            .expect_err("a flow plain scalar cannot start with | or >");
+        assert_eq!(
+            error.kind(),
+            &ErrorKind::UnexpectedCharacter {
+                character: indicator,
+            },
+        );
+        return yaml;
+    }
+
+    let value = format!("a{suffix}|b>{suffix}");
+    if mode == 253 {
+        let (yaml, expected) = match shape % 3 {
+            0 => (format!("[{value}]"), vec![value.as_str()]),
+            1 => (format!("{{key: {value}}}"), vec!["key", value.as_str()]),
+            _ => (format!("{{{value}: tail}}"), vec![value.as_str(), "tail"]),
+        };
+        assert_plain_scalars(&yaml, &expected, ScalarStyle::Plain);
+        return yaml;
+    }
+
+    let separator = format!(
+        "{}{}{}",
+        if shape & 16 == 0 { "" } else { " " },
+        "\t".repeat(1 + usize::from((shape >> 2) & 3)),
+        if shape & 32 == 0 { "" } else { " " },
+    );
+    let (yaml, style) = match shape % 4 {
+        0 => (
+            format!("key:{separator}{value}\nnext:{separator}tail\n"),
+            ScalarStyle::Plain,
+        ),
+        1 => (
+            format!("{{key:{separator}{value}, next:{separator}tail}}"),
+            ScalarStyle::Plain,
+        ),
+        2 => (
+            format!("{{\"key\":{separator}\"{value}\", \"next\":{separator}\"tail\"}}"),
+            ScalarStyle::DoubleQuoted,
+        ),
+        _ => (
+            format!("? key\n:{separator}{value}\n? next\n:{separator}tail\n"),
+            ScalarStyle::Plain,
+        ),
+    };
+    assert_plain_scalars(&yaml, &["key", &value, "next", "tail"], style);
+    yaml
+}
+
+fn assert_plain_scalars(yaml: &str, expected: &[&str], style: ScalarStyle) {
+    let events = Parser::new_from_str(yaml)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("generated flow or mapping regression must parse");
+    let scalars: Vec<_> = events
+        .iter()
+        .filter_map(|(event, _)| event.scalar())
+        .collect();
+    let expected: Vec<_> = expected.iter().map(|value| (*value, style)).collect();
+    assert_eq!(
+        scalars, expected,
+        "generated scalar content or style changed"
+    );
+}
 
 fn valid_sequence(payload: &[u8]) -> String {
     let mut yaml = String::with_capacity(payload.len() * 5 + 2);
@@ -119,7 +216,7 @@ fn malformed_nested(payload: &[u8], shape: u8) -> String {
 }
 
 fn nesting_is_mapping(shape: u8, level: usize) -> bool {
-    (usize::from(shape.rotate_right((level % 8) as u32)) + level) & 1 == 0
+    (usize::from(shape.rotate_right(u32::try_from(level % 8).unwrap())) + level) & 1 == 0
 }
 
 fn cap_at_utf8_boundary(data: &[u8], max_len: usize) -> &[u8] {

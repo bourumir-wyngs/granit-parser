@@ -1,10 +1,11 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 use std::str;
 
 use granit_parser::{
     ErrorKind, Event, FallibleBufferedInput, InputIoError, Parser, Scanner, TokenType,
 };
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
 struct ErrorAt<'a> {
@@ -17,9 +18,10 @@ impl Iterator for ErrorAt<'_> {
     type Item = Result<char, ErrorKind>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.error.is_none() {
-            panic!("fallible source was polled after its terminal error");
-        }
+        assert!(
+            self.error.is_some(),
+            "fallible source was polled after its terminal error"
+        );
         if self.remaining == 0 {
             return Some(Err(self.error.take().expect("error checked above")));
         }
@@ -32,7 +34,7 @@ impl Iterator for ErrorAt<'_> {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+pub fn check_input(data: &[u8]) {
     let [kind, position_hi, position_lo, payload @ ..] = data else {
         return;
     };
@@ -50,11 +52,14 @@ fuzz_target!(|data: &[u8]| {
     let position = requested % (yaml.chars().count() + 1);
     let error = injected_error(*kind);
 
-    check_parser(&yaml, position, error.clone());
-    check_scanner(&yaml, position, error);
-});
+    check_parser(&yaml, position, &error);
+    check_scanner(&yaml, position, &error);
+}
 
-fn check_parser(input: &str, position: usize, expected: ErrorKind) {
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| check_input(data));
+
+fn check_parser(input: &str, position: usize, expected: &ErrorKind) {
     let source = ErrorAt {
         chars: input.chars(),
         remaining: position,
@@ -71,12 +76,12 @@ fn check_parser(input: &str, position: usize, expected: ErrorKind) {
         }
     };
 
-    assert_eq!(actual.kind(), &expected);
+    assert_eq!(actual.kind(), expected);
     assert!(!emitted_stream_end, "StreamEnd preceded a source error");
     assert!(parser.next().is_none() && parser.next().is_none());
 }
 
-fn check_scanner(input: &str, position: usize, expected: ErrorKind) {
+fn check_scanner(input: &str, position: usize, expected: &ErrorKind) {
     let source = ErrorAt {
         chars: input.chars(),
         remaining: position,
@@ -95,7 +100,7 @@ fn check_scanner(input: &str, position: usize, expected: ErrorKind) {
         }
     };
 
-    assert_eq!(actual.kind(), &expected);
+    assert_eq!(actual.kind(), expected);
     assert!(!emitted_stream_end, "StreamEnd preceded a source error");
     assert!(scanner.next().is_none() && scanner.next().is_none());
 }

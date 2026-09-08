@@ -24,6 +24,8 @@ exclude = [
   # Exclude the `yaml-test-suite` from the package. This removes the need to
   # add its license to the package.
   "/tests/yaml-test-suite",
+  # These repository-only checks import the separate fuzz package, which Cargo omits.
+  "/tests/fuzz_targets.rs",
   # We don't need the documents either.
   "/documents",
 ]

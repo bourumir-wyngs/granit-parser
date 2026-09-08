@@ -73,3 +73,10 @@ path = "fuzz_targets/fallible_input.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parser_stack"
+path = "fuzz_targets/parser_stack.rs"
+test = false
+doc = false
+bench = false

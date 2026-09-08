@@ -33,6 +33,7 @@ jobs:
           - large_scalars
           - options
           - parse_any
+          - parser_stack
           - scan_any
     env:
       CARGO_TERM_COLOR: always
@@ -55,6 +56,11 @@ jobs:
 
       - name: Build fuzz target
         run: cargo +nightly fuzz build "${{ matrix.target }}"
+
+      - name: Seed fuzz corpus
+        run: |
+          rustc +nightly --edition 2021 fuzz/seed_corpus.rs -o "$RUNNER_TEMP/fuzz-seed-corpus"
+          "$RUNNER_TEMP/fuzz-seed-corpus" "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}"
 
       - name: Smoke-run fuzz target
         shell: bash

@@ -1,9 +1,13 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
+#[cfg(not(test))]
 mod common;
+#[cfg(test)]
+use crate::common;
 
 use common::parse_with_both_inputs;
 use granit_parser::Parser;
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_LEN: usize = 8 * 1024;
@@ -62,7 +66,7 @@ fn assert_aliases_reference_preceding_anchors(input: &str) {
 // Select one construction per iteration. Half are guaranteed-valid documents with
 // escaped payloads and semantic alias checks; the others deliberately expose raw
 // input to malformed anchor, alias, flow-mapping, and merge-key paths.
-fuzz_target!(|data: &[u8]| {
+pub fn check_input(data: &[u8]) {
     if data.len() > MAX_INPUT_LEN {
         return;
     }
@@ -99,4 +103,7 @@ fuzz_target!(|data: &[u8]| {
     };
 
     parse_with_both_inputs(&yaml);
-});
+}
+
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| check_input(data));

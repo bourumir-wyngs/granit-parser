@@ -189,9 +189,8 @@ fn validate_string_parser_trace(input: &str, trace: &Trace<(Event<'_>, Span)>) {
     }
     if let Some(error) = &trace.error {
         validate_string_marker(input, &byte_offsets, *error.marker());
-    } else {
-        validate_parser_structure(&trace.items);
     }
+    validate_parser_structure(&trace.items, trace.error.is_none());
 }
 
 fn validate_streaming_parser_trace(trace: &Trace<(Event<'_>, Span)>) {
@@ -200,9 +199,8 @@ fn validate_streaming_parser_trace(trace: &Trace<(Event<'_>, Span)>) {
     }
     if let Some(error) = &trace.error {
         assert_eq!(error.marker().byte_offset(), None);
-    } else {
-        validate_parser_structure(&trace.items);
     }
+    validate_parser_structure(&trace.items, trace.error.is_none());
 }
 
 fn validate_string_scanner_trace(input: &str, trace: &Trace<Token<'_>>) {
@@ -212,9 +210,8 @@ fn validate_string_scanner_trace(input: &str, trace: &Trace<Token<'_>>) {
     }
     if let Some(error) = &trace.error {
         validate_string_marker(input, &byte_offsets, *error.marker());
-    } else {
-        validate_scanner_bounds(&trace.items);
     }
+    validate_scanner_bounds(&trace.items, trace.error.is_none());
 }
 
 fn validate_streaming_scanner_trace(trace: &Trace<Token<'_>>) {
@@ -223,9 +220,8 @@ fn validate_streaming_scanner_trace(trace: &Trace<Token<'_>>) {
     }
     if let Some(error) = &trace.error {
         assert_eq!(error.marker().byte_offset(), None);
-    } else {
-        validate_scanner_bounds(&trace.items);
     }
+    validate_scanner_bounds(&trace.items, trace.error.is_none());
 }
 
 fn byte_offsets(input: &str) -> Vec<usize> {
@@ -275,20 +271,24 @@ fn validate_streaming_span(span: Span) {
     }
 }
 
-fn validate_parser_structure(events: &[(Event<'_>, Span)]) {
-    assert!(
-        matches!(events.first(), Some((Event::StreamStart, _))),
-        "successful parser trace does not start with StreamStart"
-    );
-    assert!(
-        matches!(events.last(), Some((Event::StreamEnd, _))),
-        "successful parser trace does not end with StreamEnd"
-    );
-
+fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum Collection {
         Mapping,
         Sequence,
+    }
+
+    if complete || !events.is_empty() {
+        assert!(
+            matches!(events.first(), Some((Event::StreamStart, _))),
+            "parser trace does not start with StreamStart"
+        );
+    }
+    if complete {
+        assert!(
+            matches!(events.last(), Some((Event::StreamEnd, _))),
+            "successful parser trace does not end with StreamEnd"
+        );
     }
 
     let mut document_open = false;
@@ -299,6 +299,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)]) {
         match event {
             Event::StreamStart => assert_eq!(index, 0, "duplicate StreamStart event"),
             Event::StreamEnd => {
+                assert!(complete, "StreamEnd preceded a parser error");
                 assert_eq!(index + 1, events.len(), "early StreamEnd event");
                 assert!(!document_open, "StreamEnd occurred inside a document");
                 assert!(
@@ -344,16 +345,19 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)]) {
                     "alias refers to an anchor not yet defined in this document"
                 );
             }
-            Event::Comment(..) => {}
             _ => {}
         }
     }
 
-    assert!(!document_open, "parser trace ended inside a document");
-    assert!(
-        collections.is_empty(),
-        "parser trace ended inside a collection"
-    );
+    // An error may leave documents and collections open, but all events emitted before it
+    // must still form a valid prefix (including anchor definitions preceding aliases).
+    if complete {
+        assert!(!document_open, "parser trace ended inside a document");
+        assert!(
+            collections.is_empty(),
+            "parser trace ended inside a collection"
+        );
+    }
 }
 
 fn remember_anchor(anchors: &mut BTreeSet<usize>, anchor: usize) {
@@ -365,27 +369,31 @@ fn remember_anchor(anchors: &mut BTreeSet<usize>, anchor: usize) {
     }
 }
 
-fn validate_scanner_bounds(tokens: &[Token<'_>]) {
-    assert!(
-        matches!(
-            tokens.first().map(Token::token_type),
-            Some(TokenType::StreamStart)
-        ),
-        "successful scanner trace does not start with StreamStart"
-    );
-    assert!(
-        matches!(
-            tokens.last().map(Token::token_type),
-            Some(TokenType::StreamEnd)
-        ),
-        "successful scanner trace does not end with StreamEnd"
-    );
+fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
+    if complete || !tokens.is_empty() {
+        assert!(
+            matches!(
+                tokens.first().map(Token::token_type),
+                Some(TokenType::StreamStart)
+            ),
+            "scanner trace does not start with StreamStart"
+        );
+    }
+    if complete {
+        assert!(
+            matches!(
+                tokens.last().map(Token::token_type),
+                Some(TokenType::StreamEnd)
+            ),
+            "successful scanner trace does not end with StreamEnd"
+        );
+    }
     assert_eq!(
         tokens
             .iter()
             .filter(|token| matches!(token.token_type(), TokenType::StreamStart))
             .count(),
-        1,
+        usize::from(!tokens.is_empty()),
         "scanner emitted multiple StreamStart tokens"
     );
     assert_eq!(
@@ -393,7 +401,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>]) {
             .iter()
             .filter(|token| matches!(token.token_type(), TokenType::StreamEnd))
             .count(),
-        1,
-        "scanner emitted multiple StreamEnd tokens"
+        usize::from(complete),
+        "scanner must emit StreamEnd exactly once on success and never before an error"
     );
 }
