@@ -1,4 +1,7 @@
-use granit_parser::{Event, Parser, ScalarStyle, ScanError, StructureStyle};
+use granit_parser::{
+    BufferedInput, ErrorKind, Event, Parser, ScalarStyle, ScanError, Scanner, StrInput,
+    StructureStyle, TokenType,
+};
 
 // Regression guards for StrInput::next_can_be_plain_scalar simplification.
 // YAML 1.2 7.3.3: indicator characters can end a plain scalar in certain positions.
@@ -42,4 +45,103 @@ fn colon_without_space_is_part_of_scalar_value() {
             Event::StreamEnd,
         ]
     );
+}
+
+#[test]
+fn plain_scalar_dash_before_flow_delimiter() {
+    for (yaml, expected_first) in [
+        ("[a -, after]", "a -"),
+        ("[\u{fffd} -, after]", "\u{fffd} -"),
+        ("[a-, after]", "a-"),
+        ("[a\t-, after]", "a\t-"),
+        ("[a\n -, after]", "a -"),
+    ] {
+        for result in [
+            Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+        ] {
+            let events: Vec<_> = result
+                .unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"))
+                .into_iter()
+                .map(|(event, _)| event)
+                .collect();
+            assert_eq!(
+                events,
+                [
+                    Event::StreamStart,
+                    Event::DocumentStart(false, None),
+                    Event::SequenceStart(StructureStyle::Flow, 0, None),
+                    Event::Scalar(expected_first.into(), ScalarStyle::Plain, 0, None),
+                    Event::Scalar("after".into(), ScalarStyle::Plain, 0, None),
+                    Event::SequenceEnd,
+                    Event::DocumentEnd,
+                    Event::StreamEnd,
+                ],
+                "input: {yaml:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
+    for first in ["a -", "\u{fffd} -"] {
+        let yaml = format!("[{first}, after]");
+        for result in [
+            Scanner::new(StrInput::new(&yaml)).collect::<Result<Vec<_>, _>>(),
+            Scanner::new(BufferedInput::new(yaml.chars())).collect::<Result<Vec<_>, _>>(),
+        ] {
+            let tokens = result.unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"));
+            let types: Vec<_> = tokens
+                .iter()
+                .map(|token| token.token_type().clone())
+                .collect();
+            assert_eq!(
+                types,
+                [
+                    TokenType::StreamStart,
+                    TokenType::FlowSequenceStart,
+                    TokenType::Scalar(ScalarStyle::Plain, first.into()),
+                    TokenType::FlowEntry,
+                    TokenType::Scalar(ScalarStyle::Plain, "after".into()),
+                    TokenType::FlowSequenceEnd,
+                    TokenType::StreamEnd,
+                ],
+                "input: {yaml:?}",
+            );
+            assert_eq!(tokens[2].span().end, tokens[3].span().start);
+        }
+    }
+}
+
+#[test]
+fn plain_scalar_dash_before_closing_flow_delimiter() {
+    for yaml in ["[a -]", "{key: a -}"] {
+        for result in [
+            Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+        ] {
+            let events = result.unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"));
+            assert!(events.iter().any(|(event, _)| {
+                matches!(event, Event::Scalar(value, ScalarStyle::Plain, ..) if value == "a -")
+            }));
+        }
+    }
+}
+
+#[test]
+fn plain_scalar_cannot_start_with_dash_before_flow_delimiter() {
+    for yaml in ["[-, after]", "[-[]]", "[-]", "[-{}]", "{key: -}"] {
+        for result in [
+            Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+        ] {
+            let error = result.expect_err(yaml);
+            assert_eq!(
+                error.kind(),
+                &ErrorKind::PlainScalarStartsWithDashFlowIndicator,
+                "input: {yaml:?}",
+            );
+        }
+    }
 }

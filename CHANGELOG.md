@@ -2,6 +2,7 @@
 
 ## 1.2.1
 
+- Accept trailing dashes before flow delimiters in plain scalar content, such as `[a -, after]`.
 - Recognize separated comments after reserved directives, emit them according to comment options,
   and exclude them from directive parameter and byte limits.
 - Forward trailing comments after included documents through `ParserStack` with default options,

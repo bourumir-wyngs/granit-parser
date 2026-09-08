@@ -3860,7 +3860,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 break;
             }
 
-            if self.flow_level > 0 && self.input.peek() == '-' && is_flow(self.input.peek_nth(1)) {
+            // The dash restriction applies only at the start of a plain scalar.
+            if !has_content
+                && self.flow_level > 0
+                && self.input.peek() == '-'
+                && is_flow(self.input.peek_nth(1))
+            {
                 return Err(self.scan_error(ErrorKind::PlainScalarStartsWithDashFlowIndicator));
             }
 
