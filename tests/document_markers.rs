@@ -1,4 +1,4 @@
-use granit_parser::{Event, Parser, ScanError, Span};
+use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span};
 
 /// Run the parser through the string.
 ///
@@ -43,6 +43,93 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
         Err(err)
     } else {
         Ok(str_events)
+    }
+}
+
+#[test]
+fn root_block_scalars_stop_at_document_markers() {
+    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+        for (chomping, content, expected) in [
+            ("", "text\n", "text\n"),
+            ("", "", ""),
+            ("-", "", ""),
+            ("+", "", ""),
+            ("", "text\n\n", "text\n"),
+            ("-", "text\n\n", "text"),
+            ("+", "text\n\n", "text\n\n"),
+        ] {
+            for (next_document, explicit, second) in [
+                ("---\nsecond", true, "second"),
+                ("--- second\n", true, "second"),
+                ("---\tsecond\n", true, "second"),
+                ("---\r\nsecond\r\n", true, "second"),
+                ("---", true, "~"),
+                ("...\nsecond\n", false, "second"),
+            ] {
+                let yaml = format!("{indicator}{chomping}\n{content}{next_document}");
+                let spanned_events = run_parser_with_span(&yaml).unwrap();
+                let marker_start = yaml.len() - next_document.len();
+                assert_eq!(
+                    spanned_events[2].1.end.index(),
+                    marker_start,
+                    "input: {yaml:?}"
+                );
+                if explicit {
+                    assert_eq!(spanned_events[4].1.start.index(), marker_start);
+                    assert_eq!(spanned_events[4].1.slice(&yaml), Some("---"));
+                }
+                let events: Vec<_> = spanned_events.into_iter().map(|(event, _)| event).collect();
+                assert_eq!(
+                    events,
+                    [
+                        Event::StreamStart,
+                        Event::DocumentStart(false, None),
+                        Event::Scalar(expected.into(), style, 0, None),
+                        Event::DocumentEnd,
+                        Event::DocumentStart(explicit, None),
+                        Event::Scalar(second.into(), ScalarStyle::Plain, 0, None),
+                        Event::DocumentEnd,
+                        Event::StreamEnd,
+                    ],
+                    "input: {yaml:?}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn block_scalars_preserve_content_resembling_document_markers() {
+    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+        for (content, expected) in [
+            ("---text\n", "---text\n"),
+            ("---#text\n", "---#text\n"),
+            ("----\n", "----\n"),
+            ("...text\n", "...text\n"),
+            ("....\n", "....\n"),
+            ("  ---\n", "---\n"),
+            ("  ...\n", "...\n"),
+            ("text\n  ---\n", "text\n  ---\n"),
+            ("text\n  ...\n", "text\n  ...\n"),
+        ] {
+            let yaml = format!("{indicator}\n{content}");
+            let events: Vec<_> = run_parser_with_span(&yaml)
+                .unwrap()
+                .into_iter()
+                .map(|(event, _)| event)
+                .collect();
+            assert_eq!(
+                events,
+                [
+                    Event::StreamStart,
+                    Event::DocumentStart(false, None),
+                    Event::Scalar(expected.into(), style, 0, None),
+                    Event::DocumentEnd,
+                    Event::StreamEnd,
+                ],
+                "input: {yaml:?}",
+            );
+        }
     }
 }
 

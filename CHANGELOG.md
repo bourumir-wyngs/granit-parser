@@ -1,5 +1,15 @@
 # Changelog
 ## 1.2.1
+- Recognize separated comments after reserved directives, emit them according to comment options,
+  and exclude them from directive parameter and byte limits.
+- Forward trailing comments after included documents through `ParserStack` with default options,
+  while continuing to reject additional documents in an included source.
+- Preserve the non-specific `!` tag when `%TAG !` overrides the primary tag handle; continue
+  expanding shorthand tags such as `!foo` with the overridden prefix.
+- Allow tabs as separation whitespace after `:` in block and flow mappings, including JSON,
+  while retaining tab indentation checks.
+- Stop zero-indented root block scalars at `---` document markers, preserving the next document
+  and the preceding scalar's content.
  - Reject | and > when they appear as the first character of an unquoted scalar inside a flow collection. 
  - Do not reject every | or > encountered by scan_plain_scalar. These characters are legal after the 
    first character of a plain scalar ([a|b, a>b] ok, [|, >]) not. This is consistent with serde-yaml, also seems

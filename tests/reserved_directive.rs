@@ -1,4 +1,7 @@
-use granit_parser::{options, ErrorKind, Options, Parser, ScanError};
+use granit_parser::{
+    options, BufferedInput, ErrorKind, Event, Options, Parser, Placement, ScanError, Scanner,
+    StrInput, Token, TokenType,
+};
 
 /// Drive the parser to completion and return the first error, if any.
 fn first_error(yaml: &str, options: Options) -> Option<ScanError> {
@@ -8,6 +11,125 @@ fn first_error(yaml: &str, options: Options) -> Option<ScanError> {
 /// Drive an iterator-backed parser to completion and return the first error, if any.
 fn first_iter_error(yaml: &str, options: Options) -> Option<ScanError> {
     Parser::new_from_iter_with_options(yaml.chars(), options).find_map(Result::err)
+}
+
+fn scanner_tokens(yaml: &str, options: Options) -> Vec<Token<'_>> {
+    let tokens = Scanner::with_options(StrInput::new(yaml), options.clone())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let iter_tokens = Scanner::with_options(BufferedInput::new(yaml.chars()), options)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(tokens, iter_tokens, "input: {yaml:?}");
+    tokens
+}
+
+#[test]
+fn reserved_directive_separated_comments_are_emitted_after_parameters() {
+    for (yaml, name, param, comment_text) in [
+        (
+            "%FUTURE option # keep this comment\n---\nvalue\n",
+            "FUTURE",
+            "option",
+            " keep this comment",
+        ),
+        (
+            "%FUTURE\toption\t# café 漢字\r\n---\r\nvalue\r\n",
+            "FUTURE",
+            "option",
+            " café 漢字",
+        ),
+        (
+            "%FUTURE#name option#value # actual comment\n---\nvalue\n",
+            "FUTURE#name",
+            "option#value",
+            " actual comment",
+        ),
+    ] {
+        let tokens = scanner_tokens(yaml, Options::default());
+        assert_eq!(
+            tokens[1].token_type(),
+            &TokenType::ReservedDirective(name.into(), vec![param.into()]),
+        );
+        let TokenType::Comment(comment) = tokens[2].token_type() else {
+            panic!("expected a comment after the directive: {yaml:?}");
+        };
+        assert_eq!(comment.text(), comment_text);
+        assert_eq!(comment.placement(), Placement::Right);
+        assert_eq!(tokens[1].span().end, tokens[2].span().start);
+        let comment_source = format!("#{comment_text}");
+        assert_eq!(tokens[2].span().slice(yaml), Some(comment_source.as_str()));
+
+        let events = Parser::new_from_str(yaml)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            events,
+            Parser::new_from_iter(yaml.chars())
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap(),
+        );
+        let comments = events
+            .iter()
+            .filter_map(|(event, span)| match event {
+                Event::Comment(text, _) => Some((text.as_ref(), *span)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(comments, [(comment_text, tokens[2].span())]);
+        assert!(events.iter().any(|(event, span)| {
+            matches!(event, Event::Scalar(value, ..) if value == "value")
+                && span.slice(yaml) == Some("value")
+        }));
+    }
+}
+
+#[test]
+fn reserved_directive_comments_do_not_consume_parameter_or_byte_limits() {
+    for (directive, param_count) in [("FUTURE", 0), ("FUTURE option", 1)] {
+        let yaml = format!("%{directive} #{}\n---\nvalue\n", " word".repeat(1000));
+        for limits in [
+            Options::default(),
+            options! {
+                max_reserved_directive_params: param_count,
+                max_directive_bytes: directive.len(),
+            },
+        ] {
+            for emit_comments in [true, false] {
+                let mut options = limits.clone();
+                options.emit_comments = emit_comments;
+                let tokens = scanner_tokens(&yaml, options.clone());
+                let TokenType::ReservedDirective(_, params) = tokens[1].token_type() else {
+                    panic!("expected a reserved directive");
+                };
+                assert_eq!(params.len(), param_count);
+                assert_eq!(
+                    tokens
+                        .iter()
+                        .filter(|token| { matches!(token.token_type(), TokenType::Comment(_)) })
+                        .count(),
+                    usize::from(emit_comments)
+                );
+                assert!(first_error(&yaml, options.clone()).is_none());
+                assert!(first_iter_error(&yaml, options).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn reserved_directive_comments_do_not_hide_excess_parameters() {
+    let options = options! { max_reserved_directive_params: 0 };
+    let yaml = "%FUTURE option # comment\n---\nvalue\n";
+    for error in [
+        first_error(yaml, options.clone()),
+        first_iter_error(yaml, options),
+    ] {
+        assert_eq!(
+            error.unwrap().kind(),
+            &ErrorKind::TooManyReservedDirectiveParams { limit: 0 },
+        );
+    }
 }
 
 // ZYU8: Directive variants

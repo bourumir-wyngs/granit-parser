@@ -2048,6 +2048,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let mut budget = self.options.max_directive_bytes;
 
         let name = self.scan_directive_name(&mut budget)?;
+        let mut separated_comment = false;
         let tok = match name.as_ref() {
             "YAML" => self.scan_version_directive_value(&start_mark)?,
             "TAG" => self.scan_tag_directive_value(&start_mark, &mut budget)?,
@@ -2058,6 +2059,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     self.mark.offsets.chars += n_blanks;
                     self.mark.col += n_blanks;
                     self.mark.offsets.bytes = self.input.byte_offset();
+
+                    if self.input.peek() == '#' {
+                        separated_comment = true;
+                        break;
+                    }
 
                     if !is_blank_or_breakz(self.input.peek()) {
                         self.spend_directive_bytes(&mut budget, n_blanks, start_mark)?;
@@ -2089,7 +2095,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         };
 
-        self.skip_ws_to_eol(SkipTabs::Yes)?;
+        if separated_comment {
+            // The reserved-parameter loop already consumed the comment's separator.
+            self.consume_comment()?;
+        } else {
+            self.skip_ws_to_eol(SkipTabs::Yes)?;
+        }
 
         if self.input.next_is_breakz() {
             self.input.lookahead(2);
@@ -3133,7 +3144,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             if indent == 0 {
                 self.input.lookahead(4);
-                if self.input.next_is_document_end() {
+                if self.input.next_is_document_indicator() {
                     break;
                 }
             }
@@ -4112,23 +4123,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Skip over ':'.
         self.skip_non_blank();
-        // Error detection: if ':' is followed by tab(s) without any space, and then what looks
-        // like a value, emit a helpful error. The check for '-' or alphanumeric is an intentional
-        // heuristic that catches common cases (e.g., `key:\tvalue`, `key:\t-item`) without
-        // rejecting valid YAML like `key:\t|` (block scalar) or `key:\t"quoted"`.
-        // Note: This heuristic won't catch Unicode value starters like `key:\täöü`, but such
-        // cases will still fail to parse correctly (just with a less specific error message).
+        // Tabs after ':' are separation whitespace. Queue any following comment after the
+        // Value token; indentation on subsequent lines is checked by `skip_to_next_token`.
         let mut trailing_tokens = VecDeque::new();
-        if self.input.look_ch() == '\t' {
+        let mut found_tabs = false;
+        if matches!(self.input.look_ch(), ' ' | '\t') {
             let trailing_token_index = self.tokens.len();
-            let whitespace = self.skip_ws_to_eol(SkipTabs::Yes)?;
+            found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
             trailing_tokens = self.tokens.split_off(trailing_token_index);
-
-            if !whitespace.has_valid_yaml_ws()
-                && (self.input.peek() == '-' || self.input.next_is_alpha())
-            {
-                return Err(self.scan_error(ErrorKind::InvalidMappingValueWhitespace));
-            }
         }
 
         if sk.possible {
@@ -4183,7 +4185,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
             self.roll_one_col_indent();
 
-            if self.flow_level == 0 {
+            // An explicit value may start a compact block collection on this line only when
+            // its indentation contains only spaces. Tabs still separate scalar and flow values.
+            if self.flow_level == 0 && !found_tabs {
                 self.allow_simple_key();
             } else {
                 self.disallow_simple_key();
