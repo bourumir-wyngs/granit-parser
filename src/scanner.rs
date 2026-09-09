@@ -4126,6 +4126,23 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if sk.possible {
+            // Under-indented flow entries are a compatibility extension, but implicit keys
+            // spanning lines are rejected by both PyYAML and ruamel.yaml. Keep that extension
+            // limited to single-line keys; explicitly marked `?` keys may span lines.
+            let block_indent = self
+                .indents
+                .last()
+                .filter(|indent| !indent.needs_block_end)
+                .map_or(self.indent, |indent| indent.indent);
+            if self.flow_level > 0
+                && sk.mark.line < start_mark.line
+                && (sk.mark.col as isize) <= block_indent
+            {
+                return Err(ScanError::from_kind(
+                    start_mark,
+                    ErrorKind::InvalidColonPlacement,
+                ));
+            }
             let token_index = self.simple_key_token_index(&sk, start_mark)?;
             self.validate_flow_key_indentation(&sk, token_index, start_mark)?;
             // insert simple key
