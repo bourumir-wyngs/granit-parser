@@ -132,6 +132,49 @@ fn under_indented_flow_mappings_and_nested_nodes_are_accepted() {
 }
 
 #[test]
+fn flow_key_properties_do_not_hide_under_indented_multiline_keys() {
+    for properties in ["&a", "!!str", "&a !!str", "!!str &a"] {
+        for key in ["name", "'name'", "\"name\""] {
+            for body in [
+                format!("{key}\n: value"),
+                format!("{key}\n  : value"),
+                format!("{key}: value"),
+                format!("  {key}\n: value"),
+                format!("# before key\n{key}\n  : value"),
+            ] {
+                let yaml = format!("k: {{ {properties}\n{body}\n}}\n");
+                for result in [
+                    Parser::new_from_str(&yaml).collect::<Result<Vec<_>, _>>(),
+                    Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+                ] {
+                    assert!(result.is_err(), "invalid input accepted: {yaml:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn flow_key_properties_preserve_supported_multiline_keys() {
+    for properties in ["&a", "!!str", "&a !!str", "!!str &a"] {
+        for key in ["name", "'name'", "\"name\""] {
+            let reference = format!("k: {{{properties} {key}: value}}\n");
+            for yaml in [
+                format!("k: {{ {properties}\n  {key}\n  : value\n}}\n"),
+                format!("k: {{\n{properties} {key}: value\n}}\n"),
+                format!("k: {{ ? {properties}\n{key}\n: value\n}}\n"),
+            ] {
+                assert_same_events(&yaml, &reference);
+            }
+            assert_same_events(
+                &format!("k: {{ {properties}\n# before key\n  {key}\n  : value\n}}\n"),
+                &format!("k: {{ {properties}\n# before key\n  {key}: value\n}}\n"),
+            );
+        }
+    }
+}
+
+#[test]
 fn relaxed_flow_indentation_still_rejects_invalid_structure() {
     for yaml in [
         "outer:\n  key: value\n other: value\n",
@@ -144,6 +187,8 @@ fn relaxed_flow_indentation_still_rejects_invalid_structure() {
         "k: {\n\"k\"\n:\nv\n}\n",
         "k: {\n'k'\n:\nv\n}\n",
         "k: {\nmulti\nline: value\n}\n",
+        "k: { &a\n!!str name\n  : value\n}\n",
+        "k: { !!str\n&a name\n  : value\n}\n",
     ] {
         for result in [
             Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
