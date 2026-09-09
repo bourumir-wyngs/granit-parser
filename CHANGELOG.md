@@ -2,6 +2,8 @@
 
 ## 1.2.1
 
+- Accept under-indented entries in multiline flow collections for compatibility with PyYAML
+  and ruamel.yaml, extending the existing relaxation for flow delimiters (#33).
 - Accept trailing dashes before flow delimiters in plain scalar content, such as `[a -, after]`.
 - Recognize separated comments after reserved directives, emit them according to comment options,
   and exclude them from directive parameter and byte limits.

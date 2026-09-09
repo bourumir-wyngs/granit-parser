@@ -180,15 +180,18 @@ differences done from the time of forking (0.0.6). Saphyr-parser may also have c
 
 ### Compatibility adjustment
 
-* **Relaxed indentation for closing brackets**
+* **Relaxed indentation for flow collection entries and delimiters**
 
   ```yaml
-  key: [ 1, 2, 3,
-         4, 5, 6
+  key: [
+  1, 2, 3,
+  4, 5, 6
   ]
   ```
 
-  While not strictly YAML-compliant, this form is accepted for compatibility with other parsers and real-world inputs.
+  While not strictly YAML-compliant, under-indented entries and delimiters in flow sequences
+  and mappings are accepted for compatibility with PyYAML, ruamel.yaml, and real-world inputs.
+  Under-indented implicit mapping keys must keep the key and its `:` on the same line.
 
 
 ### JSON-style Unicode surrogate pairs

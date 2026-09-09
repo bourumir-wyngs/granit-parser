@@ -159,11 +159,22 @@ fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Trial>> {
             .yaml_visual
             .clone()
             .ok_or_else(|| format!("{name}: missing yaml field"))?;
-        let expected_events = current_test
+        let mut expected_events = current_test
             .expected_events
             .clone()
             .ok_or_else(|| format!("{name}: missing tree field"))?;
-        let expected_error = current_test.expected_error == Some(true);
+        let mut expected_error = current_test.expected_error == Some(true);
+
+        // Issue #33 intentionally accepts this under-indented flow sequence, matching
+        // PyYAML and ruamel.yaml. Validate its complete event stream instead of an error.
+        if name == "9C9N" {
+            expected_error = false;
+            concat!(
+                "+STR\n+DOC ---\n+MAP\n=VAL :flow\n+SEQ []\n",
+                "=VAL :a\n=VAL :b\n=VAL :c\n-SEQ\n-MAP\n-DOC\n-STR\n",
+            )
+            .clone_into(&mut expected_events);
+        }
 
         result.push(Trial::test(name, move || {
             run_yaml_test(YamlTest {
