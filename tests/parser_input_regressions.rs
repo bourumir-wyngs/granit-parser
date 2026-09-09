@@ -240,18 +240,28 @@ fn central_validation_defends_legacy_input_chunk_overrides() {
 }
 
 #[test]
-fn invalid_indentation_diagnostics_match_between_input_backends() {
+fn under_indented_flow_scalar_spans_match_between_input_backends() {
     let input = "a:\n  [\nfoo]\n";
-    let str_error = first_str_error(input);
-    let iter_error = first_iter_error(input);
+    let str_events = Parser::new_from_str(input)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("string input should accept an under-indented flow entry");
+    let iter_events = Parser::new_from_iter(input.chars())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("iterator input should accept an under-indented flow entry");
 
-    for error in [&str_error, &iter_error] {
-        assert_eq!(error.kind(), &ErrorKind::InvalidIndentation);
-        assert_eq!(error.marker(), &Marker::new(7, 3, 0));
+    let mut scalar_spans = Vec::new();
+    for events in [&str_events, &iter_events] {
+        let (_, span) = events
+            .iter()
+            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "foo"))
+            .expect("flow entry should be present");
+        assert_eq!(span.start, Marker::new(7, 3, 0));
+        assert_eq!(span.end, Marker::new(10, 3, 3));
+        scalar_spans.push(span);
     }
 
-    assert_eq!(str_error.marker().byte_offset(), Some(7));
-    assert_eq!(iter_error.marker().byte_offset(), None);
+    assert_eq!(scalar_spans[0].slice(input), Some("foo"));
+    assert_eq!(scalar_spans[1].start.byte_offset(), None);
 }
 
 #[test]

@@ -1616,14 +1616,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.document_prefix_allowed = false;
         }
 
-        if (self.mark.col as isize) < self.indent {
-            self.input.lookahead(1);
-            let c = self.input.peek();
-            if self.flow_level == 0 || !matches!(c, ']' | '}' | ',') {
-                return Err(self.scan_error(ErrorKind::InvalidIndentation));
-            }
-        }
-
+        // Flow entries and delimiters may be under-indented for compatibility with
+        // PyYAML and ruamel.yaml. Block indentation was handled by `unroll_indent`.
         let c = self.input.peek();
         let nc = self.input.peek_nth(1);
         match c {
@@ -3824,13 +3818,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let indent = self.indent + 1;
         let start_mark = self.mark;
 
-        if self.flow_level > 0 && (start_mark.col as isize) < indent {
-            return Err(ScanError::from_kind(
-                start_mark,
-                ErrorKind::InvalidFlowScalarIndent,
-            ));
-        }
-
         let borrow_start = start_mark
             .byte_offset()
             .filter(|start| self.try_borrow_slice(*start, *start).is_some());
@@ -4139,6 +4126,23 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if sk.possible {
+            // Under-indented flow entries are a compatibility extension, but implicit keys
+            // spanning lines are rejected by both PyYAML and ruamel.yaml. Keep that extension
+            // limited to single-line keys; explicitly marked `?` keys may span lines.
+            let block_indent = self
+                .indents
+                .last()
+                .filter(|indent| !indent.needs_block_end)
+                .map_or(self.indent, |indent| indent.indent);
+            if self.flow_level > 0
+                && sk.mark.line < start_mark.line
+                && (sk.mark.col as isize) <= block_indent
+            {
+                return Err(ScanError::from_kind(
+                    start_mark,
+                    ErrorKind::InvalidColonPlacement,
+                ));
+            }
             let token_index = self.simple_key_token_index(&sk, start_mark)?;
             // insert simple key
             let tok = Token(Span::empty(sk.mark), TokenType::Key);
@@ -5871,10 +5875,24 @@ mod test {
     }
 
     #[test]
-    fn indented_flow_scalar_reports_invalid_indentation() {
+    fn under_indented_flow_scalar_is_accepted() {
+        let tokens: Vec<_> = Scanner::new(StrInput::new("a:\n  [\nfoo]\n"))
+            .map(|result| result.expect("under-indented flow entry should scan").1)
+            .collect();
         assert_eq!(
-            first_scanner_error_kind("a:\n  [\nfoo]\n"),
-            ErrorKind::InvalidIndentation
+            tokens,
+            [
+                TokenType::StreamStart,
+                TokenType::BlockMappingStart,
+                TokenType::Key,
+                TokenType::Scalar(ScalarStyle::Plain, "a".into()),
+                TokenType::Value,
+                TokenType::FlowSequenceStart,
+                TokenType::Scalar(ScalarStyle::Plain, "foo".into()),
+                TokenType::FlowSequenceEnd,
+                TokenType::BlockEnd,
+                TokenType::StreamEnd,
+            ]
         );
     }
 

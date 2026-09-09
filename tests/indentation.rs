@@ -55,6 +55,105 @@ fn indentation_is_not_reported_in_flow_mappings() {
     }
 }
 
+fn assert_same_events(yaml: &str, reference: &str) {
+    let expected: Vec<_> = Parser::new_from_str(reference)
+        .map(|result| result.expect("reference should parse").0)
+        .collect();
+    for result in [
+        Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
+        Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+    ] {
+        let events: Vec<_> = result
+            .unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"))
+            .into_iter()
+            .map(|(event, _)| event)
+            .collect();
+        assert_eq!(events, expected, "input: {yaml:?}");
+    }
+}
+
+#[test]
+fn under_indented_flow_sequence_entries_are_accepted() {
+    // Issue #33: entries may be at or below the enclosing block's indentation,
+    // as accepted by PyYAML and ruamel.yaml. Following block nodes keep their structure.
+    for (prefix, suffix) in [
+        ("key: [", "]\nafter: done\n"),
+        ("- targets: [", "]\n  after: done\n- next\n"),
+        ("outer:\n  inner: [", "]\n  after: done\nlast: end\n"),
+        ("key:\n  [", "]\nafter: done\n"),
+    ] {
+        for quote in ["", "'", "\""] {
+            let first = format!("{quote}192.168.1.1:9100{quote}");
+            let second = format!("{quote}192.168.1.2:9100{quote}");
+            let reference = format!("{prefix}{first}, {second},{suffix}");
+            for indent in 0..=3 {
+                let spaces = " ".repeat(indent);
+                let yaml = format!("{prefix}\n{spaces}{first},\n{spaces}{second},\n{suffix}");
+                assert_same_events(&yaml, &reference);
+            }
+        }
+    }
+}
+
+#[test]
+fn under_indented_flow_mappings_and_nested_nodes_are_accepted() {
+    for (yaml, reference) in [
+        (
+            "outer:\n  key: {\none:\n[first,\nsecond],\nthree: {four: five}\n}\n  after: done\n",
+            "outer:\n  key: {one: [first, second], three: {four: five}}\n  after: done\n",
+        ),
+        (
+            "key: {\n\"one\":\n\"value\",\n'other': 'value'\n}\nafter: done\n",
+            "key: {\"one\": \"value\", 'other': 'value'}\nafter: done\n",
+        ),
+        (
+            "key: [\n&ref !custom value,\n*ref,\n{? nested: [one, two]}\n]\nafter: done\n",
+            "key: [&ref !custom value, *ref, {? nested: [one, two]}]\nafter: done\n",
+        ),
+        (
+            "key: [\nfirst\n, second\n]\nafter: done\n",
+            "key: [first, second]\nafter: done\n",
+        ),
+        (
+            "key: [ # start\n# before entry\nvalue, # after entry\n]\nafter: done\n",
+            "key: [ # start\n  # before entry\n  value, # after entry\n]\nafter: done\n",
+        ),
+        (
+            "key: {\n?\nname\n:\nvalue\n}\nafter: done\n",
+            "key: {? name: value}\nafter: done\n",
+        ),
+        (
+            "key: [\nfirst\nsecond,\n\"third\nfourth\"\n]\n",
+            "key: [first second, \"third fourth\"]\n",
+        ),
+    ] {
+        assert_same_events(yaml, reference);
+    }
+}
+
+#[test]
+fn relaxed_flow_indentation_still_rejects_invalid_structure() {
+    for yaml in [
+        "outer:\n  key: value\n other: value\n",
+        "key: [\nvalue\n[nested]\n]\n",
+        "key: {\none: value\nother: value\n}\n",
+        "key: [\nvalue\n}\n",
+        "key: [\n|\nvalue\n]\n",
+        // These implicit multiline keys are also rejected by PyYAML and ruamel.yaml.
+        "k: {\nk\n:\nv\n}\n", // YAML test suite VJP3-00.
+        "k: {\n\"k\"\n:\nv\n}\n",
+        "k: {\n'k'\n:\nv\n}\n",
+        "k: {\nmulti\nline: value\n}\n",
+    ] {
+        for result in [
+            Parser::new_from_str(yaml).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+        ] {
+            assert!(result.is_err(), "invalid input accepted: {yaml:?}");
+        }
+    }
+}
+
 #[test]
 fn indentation_is_reported_for_nested_block_mapping_keys() {
     let yaml = "a:\n  b: c\n";
