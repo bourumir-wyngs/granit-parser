@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.2
+- Refine #33 (under-indented flow sequence)
+
 ## 1.2.1
 
 - Accept under-indented entries in multiline flow collections for compatibility with PyYAML
