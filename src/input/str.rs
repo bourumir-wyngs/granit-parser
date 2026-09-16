@@ -478,6 +478,24 @@ impl Input for StrInput<'_> {
         chars_consumed
     }
 
+    #[inline]
+    fn take_quoted_scalar_ascii_chunk(&mut self, single: bool) -> &str {
+        let quote = if single { b'\'' } else { b'"' };
+        let end = self
+            .buffer
+            .as_bytes()
+            .iter()
+            .position(|&byte| {
+                !(b'!'..=b'~').contains(&byte) || byte == quote || (!single && byte == b'\\')
+            })
+            .unwrap_or(self.buffer.len());
+
+        // The run is entirely ASCII, so its end is a UTF-8 boundary.
+        let (chunk, remaining) = self.buffer.split_at(end);
+        self.buffer = remaining;
+        chunk
+    }
+
     fn fetch_plain_scalar_chunk(
         &mut self,
         out: &mut String,

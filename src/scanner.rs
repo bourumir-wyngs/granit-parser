@@ -3604,6 +3604,31 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         ))
     }
 
+    /// Consume a printable ASCII run without per-character buffer and marker updates.
+    fn consume_flow_scalar_ascii_chunk(&mut self, single: bool, buf: &mut FlowScalarBuf) -> bool {
+        let chunk = self.input.take_quoted_scalar_ascii_chunk(single);
+        let consumed = chunk.len();
+        if consumed == 0 {
+            return false;
+        }
+
+        match buf {
+            FlowScalarBuf::Owned(string) => string.push_str(chunk),
+            FlowScalarBuf::Borrowed { .. } => buf.commit_pending_ws(),
+        }
+
+        // The input already consumed the run; all its characters are ASCII.
+        self.mark.offsets.chars += consumed;
+        self.mark.col += consumed;
+        self.mark.offsets.bytes = self.input.byte_offset();
+        self.leading_whitespace = false;
+        if let (Some(new_end), FlowScalarBuf::Borrowed { end, .. }) = (self.mark.offsets.bytes, buf)
+        {
+            *end = new_end;
+        }
+        true
+    }
+
     /// Consume successive non-whitespace characters from a flow scalar.
     ///
     /// This function resolves escape sequences and stops upon encountering a whitespace, the end
@@ -3620,8 +3645,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         start_mark: &Marker,
     ) -> Result<(), ScanError> {
         self.input.lookahead(2);
-        while !is_blank_or_breakz(self.input.peek()) && is_printable(self.input.peek()) {
-            match self.input.peek() {
+        loop {
+            let character = self.input.peek();
+            if is_blank_or_breakz(character) || !is_printable(character) {
+                break;
+            }
+            match character {
                 // Check for an escaped single quote.
                 '\'' if self.input.peek_nth(1) == '\'' && single => {
                     if matches!(buf, FlowScalarBuf::Borrowed { .. }) {
@@ -3661,6 +3690,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     string.push(self.resolve_flow_scalar_escape_sequence(start_mark)?);
                 }
                 c => {
+                    if c.is_ascii() && self.consume_flow_scalar_ascii_chunk(single, buf) {
+                        self.input.lookahead(2);
+                        continue;
+                    }
                     match buf {
                         FlowScalarBuf::Owned(ref mut string) => {
                             string.push(c);

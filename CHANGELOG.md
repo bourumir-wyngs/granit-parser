@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Batch ordinary ASCII runs in quoted scalars for string-backed input, preserving borrowed
+  scalar contents and the existing handling of escapes, folding, Unicode, and invalid controls.
+
 ## 1.2.2
 - Refine #33 (under-indented flow sequence)
 

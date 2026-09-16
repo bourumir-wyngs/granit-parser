@@ -652,6 +652,28 @@ pub trait Input {
         chars_consumed
     }
 
+    /// Consume and return an ordinary ASCII run inside a quoted scalar, if supported.
+    ///
+    /// This optional optimization lets inputs with contiguous storage batch characters that
+    /// need no decoding. The default returns an empty slice without consuming input, leaving
+    /// character-by-character scanning in place.
+    ///
+    /// A non-empty result must contain exactly the consumed source prefix. Only bytes in
+    /// `0x21..=0x7e` may be consumed, excluding the closing quote (`'` when `single` is true,
+    /// otherwise `"`) and, in double-quoted scalars, backslashes. Whitespace, non-ASCII text,
+    /// control characters, escapes, and closing or doubled quotes are left for the scanner.
+    /// The returned byte length is also the number of consumed characters.
+    ///
+    /// Returning an empty slice must leave the input unchanged. Callers refresh lookahead before
+    /// inspecting the next character, and the returned slice need only remain valid until then.
+    #[inline]
+    // Overrides return slices borrowed from the input, unlike this no-op default.
+    #[allow(clippy::unnecessary_literal_bound)]
+    fn take_quoted_scalar_ascii_chunk(&mut self, _single: bool) -> &str {
+        // Inputs with contiguous storage, such as StrInput, override this to return a whole run.
+        ""
+    }
+
     /// Fetch a chunk of plain scalar characters.
     ///
     /// This optimization method allows the input to batch process characters.
