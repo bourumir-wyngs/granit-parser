@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.2
 
 - Batch ordinary ASCII runs in quoted scalars for string-backed input, preserving borrowed
   scalar contents and the existing handling of escapes, folding, Unicode, and invalid controls.
@@ -8,8 +8,6 @@
   streaming inputs, removing the temporary line buffer while preserving validation and spans.
 - Track the oldest possible simple key to avoid repeated scans of nested flow levels,
   preserving lookahead limits, required-key errors, and comment ordering.
-
-## 1.2.2
 - Refine #33 (under-indented flow sequence)
 
 ## 1.2.1
