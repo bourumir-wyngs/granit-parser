@@ -50,6 +50,19 @@ pub use crate::char_traits::{
 /// as using `str` methods instead of manually transferring one `char` at a time to a buffer.
 /// Implementations with stable backing storage can also return borrowed `&str` slices and avoid
 /// allocating token values.
+///
+/// # Scalar scanning hooks
+///
+/// [`Self::fetch_block_scalar_line`] and [`Self::take_quoted_scalar_ascii_chunk`] allow bulk
+/// processing of block and quoted scalar content. Both provide defaults: custom inputs need
+/// only override them when they can offer a more efficient implementation.
+///
+/// Overrides must consume from the logical stream front, including any characters already
+/// buffered for lookahead, and keep [`Self::byte_offset`] accurate if it is supported. They
+/// must work without a preceding [`Self::lookahead`] call; callers refresh lookahead before
+/// inspecting subsequent characters. Source errors must remain available through
+/// [`Self::take_source_error`], and a terminal source error must prevent further source reads.
+/// The scanner, not the input hook, updates line/column markers and interprets YAML syntax.
 pub trait Input {
     /// A hint to the input source that we will need to read `count` characters.
     ///
@@ -654,13 +667,45 @@ pub trait Input {
 
     /// Append a block scalar's content line to `out`, stopping before CR, LF, NUL, or EOF.
     ///
-    /// The stopping character is not consumed. Return the number of consumed Unicode scalar
-    /// values, which can be used to advance the character index and column. Callers refresh
-    /// lookahead before inspecting the next character.
+    /// The caller positions the input after the line's indentation. This method consumes the
+    /// entire remaining content line and appends it without clearing existing contents of `out`.
+    /// The stopping character is not consumed; in particular, both characters of CRLF remain
+    /// unconsumed, even if already buffered for lookahead.
     ///
     /// This copies content verbatim, including tabs and any non-printable characters other than
-    /// NUL. The scanner remains responsible for validation, indentation, folding, and chomping.
-    /// Inputs with contiguous storage can override this to append a source slice in one operation.
+    /// NUL. Unicode characters such as NEL (`U+0085`), line separator (`U+2028`), and paragraph
+    /// separator (`U+2029`) are content, not line terminators here. The scanner remains responsible
+    /// for validation, indentation, folding, and chomping; overrides must not discard or replace
+    /// invalid content.
+    ///
+    /// The default uses [`Self::raw_read_non_breakz_ch`], including any buffered lookahead.
+    /// Inputs with contiguous storage, such as [`str::StrInput`], can override this to append a
+    /// source slice in one operation. No prior lookahead is required; callers refresh lookahead
+    /// before inspecting the next character. If a source error interrupts the line, append and
+    /// count only the characters consumed before it. Keep the error available through
+    /// [`Self::take_source_error`]; the return value alone does not distinguish a source failure
+    /// from a normal line ending.
+    ///
+    /// # Returns
+    ///
+    /// The number of consumed Unicode scalar values (`char`s), **not UTF-8 bytes**, for advancing
+    /// the character index and column. A return value of zero means no content was appended or
+    /// consumed, for example when already at a line terminator or EOF.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use granit_parser::{Input, StrInput};
+    ///
+    /// let mut input = StrInput::new("é🦀\r\nnext");
+    /// let mut output = String::from("prefix:");
+    /// assert_eq!(input.fetch_block_scalar_line(&mut output), 2);
+    /// assert_eq!(output, "prefix:é🦀");
+    /// assert_eq!(input.byte_offset(), Some("é🦀".len()));
+    /// input.lookahead(2);
+    /// assert_eq!(input.peek(), '\r');
+    /// assert_eq!(input.peek_nth(1), '\n');
+    /// ```
     fn fetch_block_scalar_line(&mut self, out: &mut String) -> usize {
         // Raw reads consume the logical stream front even when lookahead is still buffered.
         let mut chars_consumed = 0;
@@ -673,18 +718,45 @@ pub trait Input {
 
     /// Consume and return an ordinary ASCII run inside a quoted scalar, if supported.
     ///
-    /// This optional optimization lets inputs with contiguous storage batch characters that
-    /// need no decoding. The default returns an empty slice without consuming input, leaving
-    /// character-by-character scanning in place.
+    /// The caller has already consumed the opening quote. The boolean selects the quote style:
+    /// `true` for single quotes, `false` for double quotes. This optional optimization batches
+    /// characters needing no YAML escape or folding handling. The default returns an empty slice
+    /// without consuming input, leaving character-by-character scanning in place.
     ///
-    /// A non-empty result must contain exactly the consumed source prefix. Only bytes in
-    /// `0x21..=0x7e` may be consumed, excluding the closing quote (`'` when `single` is true,
-    /// otherwise `"`) and, in double-quoted scalars, backslashes. Whitespace, non-ASCII text,
-    /// control characters, escapes, and closing or doubled quotes are left for the scanner.
-    /// The returned byte length is also the number of consumed characters.
+    /// # Override contract
     ///
-    /// Returning an empty slice must leave the input unchanged. Callers refresh lookahead before
-    /// inspecting the next character, and the returned slice need only remain valid until then.
+    /// A non-empty result must contain exactly the consumed source prefix, with no decoding or
+    /// substitution. Only bytes in `0x21..=0x7e` may be consumed, excluding the matching quote
+    /// (`'` for single quotes, otherwise `"`) and, in double-quoted scalars, backslashes.
+    /// Backslashes and double quotes are ordinary content in single-quoted scalars; single quotes
+    /// are ordinary content in double-quoted scalars. Whitespace, non-ASCII text, control
+    /// characters, escapes, and closing or doubled matching quotes are left for the scanner.
+    /// The returned byte length is also the number of consumed characters, and any supported
+    /// [`Self::byte_offset`] must advance by that length.
+    ///
+    /// The run need not be maximal. Returning an empty slice must consume nothing, even if an
+    /// eligible run is present; it does **not** indicate EOF or the end of the scalar. No prior
+    /// lookahead is required, and already-buffered characters must not be skipped. Callers refresh
+    /// lookahead before inspecting the next character. The returned slice is tied to the borrow
+    /// of `self`, not to the original source lifetime used by [`BorrowedInput::slice_borrowed`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use granit_parser::{BufferedInput, Input, StrInput};
+    ///
+    /// // Remaining content after a double-quoted scalar's opening quote.
+    /// let mut input = StrInput::new(r#"name\n""#);
+    /// assert_eq!(input.take_quoted_scalar_ascii_chunk(false), "name");
+    /// input.lookahead(1);
+    /// assert_eq!(input.peek(), '\\'); // The escape is left for the scanner.
+    ///
+    /// // Streaming inputs may retain the default and consume nothing.
+    /// let mut stream = BufferedInput::new("name".chars());
+    /// assert_eq!(stream.take_quoted_scalar_ascii_chunk(false), "");
+    /// stream.lookahead(1);
+    /// assert_eq!(stream.peek(), 'n');
+    /// ```
     #[inline]
     // Overrides return slices borrowed from the input, unlike this no-op default.
     #[allow(clippy::unnecessary_literal_bound)]

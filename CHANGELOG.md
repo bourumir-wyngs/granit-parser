@@ -1,6 +1,22 @@
 # Changelog
 
-## 1.2.2
+## 1.3.0
+
+**API Additions**:
+
+- Added public `Input::fetch_block_scalar_line(&mut self, out: &mut String) -> usize`.
+  It appends a complete block-scalar content line, leaves CR/LF/NUL unconsumed, and returns
+  the number of Unicode characters consumed. The default reads characters directly;
+  `StrInput` overrides it to copy a source slice in bulk.
+- Added public `Input::take_quoted_scalar_ascii_chunk(&mut self, single: bool) -> &str`.
+  It optionally consumes and returns an ordinary ASCII prefix inside a quoted scalar,
+  stopping before whitespace, Unicode, controls, the matching quote, or a double-quoted
+  escape. The default returns an empty slice without consuming input; `StrInput` provides
+  the optimized implementation.
+- Both methods have defaults, so existing custom `Input` implementations need not add
+  implementations. Their contracts and examples are documented on the trait.
+
+**Performance**:
 
 - Batch ordinary ASCII runs in quoted scalars for string-backed input, preserving borrowed
   scalar contents and the existing handling of escapes, folding, Unicode, and invalid controls.
@@ -8,6 +24,9 @@
   streaming inputs, removing the temporary line buffer while preserving validation and spans.
 - Track the oldest possible simple key to avoid repeated scans of nested flow levels,
   preserving lookahead limits, required-key errors, and comment ordering.
+
+**Fixes**:
+
 - Refine #33 (under-indented flow sequence)
 
 ## 1.2.1
