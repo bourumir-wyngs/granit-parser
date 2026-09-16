@@ -479,6 +479,22 @@ impl Input for StrInput<'_> {
     }
 
     #[inline]
+    fn fetch_block_scalar_line(&mut self, out: &mut String) -> usize {
+        let end = self
+            .buffer
+            .as_bytes()
+            .iter()
+            .position(|&byte| matches!(byte, b'\r' | b'\n' | 0))
+            .unwrap_or(self.buffer.len());
+
+        // All terminators are ASCII, so the line ends on a UTF-8 boundary.
+        let (line, remaining) = self.buffer.split_at(end);
+        out.push_str(line);
+        self.buffer = remaining;
+        line.chars().count()
+    }
+
+    #[inline]
     fn take_quoted_scalar_ascii_chunk(&mut self, single: bool) -> &str {
         let quote = if single { b'\'' } else { b'"' };
         let end = self

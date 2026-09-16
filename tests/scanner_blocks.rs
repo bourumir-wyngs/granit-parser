@@ -6,8 +6,7 @@
 //! reach:
 //!
 //! - [`WindowedInput`] models a streaming input whose lookahead window drains as characters are
-//!   consumed, which forces the scanner to fall back to `raw_read_non_breakz_ch` when reading
-//!   block scalar content lines.
+//!   consumed, exercising the default block-scalar line reader with a shrinking window.
 //! - [`SliceableStreamInput`] models an input with stable byte offsets (`byte_offset` /
 //!   `slice_bytes`) but without zero-copy borrowing (`slice_borrowed` returns `None`), which
 //!   forces the owned-copy fallbacks when finalizing quoted scalars.
@@ -239,11 +238,10 @@ impl BorrowedInput<'static> for SliceableStreamInput {
 // Block scalars
 // -------------------------------------------------------------------------------------------
 
-/// A block scalar content line that outlives the input's lookahead window must be completed
-/// through `raw_read_non_breakz_ch` (scanner.rs `scan_block_scalar_content_line`, raw-read
-/// fallback).
+/// The default block-scalar line reader must consume the full line even when the input's
+/// lookahead window drains partway through it.
 #[test]
-fn block_scalar_line_longer_than_lookahead_window_is_read_raw() {
+fn block_scalar_line_longer_than_lookahead_window_is_read_completely() {
     let events: Result<Vec<Event<'static>>, ScanError> = Parser::new(WindowedInput::new(
         "|\n abcdefghijklmnopqrstuvwxyz 0123456789\n",
     ))
@@ -260,7 +258,7 @@ fn block_scalar_line_longer_than_lookahead_window_is_read_raw() {
     );
 }
 
-/// A folded scalar with two long lines exercises the raw-read fallback together with line
+/// A folded scalar with two long lines exercises the default line reader together with line
 /// folding.
 #[test]
 fn folded_scalar_long_lines_with_windowed_input_fold_to_spaces() {

@@ -652,6 +652,25 @@ pub trait Input {
         chars_consumed
     }
 
+    /// Append a block scalar's content line to `out`, stopping before CR, LF, NUL, or EOF.
+    ///
+    /// The stopping character is not consumed. Return the number of consumed Unicode scalar
+    /// values, which can be used to advance the character index and column. Callers refresh
+    /// lookahead before inspecting the next character.
+    ///
+    /// This copies content verbatim, including tabs and any non-printable characters other than
+    /// NUL. The scanner remains responsible for validation, indentation, folding, and chomping.
+    /// Inputs with contiguous storage can override this to append a source slice in one operation.
+    fn fetch_block_scalar_line(&mut self, out: &mut String) -> usize {
+        // Raw reads consume the logical stream front even when lookahead is still buffered.
+        let mut chars_consumed = 0;
+        while let Some(character) = self.raw_read_non_breakz_ch() {
+            out.push(character);
+            chars_consumed += 1;
+        }
+        chars_consumed
+    }
+
     /// Consume and return an ordinary ASCII run inside a quoted scalar, if supported.
     ///
     /// This optional optimization lets inputs with contiguous storage batch characters that

@@ -4,6 +4,8 @@
 
 - Batch ordinary ASCII runs in quoted scalars for string-backed input, preserving borrowed
   scalar contents and the existing handling of escapes, folding, Unicode, and invalid controls.
+- Read block-scalar content lines in bulk for string-backed input and append directly for
+  streaming inputs, removing the temporary line buffer while preserving validation and spans.
 
 ## 1.2.2
 - Refine #33 (under-indented flow sequence)
