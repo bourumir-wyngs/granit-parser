@@ -6,6 +6,8 @@
   scalar contents and the existing handling of escapes, folding, Unicode, and invalid controls.
 - Read block-scalar content lines in bulk for string-backed input and append directly for
   streaming inputs, removing the temporary line buffer while preserving validation and spans.
+- Track the oldest possible simple key to avoid repeated scans of nested flow levels,
+  preserving lookahead limits, required-key errors, and comment ordering.
 
 ## 1.2.2
 - Refine #33 (under-indented flow sequence)

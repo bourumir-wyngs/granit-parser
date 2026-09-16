@@ -776,6 +776,12 @@ pub struct Scanner<'input, T> {
     /// Refer to the documentation of [`SimpleKey`] for a more in-depth explanation of what they
     /// are.
     simple_keys: smallvec::SmallVec<[SimpleKey; 8]>,
+    /// Index of the oldest still-possible simple key, or `None` if there are none.
+    ///
+    /// Only the current flow level can save a key, so possible keys are ordered by source
+    /// position and token number. Keeping their first index avoids rescanning inactive levels
+    /// and lets expiry stop as soon as the oldest remaining candidate is still valid.
+    first_simple_key: Option<usize>,
     /// The current indentation level.
     indent: isize,
     /// List of all block indentation levels we are in (except the current one).
@@ -1244,6 +1250,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             adjacent_value_allowed_at: 0,
             simple_key_allowed: true,
             simple_keys: smallvec::SmallVec::new(),
+            first_simple_key: None,
             indent: -1,
             indents: smallvec::SmallVec::new(),
             flow_level: 0,
@@ -1729,13 +1736,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     self.tokens.front().map(|token| &token.1),
                     Some(QueuedTokenType::Comment(_))
                 ) {
-                    // If our next token to be emitted may be a key, fetch more context.
-                    for sk in &self.simple_keys {
-                        if sk.possible && sk.token_number == self.tokens_parsed {
-                            need_more = true;
-                            break;
-                        }
-                    }
+                    // Only the oldest possible key can refer to the next token to emit.
+                    need_more = self.first_simple_key.is_some_and(|index| {
+                        self.simple_keys[index].token_number == self.tokens_parsed
+                    });
                 }
             }
 
@@ -1769,19 +1773,29 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// This function returns an error if one of the keys becoming impossible was required to be a
     /// key.
     fn stale_simple_keys(&mut self) -> ScanResult {
-        for sk in &mut self.simple_keys {
+        while let Some(index) = self.first_simple_key {
+            let sk = &mut self.simple_keys[index];
+            debug_assert!(sk.possible);
             let is_line_stale = self.flow_level == 0 && sk.mark.line < self.mark.line;
             // The length cap applies in flow contexts too; otherwise token buffering can grow
             // without bound while the scanner waits to see whether a later ':' resolves the key.
             let is_length_stale = self.mark.index().saturating_sub(sk.mark.index())
                 > self.options.simple_key_max_lookahead;
 
-            if sk.possible && (is_line_stale || is_length_stale) {
-                if sk.required {
-                    return Err(Self::simple_key_expected(sk.mark));
-                }
-                sk.possible = false;
+            if !is_line_stale && !is_length_stale {
+                // Inner candidates start no earlier, so they cannot have expired either.
+                break;
             }
+            if sk.required {
+                return Err(Self::simple_key_expected(sk.mark));
+            }
+            sk.possible = false;
+            // Skip inactive slots only when advancing past an expired candidate. Saving a key
+            // at an earlier level requires popping its descendants, so this work is amortized.
+            self.first_simple_key = self.simple_keys[index + 1..]
+                .iter()
+                .position(|key| key.possible)
+                .map(|offset| index + 1 + offset);
         }
         Ok(())
     }
@@ -2010,6 +2024,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
             sk.possible = false;
         }
+        self.first_simple_key = None;
 
         self.unroll_indent(-1);
         self.remove_simple_key()?;
@@ -2901,6 +2916,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     fn decrease_flow_level(&mut self) {
         if self.flow_level > 0 {
+            // The closing delimiter removes this level's possible key before popping it.
+            debug_assert!(!self.simple_keys.last().unwrap().possible);
+            debug_assert_ne!(self.first_simple_key, Some(self.flow_level));
             self.flow_level -= 1;
             self.simple_keys.pop().unwrap();
         }
@@ -4164,7 +4182,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             )?;
             self.roll_one_col_indent();
 
-            self.simple_keys.last_mut().unwrap().possible = false;
+            self.clear_simple_key();
             self.disallow_simple_key();
         } else {
             if is_implicit_flow_mapping {
@@ -4358,18 +4376,28 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     required,
                     token_number: self.tokens_parsed + self.tokens.len(),
                 };
+                self.first_simple_key.get_or_insert(self.flow_level);
             }
         }
     }
 
     fn remove_simple_key(&mut self) -> ScanResult {
-        let last = self.simple_keys.last_mut().unwrap();
+        let last = self.simple_keys.last().unwrap();
         if last.possible && last.required {
             return Err(Self::simple_key_expected(last.mark));
         }
 
-        last.possible = false;
+        self.clear_simple_key();
         Ok(())
+    }
+
+    /// Clear the current key after it is resolved or checked to be optional.
+    fn clear_simple_key(&mut self) {
+        self.simple_keys.last_mut().unwrap().possible = false;
+        if self.first_simple_key == Some(self.flow_level) {
+            // This is the top level, so no other possible keys follow it.
+            self.first_simple_key = None;
+        }
     }
 
     /// Return whether the scanner is inside a block but outside of a flow sequence.
@@ -5942,6 +5970,59 @@ mod test {
         assert_eq!(error.marker().index(), 3);
         assert_eq!(error.marker().line(), 2);
         assert_eq!(error.marker().col(), 0);
+    }
+
+    #[test]
+    fn first_simple_key_tracks_ordered_possible_candidates() {
+        let deep = alloc::format!(
+            "{}{}{{[é, z]: v}}{}\n",
+            "[".repeat(240),
+            "a, ".repeat(400),
+            "]".repeat(240)
+        );
+        for source in [
+            "",
+            "a: b\nmissing",
+            "a: b\nmissing\n# after\nnext: value\n",
+            "{[a, {b: c}]: [d, e], []: f}\n",
+            "[&a !tag [x, y], *a, {z: []}]\n",
+            "key: {\n&anchor\nname: value}\n",
+            "---\n{[a, b]: c} # end\n...\n# next\n---\nx: y\n",
+            "a: b\n[unterminated",
+            &deep,
+        ] {
+            for limit in [0, 4, 1024, usize::MAX] {
+                for emit_comments in [false, true] {
+                    let mut scanner = Scanner::with_options(
+                        StrInput::new(source),
+                        crate::options! {
+                            simple_key_max_lookahead: limit,
+                            emit_comments: emit_comments,
+                        },
+                    );
+                    loop {
+                        let result = scanner.next();
+                        assert_eq!(
+                            scanner.first_simple_key,
+                            scanner.simple_keys.iter().position(|key| key.possible),
+                            "source: {source:?}, limit: {limit}, comments: {emit_comments}"
+                        );
+                        let mut previous = None;
+                        for key in scanner.simple_keys.iter().filter(|key| key.possible) {
+                            assert!(key.token_number >= scanner.tokens_parsed);
+                            if let Some((index, token_number)) = previous {
+                                assert!(key.mark.index() >= index);
+                                assert!(key.token_number >= token_number);
+                            }
+                            previous = Some((key.mark.index(), key.token_number));
+                        }
+                        if result.is_none() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
