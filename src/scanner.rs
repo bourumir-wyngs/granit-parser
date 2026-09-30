@@ -669,8 +669,8 @@ struct Indent {
     /// bar # ko, bar needs to be indented further than the `-`.
     /// - [
     ///  baz, # ok
-    /// quux # ko, quux needs to be indented further than the '-'.
-    /// ] # ko, the closing bracket needs to be indented further than the `-`.
+    /// quux # accepted by default; invalid when `Options::strict_indentation` is true.
+    /// ] # accepted by default; invalid when `Options::strict_indentation` is true.
     /// ```
     ///
     /// The indentation level created by the `-` is for a single entry in the sequence. Emitting a
@@ -1623,8 +1623,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.document_prefix_allowed = false;
         }
 
-        // Flow entries and delimiters may be under-indented for compatibility with
-        // PyYAML and ruamel.yaml. Block indentation was handled by `unroll_indent`.
+        // Block indentation was handled by `unroll_indent`. Flow entries and delimiters
+        // may be under-indented only when strict YAML indentation is disabled.
+        if self.options.strict_indentation
+            && self.flow_level > 0
+            && (self.mark.col as isize) <= self.flow_block_indent()
+        {
+            return Err(self.scan_error(ErrorKind::InvalidIndentation));
+        }
+
         let c = self.input.peek();
         let nc = self.input.peek_nth(1);
         match c {
@@ -1835,11 +1842,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
 
             match ch {
-                // Tabs may not be used as indentation (block context only).
+                // Tabs may separate flow entries, but cannot supply required indentation.
                 '\t' => {
+                    let indent = if self.options.strict_indentation && self.flow_level > 0 {
+                        self.flow_block_indent() + 1
+                    } else {
+                        self.indent
+                    };
                     if self.is_within_block()
                         && self.leading_whitespace
-                        && (self.mark.col as isize) < self.indent
+                        && (self.mark.col as isize) < indent
                     {
                         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
@@ -3372,8 +3384,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             self.ensure_current_char_is_printable()?;
 
-            // Do not enforce block indentation inside quoted (flow) scalars.
-            // YAML allows line breaks within quoted scalars.
+            // Consume content before handling continuation-line indentation below.
             let mut leading_blanks = false;
             self.consume_flow_scalar_non_whitespace_chars(
                 single,
@@ -3383,8 +3394,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             )?;
 
             match self.input.look_ch() {
-                '\'' if single => break,
-                '"' if !single => break,
+                '\'' if single && !leading_blanks => break,
+                '"' if !single && !leading_blanks => break,
                 _ => {}
             }
 
@@ -3415,7 +3426,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 if self.input.next_is_blank() {
                     // Consume a space or a tab character.
                     if leading_blanks {
-                        if self.input.peek() == '\t' && (self.mark.col as isize) < self.indent {
+                        let indent = if self.options.strict_indentation && self.flow_level > 0 {
+                            self.flow_block_indent() + 1
+                        } else {
+                            self.indent
+                        };
+                        if self.input.peek() == '\t' && (self.mark.col as isize) < indent {
                             return Err(self.scan_error(ErrorKind::TabInIndentation));
                         }
                         self.skip_blank();
@@ -3489,8 +3505,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.input.lookahead(1);
             }
 
-            // If we had a line break inside a quoted (flow) scalar, validate indentation
-            // of the continuation line in block context.
+            // Escaped line breaks also set `leading_blanks`, even without a folded break.
+            // In strict flow context the continuation and closing quote must both be indented.
+            if leading_blanks
+                && self.options.strict_indentation
+                && self.flow_level > 0
+                && (self.mark.col as isize) <= self.flow_block_indent()
+            {
+                return Err(self.scan_error(ErrorKind::InvalidIndentation));
+            }
+
+            // Preserve the existing continuation rules for quoted scalars in block context.
             if leading_blanks && has_leading_break && self.flow_level == 0 {
                 let next_ch = self.input.peek();
                 let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
@@ -3987,8 +4012,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.input.lookahead(2);
             }
 
-            // check indentation level
-            if self.flow_level == 0 && (self.mark.col as isize) < indent {
+            // Stop before an under-indented continuation. In strict flow context the
+            // next token fetch reports its indentation error without consuming the content.
+            if (self.flow_level == 0 || self.options.strict_indentation)
+                && (self.mark.col as isize) < indent
+            {
                 break;
             }
         }
@@ -4141,11 +4169,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Under-indented flow entries are a compatibility extension, but implicit keys
             // spanning lines are rejected by both PyYAML and ruamel.yaml. Keep that extension
             // limited to single-line keys; explicitly marked `?` keys may span lines.
-            let block_indent = self
-                .indents
-                .last()
-                .filter(|indent| !indent.needs_block_end)
-                .map_or(self.indent, |indent| indent.indent);
+            let block_indent = self.flow_block_indent();
             if self.flow_level > 0
                 && sk.mark.line < start_mark.line
                 && (sk.mark.col as isize) <= block_indent
@@ -4233,11 +4257,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             return Ok(());
         }
 
-        let block_indent = self
-            .indents
-            .last()
-            .filter(|indent| !indent.needs_block_end)
-            .map_or(self.indent, |indent| indent.indent);
+        let block_indent = self.flow_block_indent();
         // The saved key mark may point to an anchor or tag before the actual content.
         // Check each property and the first content token; comments do not indent a key.
         // Stop at the content token so a collection key's children are not checked here.
@@ -4263,6 +4283,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ));
         }
         Ok(())
+    }
+
+    /// Return the enclosing block indentation, excluding a temporary one-column indent.
+    fn flow_block_indent(&self) -> isize {
+        self.indents
+            .last()
+            .filter(|indent| !indent.needs_block_end)
+            .map_or(self.indent, |indent| indent.indent)
     }
 
     /// Add an indentation level to the stack with the given block token, if needed.

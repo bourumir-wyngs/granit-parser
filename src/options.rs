@@ -7,12 +7,14 @@
 ///
 /// ```rust
 /// let options = granit_parser::options! {
+///     strict_indentation: true,
 ///     max_buffered_comment_events: 64,
 ///     emit_comments: false,
 ///     flow_nesting_limit: 512,
 ///     block_nesting_limit: 256,
 /// };
 ///
+/// assert!(options.strict_indentation);
 /// assert_eq!(options.max_buffered_comment_events, 64);
 /// assert!(!options.emit_comments);
 /// assert_eq!(options.flow_nesting_limit, 512);
@@ -21,6 +23,12 @@
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
+    /// Whether to enforce YAML indentation rules for flow collections.
+    ///
+    /// The default is `false`, accepting under-indented flow sequence and mapping entries,
+    /// delimiters, and scalar continuation lines for compatibility with `PyYAML` and ruamel.yaml.
+    /// When this is `true`, these must be indented beyond the enclosing block collection.
+    pub strict_indentation: bool,
     /// Whether scanners emit comment tokens and parsers emit comment events.
     ///
     /// The default is `true`. When this is `false`, comments are still recognized and validated
@@ -67,6 +75,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            strict_indentation: false,
             emit_comments: true,
             max_buffered_comment_events: 96,
             simple_key_max_lookahead: 1024,

@@ -8,7 +8,7 @@ use std::{
 use libtest_mimic::{run, Arguments, Failed, Trial};
 
 use granit_parser::{
-    Event, Marker, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
+    Event, Marker, Options, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -20,6 +20,7 @@ struct YamlTest {
     yaml: String,
     expected_events: String,
     expected_error: bool,
+    strict_indentation: bool,
 }
 
 #[derive(Default)]
@@ -65,7 +66,12 @@ fn main() -> Result<ExitCode> {
 
 #[allow(clippy::needless_pass_by_value)]
 fn run_yaml_test(data: YamlTest) -> Result<(), Failed> {
-    let reporter = parse_to_events(&data.yaml);
+    let reporter = parse_to_events(
+        &data.yaml,
+        granit_parser::options! {
+            strict_indentation: data.strict_indentation,
+        },
+    );
     let actual_events = reporter.as_ref().map(|reporter| &reporter.events);
     let events_diff = actual_events.map(|events| events_differ(events, &data.expected_events));
     let error_text = match (&events_diff, data.expected_error) {
@@ -159,31 +165,42 @@ fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Trial>> {
             .yaml_visual
             .clone()
             .ok_or_else(|| format!("{name}: missing yaml field"))?;
-        let mut expected_events = current_test
+        let expected_events = current_test
             .expected_events
             .clone()
             .ok_or_else(|| format!("{name}: missing tree field"))?;
-        let mut expected_error = current_test.expected_error == Some(true);
+        let expected_error = current_test.expected_error == Some(true);
 
-        // Issue #33 intentionally accepts this under-indented flow sequence, matching
-        // PyYAML and ruamel.yaml. Validate its complete event stream instead of an error.
-        if name == "9C9N" {
-            expected_error = false;
-            concat!(
-                "+STR\n+DOC ---\n+MAP\n=VAL :flow\n+SEQ []\n",
-                "=VAL :a\n=VAL :b\n=VAL :c\n-SEQ\n-MAP\n-DOC\n-STR\n",
-            )
-            .clone_into(&mut expected_events);
-        }
+        for strict_indentation in [false, true] {
+            let mut expected_events = expected_events.clone();
+            let mut expected_error = expected_error;
 
-        result.push(Trial::test(name, move || {
-            run_yaml_test(YamlTest {
+            // Issue #33 accepts this under-indented flow sequence in the default
+            // relaxed mode, matching PyYAML and ruamel.yaml. Strict mode keeps the
+            // YAML test suite's original expectation that this input is rejected.
+            if !strict_indentation && name == "9C9N" {
+                expected_error = false;
+                concat!(
+                    "+STR\n+DOC ---\n+MAP\n=VAL :flow\n+SEQ []\n",
+                    "=VAL :a\n=VAL :b\n=VAL :c\n-SEQ\n-MAP\n-DOC\n-STR\n",
+                )
+                .clone_into(&mut expected_events);
+            }
+
+            let trial_name = if strict_indentation {
+                format!("{name}::strict")
+            } else {
+                name.clone()
+            };
+            let data = YamlTest {
                 yaml: visual_to_raw(&yaml_visual),
                 expected_events: visual_to_raw(&expected_events),
-                yaml_visual,
+                yaml_visual: yaml_visual.clone(),
                 expected_error,
-            })
-        }));
+                strict_indentation,
+            };
+            result.push(Trial::test(trial_name, move || run_yaml_test(data)));
+        }
     }
     Ok(result)
 }
@@ -317,14 +334,14 @@ fn parse_literal_block(
     Ok((block, idx))
 }
 
-fn parse_to_events(source: &str) -> Result<EventReporter<'_>, ScanError> {
+fn parse_to_events(source: &str, options: Options) -> Result<EventReporter<'_>, ScanError> {
     let mut str_events = vec![];
     let mut str_error = None;
     let mut iter_events = vec![];
     let mut iter_error = None;
 
     // Parse as string
-    for x in Parser::new_from_str(source) {
+    for x in Parser::new_from_str_with_options(source, options.clone()) {
         match x {
             Ok(event) => str_events.push(event),
             Err(e) => {
@@ -334,7 +351,7 @@ fn parse_to_events(source: &str) -> Result<EventReporter<'_>, ScanError> {
         }
     }
     // Parse as iter
-    for x in Parser::new_from_iter(source.chars()) {
+    for x in Parser::new_from_iter_with_options(source.chars(), options) {
         match x {
             Ok(event) => iter_events.push(event),
             Err(e) => {

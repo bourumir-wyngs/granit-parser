@@ -193,6 +193,19 @@ differences done from the time of forking (0.0.6). Saphyr-parser may also have c
   and mappings are accepted for compatibility with PyYAML, ruamel.yaml, and real-world inputs.
   Under-indented implicit mapping keys must keep the key and its `:` on the same line.
 
+  Set `strict_indentation: true` to require YAML-compliant flow indentation, including entries,
+  delimiters, and multiline scalar continuations. The default is `false`.
+
+  ```rust
+  use granit_parser::{options, Parser};
+
+  let parser = Parser::new_from_str_with_options(
+      "key: [\n  1, 2, 3\n  ]\n",
+      options! { strict_indentation: true },
+  );
+  assert!(parser.collect::<Result<Vec<_>, _>>().is_ok());
+  ```
+
 
 ### JSON-style Unicode surrogate pairs
 This parser supports explicit handling for JSON-style Unicode surrogate pairs in quoted scalar escape sequences.
