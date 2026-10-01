@@ -1853,7 +1853,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         && self.leading_whitespace
                         && (self.mark.col as isize) < indent
                     {
-                        self.skip_ws_to_eol(SkipTabs::Yes)?;
+                        let (chars_consumed, _) = self.input.skip_ws_to_eol_blanks(SkipTabs::Yes);
+                        self.mark.col += chars_consumed;
+                        self.mark.offsets.chars += chars_consumed;
+                        self.mark.offsets.bytes = self.input.byte_offset();
+
+                        // Let the ordinary comment branch record and yield after this comment.
+                        if self.input.look_ch() == '#' {
+                            continue;
+                        }
 
                         // If we have content on that line with a tab, return an error.
                         if !self.input.next_is_breakz() {

@@ -1,8 +1,9 @@
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
-    BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Options, Parser,
-    Placement, ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
+    BorrowedInput, BufferedInput, Comment, ErrorKind, Event, EventReceiver, Marker, Options,
+    Parser, Placement, ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType,
+    TryEventReceiver,
 };
 
 fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
@@ -40,13 +41,13 @@ where
     }
 }
 
-fn chars_pulled_until_error(source: &str) -> (usize, String) {
+fn chars_pulled_until_error(source: &str, options: Options) -> (usize, ScanError) {
     let read = Rc::new(Cell::new(0));
     let iter = CountingChars {
         iter: source.chars(),
         read: Rc::clone(&read),
     };
-    let mut parser = Parser::new_from_iter(iter);
+    let mut parser = Parser::new_from_iter_with_options(iter, options);
 
     loop {
         match parser
@@ -54,18 +55,18 @@ fn chars_pulled_until_error(source: &str) -> (usize, String) {
             .expect("parser should emit an event before EOF")
         {
             Ok(_) => {}
-            Err(error) => return (read.get(), error.info()),
+            Err(error) => return (read.get(), error),
         }
     }
 }
 
-fn chars_pulled_before_first_comment(source: &str) -> usize {
+fn chars_pulled_before_first_comment(source: &str, options: Options) -> usize {
     let read = Rc::new(Cell::new(0));
     let iter = CountingChars {
         iter: source.chars(),
         read: Rc::clone(&read),
     };
-    let mut parser = Parser::new_from_iter(iter);
+    let mut parser = Parser::new_from_iter_with_options(iter, options);
 
     loop {
         let (event, _) = parser
@@ -944,12 +945,69 @@ fn parser_streams_explicit_key_comment_runs_before_reading_tail() {
     let yaml = format!("? # c0\n{trailing_comments}  key\n: value\n");
 
     let total = yaml.chars().count();
-    let pulled = chars_pulled_before_first_comment(&yaml);
+    let pulled = chars_pulled_before_first_comment(&yaml, Options::default());
 
     assert!(
         pulled < total / 2,
         "parser read {pulled} of {total} chars before first explicit-key comment event",
     );
+}
+
+#[test]
+fn parser_streams_tab_prefixed_comment_runs_before_reading_tail() {
+    let comments = "\t# comment\n".repeat(128);
+    let cases = [
+        ("top-level", format!("key: [0,\n{comments} 1]\n")),
+        ("nested", format!("outer:\n  key: [0,\n{comments}   1]\n")),
+    ];
+
+    for strict_indentation in [false, true] {
+        for (name, yaml) in &cases {
+            let options = granit_parser::options! {
+                strict_indentation: strict_indentation,
+                max_buffered_comment_events: 4,
+            };
+            let total = yaml.chars().count();
+            let pulled = chars_pulled_before_first_comment(yaml, options);
+
+            assert!(
+                pulled < total / 2,
+                "{name}, strict_indentation={strict_indentation}: parser read {pulled} of \
+                 {total} chars before first tab-prefixed comment event",
+            );
+        }
+    }
+}
+
+#[test]
+fn parser_rejects_ambiguous_tab_prefixed_comment_runs_before_reading_tail() {
+    let comments = "\t# comment\n".repeat(128);
+    let cases = [
+        ("top-level", format!("key: {{a:\n{comments} 1}}\n")),
+        ("nested", format!("outer:\n  key: {{a:\n{comments}   1}}\n")),
+    ];
+
+    for strict_indentation in [false, true] {
+        for (name, yaml) in &cases {
+            let options = granit_parser::options! {
+                strict_indentation: strict_indentation,
+                max_buffered_comment_events: 4,
+            };
+            let total = yaml.chars().count();
+            let (pulled, error) = chars_pulled_until_error(yaml, options);
+
+            assert_eq!(
+                error.kind(),
+                &ErrorKind::TooManyComments,
+                "{name}, strict_indentation={strict_indentation}: unexpected parser error",
+            );
+            assert!(
+                pulled < total / 2,
+                "{name}, strict_indentation={strict_indentation}: parser read {pulled} of \
+                 {total} chars before rejecting tab-prefixed comments",
+            );
+        }
+    }
 }
 
 #[test]
@@ -999,10 +1057,11 @@ fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
 
     for (name, yaml) in cases {
         let total = yaml.chars().count();
-        let (pulled, info) = chars_pulled_until_error(&yaml);
+        let (pulled, error) = chars_pulled_until_error(&yaml, Options::default());
 
         assert_eq!(
-            info, "too many consecutive comments before resolving collection entry",
+            error.info(),
+            "too many consecutive comments before resolving collection entry",
             "{name}: unexpected parser error",
         );
         assert!(
