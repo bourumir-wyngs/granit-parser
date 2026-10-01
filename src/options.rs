@@ -23,11 +23,12 @@
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
-    /// Whether to enforce YAML indentation rules for flow collections.
+    /// Whether to enforce strict YAML indentation rules for flow collections.
     ///
-    /// The default is `false`, accepting under-indented flow sequence and mapping entries,
-    /// delimiters, and scalar continuation lines for compatibility with `PyYAML` and ruamel.yaml.
-    /// When this is `true`, these must be indented beyond the enclosing block collection.
+    /// The default parsing is compatible with `PyYAML` and `ruamel.yaml`.
+    /// `true` sets stricter indentation rules as required by the YAML specification,
+    /// some non-compliant YAML that passes with the two libraries above will fail.
+    /// Default is false.
     pub strict_indentation: bool,
     /// Whether scanners emit comment tokens and parsers emit comment events.
     ///
