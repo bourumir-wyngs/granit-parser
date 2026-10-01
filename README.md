@@ -180,6 +180,8 @@ differences done from the time of forking (0.0.6). Saphyr-parser may also have c
 
 
 ### Compatibility adjustment
+While linters would insist on strict compliance, other applications may prefer full backward compatibility. 
+To balance requirements for all use cases, the compliance is governed by settings in [`Options`](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html).
 
 * **Relaxed indentation for flow collection entries and delimiters**
 
@@ -193,6 +195,19 @@ differences done from the time of forking (0.0.6). Saphyr-parser may also have c
   While not strictly YAML-compliant, under-indented entries and delimiters in flow sequences
   and mappings are accepted for compatibility with PyYAML, ruamel.yaml, and real-world inputs.
   Under-indented implicit mapping keys must keep the key and its `:` on the same line.
+
+  Set [`strict_indentation: true`](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html#structfield.strict_indentation) to require YAML-compliant flow indentation, including entries,
+  delimiters, and multiline scalar continuations. The default is `false`.
+
+  ```rust
+  use granit_parser::{options, Parser};
+
+  let parser = Parser::new_from_str_with_options(
+      "key: [\n  1, 2, 3\n  ]\n",
+      options! { strict_indentation: true },
+  );
+  assert!(parser.collect::<Result<Vec<_>, _>>().is_ok());
+  ```
 
 
 ### JSON-style Unicode surrogate pairs

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- Add `Options::strict_indentation` (default `false`) to require strict YAML-compliant indentation for flow
+  entries, delimiters, and scalar continuations (compliant with case 9C9N). Default behavior
+  is compatible with `PyYAML` and `ruamel.yaml`.
+
 ## 1.3.0
 
 **API Additions**:

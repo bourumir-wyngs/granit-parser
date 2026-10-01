@@ -552,6 +552,50 @@ fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
 }
 
 #[test]
+fn ignored_tab_prefixed_comments_preserve_completed_scalars_before_later_errors() {
+    let source = "root:\n  key: \"value\"\n\t# ignored\n\t# invalid \u{1}\n";
+    let expected_error = ErrorKind::UnexpectedCharacter { character: '\u{1}' };
+    let expected_scalar = Some((ScalarStyle::DoubleQuoted, "value"));
+
+    for strict_indentation in [false, true] {
+        let enabled = granit_parser::options! { strict_indentation: strict_indentation };
+        let disabled = granit_parser::options! {
+            strict_indentation: strict_indentation,
+            emit_comments: false,
+        };
+
+        assert_scanner_prefix(
+            &format!("strict={strict_indentation}, string scanner"),
+            Scanner::with_options(StrInput::new(source), enabled.clone()),
+            Scanner::with_options(StrInput::new(source), disabled.clone()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_scanner_prefix(
+            &format!("strict={strict_indentation}, iterator scanner"),
+            Scanner::with_options(BufferedInput::new(source.chars()), enabled.clone()),
+            Scanner::with_options(BufferedInput::new(source.chars()), disabled.clone()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_parser_prefix(
+            &format!("strict={strict_indentation}, string parser"),
+            Parser::with_options(StrInput::new(source), enabled.clone()),
+            Parser::with_options(StrInput::new(source), disabled.clone()),
+            &expected_error,
+            &expected_scalar,
+        );
+        assert_parser_prefix(
+            &format!("strict={strict_indentation}, iterator parser"),
+            Parser::with_options(BufferedInput::new(source.chars()), enabled),
+            Parser::with_options(BufferedInput::new(source.chars()), disabled),
+            &expected_error,
+            &expected_scalar,
+        );
+    }
+}
+
+#[test]
 fn disabled_comments_preserve_required_block_scalar_error_prefix() {
     fn assert_scanner<'input, T>(
         context: &str,
