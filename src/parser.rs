@@ -11,9 +11,11 @@ use crate::{
     BufferedInput, FallibleBufferedInput, Options,
 };
 
+#[cfg(feature = "parser-comments")]
+use alloc::collections::VecDeque;
 use alloc::{
     borrow::Cow,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     string::{String, ToString},
     vec::Vec,
 };
@@ -38,21 +40,27 @@ enum State {
     IndentlessSequenceEntryNode,
     BlockMappingFirstKey,
     BlockMappingKey,
+    #[cfg(feature = "parser-comments")]
     BlockMappingKeyNode,
     BlockMappingValue,
+    #[cfg(feature = "parser-comments")]
     BlockMappingValueNode,
     FlowSequenceFirstEntry,
     FlowSequenceEntry,
     FlowSequenceEntryMappingKey,
     FlowSequenceEntryMappingValue,
+    #[cfg(feature = "parser-comments")]
     FlowSequenceEntryMappingValueNode,
     FlowSequenceEntryMappingEnd,
     FlowMappingFirstKey,
     FlowMappingKey,
+    #[cfg(feature = "parser-comments")]
     FlowMappingKeyNode,
     FlowMappingValue,
+    #[cfg(feature = "parser-comments")]
     FlowMappingValueNode,
     FlowMappingEmptyValue,
+    #[cfg(feature = "parser-comments")]
     BlockSequenceEntryNode,
     End,
 }
@@ -492,6 +500,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The underlying scanner from which we pull tokens.
     scanner: Scanner<'input, T>,
     /// Maximum number of comments retained while resolving an ambiguous collection entry.
+    #[cfg(feature = "parser-comments")]
     max_buffered_comment_events: usize,
     /// Maximum number of simultaneously open block collections.
     block_nesting_limit: usize,
@@ -515,8 +524,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// Unlike `current_error`, this has not been exposed through `peek`. It is consumed by
     /// `next_event_impl` after already-buffered events so `peek`, iteration, and `load` all retain
     /// the same ordering.
+    #[cfg(feature = "parser-comments")]
     deferred_error: Option<ScanError>,
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
+    #[cfg(feature = "parser-comments")]
     queued_events: VecDeque<(Event<'input>, Span)>,
 
     /// Pending indentation hint to be attached to the next emitted event span.
@@ -526,12 +537,16 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// itself).
     pending_key_indent: Option<usize>,
     /// Pending anchor ID to attach to a node after an intervening comment.
+    #[cfg(feature = "parser-comments")]
     pending_node_anchor_id: usize,
     /// Pending tag to attach to a node after an intervening comment.
+    #[cfg(feature = "parser-comments")]
     pending_node_tag: Option<Cow<'input, Tag>>,
     /// Pending explicit tag token start to attach to a node after an intervening comment.
+    #[cfg(feature = "parser-comments")]
     pending_node_tag_start: Option<Marker>,
     /// Pending end marker of the last node-property token before an intervening comment.
+    #[cfg(feature = "parser-comments")]
     pending_node_property_end: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
@@ -540,10 +555,13 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// Synthetic syntax events use this marker, so presentation-only comments must not affect it.
     last_non_comment_event_end: Option<Marker>,
     /// Pending YAML version captured before comments preceding an explicit document start.
+    #[cfg(feature = "parser-comments")]
     pending_document_version: Option<YamlVersion>,
     /// Whether document directives were already initialized before comments preceding `---`.
+    #[cfg(feature = "parser-comments")]
     pending_document_directives: bool,
     /// `%TAG` handles already seen before comments preceding an explicit document start.
+    #[cfg(feature = "parser-comments")]
     pending_document_tag_handles: BTreeSet<Cow<'input, str>>,
     /// Anchors that have been encountered in the YAML document.
     anchors: BTreeMap<Cow<'input, str>, usize>,
@@ -560,7 +578,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     ///
     /// Terminal means either [`Event::StreamEnd`] or a [`ScanError`]. Emitted means that it has
     /// been returned from [`Self::next_event`] or [`Self::next`]. If the terminal result is stored
-    /// in [`Self::current`], [`Self::current_error`], or [`Self::deferred_error`], this is set to
+    /// in [`Self::current`], [`Self::current_error`], or internal comment buffers, this is set to
     /// `false`.
     stream_end_emitted: bool,
     /// Make tags global across all documents.
@@ -938,13 +956,26 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// Use [`crate::options!`] to construct `options` without depending on exhaustive struct
     /// literal syntax.
+    /// Without the `parser-comments` feature, the parser ignores `options.emit_comments` and
+    /// does not emit comment events. Direct scanner users retain their runtime comment options.
     #[must_use]
     pub fn with_options(src: T, options: Options) -> Self {
+        #[cfg(not(feature = "parser-comments"))]
+        let options = {
+            let mut options = options;
+            options.emit_comments = false;
+            options
+        };
+        #[cfg(feature = "parser-comments")]
         let max_buffered_comment_events = options.max_buffered_comment_events;
         let block_nesting_limit = options.block_nesting_limit;
+        let scanner = Scanner::with_options(src, options);
+        #[cfg(not(feature = "parser-comments"))]
+        debug_assert!(!scanner.comments_possible());
 
         Parser {
-            scanner: Scanner::with_options(src, options),
+            scanner,
+            #[cfg(feature = "parser-comments")]
             max_buffered_comment_events,
             block_nesting_limit,
             block_level: 0,
@@ -953,18 +984,27 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             token: None,
             current: None,
             current_error: None,
+            #[cfg(feature = "parser-comments")]
             deferred_error: None,
+            #[cfg(feature = "parser-comments")]
             queued_events: VecDeque::new(),
 
             pending_key_indent: None,
+            #[cfg(feature = "parser-comments")]
             pending_node_anchor_id: 0,
+            #[cfg(feature = "parser-comments")]
             pending_node_tag: None,
+            #[cfg(feature = "parser-comments")]
             pending_node_tag_start: None,
+            #[cfg(feature = "parser-comments")]
             pending_node_property_end: None,
             pending_empty_scalar_span: None,
             last_non_comment_event_end: None,
+            #[cfg(feature = "parser-comments")]
             pending_document_version: None,
+            #[cfg(feature = "parser-comments")]
             pending_document_directives: false,
+            #[cfg(feature = "parser-comments")]
             pending_document_tag_handles: BTreeSet::new(),
 
             anchors: BTreeMap::new(),
@@ -1038,15 +1078,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         let event = match self.current.take() {
             None => {
-                if let Some(event) = self.queued_events.pop_front() {
-                    Ok(self.apply_pending_key_indent(event))
-                } else if let Some(error) = self.deferred_error.take() {
-                    return Err(error);
-                } else if self.state == State::End {
-                    self.parse()
-                } else if let Some(comment) = self.maybe_next_comment_event()? {
-                    Ok(comment)
-                } else {
+                #[cfg(feature = "parser-comments")]
+                {
+                    if let Some(event) = self.queued_events.pop_front() {
+                        Ok(self.apply_pending_key_indent(event))
+                    } else if let Some(error) = self.deferred_error.take() {
+                        return Err(error);
+                    } else if self.state == State::End {
+                        self.parse()
+                    } else if let Some(comment) = self.maybe_next_comment_event()? {
+                        Ok(comment)
+                    } else {
+                        self.parse()
+                    }
+                }
+                #[cfg(not(feature = "parser-comments"))]
+                {
                     self.parse()
                 }
             }
@@ -1070,14 +1117,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         (event, span): (Event<'a>, Span),
     ) -> (Event<'a>, Span) {
-        if !matches!(event, Event::Comment(..)) {
-            self.last_non_comment_event_end = Some(span.end);
+        #[cfg(feature = "parser-comments")]
+        if matches!(event, Event::Comment(..)) {
+            return (event, span);
         }
+        self.last_non_comment_event_end = Some(span.end);
         (event, span)
     }
 
     /// Peek at the next token from the scanner.
     fn peek_token(&mut self) -> Result<&QueuedToken<'_>, ScanError> {
+        #[cfg(feature = "parser-comments")]
         if let Some(error) = &self.deferred_error {
             return Err(error.clone());
         }
@@ -1101,6 +1151,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     #[inline]
     fn maybe_next_comment_event<'a>(&mut self) -> Result<Option<(Event<'a>, Span)>, ScanError>
     where
@@ -1113,6 +1164,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     fn next_comment_event<'a>(&mut self) -> Result<Option<(Event<'a>, Span)>, ScanError>
     where
         'input: 'a,
@@ -1136,6 +1188,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     #[inline]
     fn next_comment_events(&mut self) -> Result<Vec<(Event<'input>, Span)>, ScanError> {
         if !self.scanner.comments_possible() {
@@ -1172,6 +1225,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     fn queue_tail_and_return_first(
         &mut self,
         events: Vec<(Event<'input>, Span)>,
@@ -1184,6 +1238,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         first
     }
 
+    #[cfg(feature = "parser-comments")]
     fn queue_event_by_span(
         &mut self,
         comments: Vec<(Event<'input>, Span)>,
@@ -1212,6 +1267,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.queue_tail_and_return_first(ordered)
     }
 
+    #[cfg(feature = "parser-comments")]
     fn queue_two_events_by_span(
         &mut self,
         comments: Vec<(Event<'input>, Span)>,
@@ -1242,6 +1298,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         self.queue_tail_and_return_first(ordered)
     }
 
+    #[cfg(feature = "parser-comments")]
     fn refined_comment_placement(&mut self, span: Span, placement: Placement) -> Placement {
         if placement == Placement::Right {
             return Placement::Right;
@@ -1325,11 +1382,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     {
         self.push_state(return_state);
         self.state = node_state;
+        #[cfg(feature = "parser-comments")]
         if let Some(comment) = self.maybe_next_comment_event()? {
-            Ok(comment)
-        } else {
-            self.parse_node(block, indentless_sequence)
+            return Ok(comment);
         }
+        self.parse_node(block, indentless_sequence)
     }
 
     fn parse<'a>(&mut self) -> ParseResult<'a>
@@ -1467,12 +1524,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             State::FlowNode => self.parse_node(false, false),
             State::BlockMappingFirstKey => self.block_mapping_key(true),
             State::BlockMappingKey => self.block_mapping_key(false),
+            #[cfg(feature = "parser-comments")]
             State::BlockMappingKeyNode => self.block_mapping_key_node(),
             State::BlockMappingValue => self.block_mapping_value(),
+            #[cfg(feature = "parser-comments")]
             State::BlockMappingValueNode => self.block_mapping_value_node(),
 
             State::BlockSequenceFirstEntry => self.block_sequence_entry(true),
             State::BlockSequenceEntry => self.block_sequence_entry(false),
+            #[cfg(feature = "parser-comments")]
             State::BlockSequenceEntryNode => self.block_sequence_entry_node(),
 
             State::FlowSequenceFirstEntry => self.flow_sequence_entry(true),
@@ -1480,8 +1540,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
             State::FlowMappingFirstKey => self.flow_mapping_key(true),
             State::FlowMappingKey => self.flow_mapping_key(false),
+            #[cfg(feature = "parser-comments")]
             State::FlowMappingKeyNode => self.flow_mapping_key_node(),
             State::FlowMappingValue => self.flow_mapping_value(false),
+            #[cfg(feature = "parser-comments")]
             State::FlowMappingValueNode => self.flow_mapping_value_node(),
 
             State::IndentlessSequenceEntry => self.indentless_sequence_entry(),
@@ -1489,6 +1551,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
             State::FlowSequenceEntryMappingKey => self.flow_sequence_entry_mapping_key(),
             State::FlowSequenceEntryMappingValue => self.flow_sequence_entry_mapping_value(),
+            #[cfg(feature = "parser-comments")]
             State::FlowSequenceEntryMappingValueNode => {
                 self.flow_sequence_entry_mapping_value_node()
             }
@@ -1516,6 +1579,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     fn has_pending_document_directives(&self) -> bool {
         self.pending_document_directives
             || self.pending_document_version.is_some()
@@ -1529,6 +1593,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         // Resume a document start paused to emit comments before handling markers that are only
         // ignorable between documents. In particular, `...` is invalid while `---` is still
         // required after directives and must not be consumed by the loop below.
+        #[cfg(feature = "parser-comments")]
         if self.has_pending_document_directives() {
             return self.explicit_document_start();
         }
@@ -1543,6 +1608,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         // Skipping a leading document-end marker can expose a comment that the normal
         // `next_event_impl` pre-dispatch check could not see yet. Emit it before deciding whether
         // another document starts; presentation-only comments must not create an implicit document.
+        #[cfg(feature = "parser-comments")]
         if let Some(comment) = self.maybe_next_comment_event()? {
             return Ok(comment);
         }
@@ -1640,20 +1706,26 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
-        let pending_version = self.pending_document_version.take();
-        let continuing_directives = core::mem::take(&mut self.pending_document_directives);
-        let pending_tag_handles = core::mem::take(&mut self.pending_document_tag_handles);
-        let (version, document_tag_handles) = self.parser_process_directives(
-            pending_version,
-            continuing_directives,
-            pending_tag_handles,
-        )?;
-        if let Some(comment) = self.maybe_next_comment_event()? {
-            self.pending_document_version = version;
-            self.pending_document_directives = true;
-            self.pending_document_tag_handles = document_tag_handles;
-            return Ok(comment);
-        }
+        #[cfg(feature = "parser-comments")]
+        let version = {
+            let pending_version = self.pending_document_version.take();
+            let continuing_directives = core::mem::take(&mut self.pending_document_directives);
+            let pending_tag_handles = core::mem::take(&mut self.pending_document_tag_handles);
+            let (version, document_tag_handles) = self.parser_process_directives(
+                pending_version,
+                continuing_directives,
+                pending_tag_handles,
+            )?;
+            if let Some(comment) = self.maybe_next_comment_event()? {
+                self.pending_document_version = version;
+                self.pending_document_directives = true;
+                self.pending_document_tag_handles = document_tag_handles;
+                return Ok(comment);
+            }
+            version
+        };
+        #[cfg(not(feature = "parser-comments"))]
+        let (version, _) = self.parser_process_directives(None, false, BTreeSet::new())?;
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::DocumentStart) => {
                 self.push_state(State::DocumentEnd);
@@ -1750,6 +1822,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok(new_id)
     }
 
+    #[cfg(feature = "parser-comments")]
     fn save_pending_node_properties(
         &mut self,
         anchor_id: usize,
@@ -1772,14 +1845,20 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        #[cfg(feature = "parser-comments")]
         if let Some(comment) = self.maybe_next_comment_event()? {
             return Ok(comment);
         }
 
-        let mut anchor_id = core::mem::take(&mut self.pending_node_anchor_id);
-        let mut tag = self.pending_node_tag.take();
-        let mut tag_start = self.pending_node_tag_start.take();
-        let mut property_end = self.pending_node_property_end.take();
+        #[cfg(feature = "parser-comments")]
+        let (mut anchor_id, mut tag, mut tag_start, mut property_end) = (
+            core::mem::take(&mut self.pending_node_anchor_id),
+            self.pending_node_tag.take(),
+            self.pending_node_tag_start.take(),
+            self.pending_node_property_end.take(),
+        );
+        #[cfg(not(feature = "parser-comments"))]
+        let (mut anchor_id, mut tag, mut tag_start, mut property_end) = (0, None, None, None);
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id == 0 && tag.is_none() => {
                 self.pop_state();
@@ -1807,6 +1886,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     tag = Some(self.resolve_tag(tag_span, &handle, suffix)?);
                     property_end = Some(tag_span.end);
                 }
+                #[cfg(feature = "parser-comments")]
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                     return Ok(comment);
@@ -1829,6 +1909,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                         property_end = Some(mark.end);
                     }
                 }
+                #[cfg(feature = "parser-comments")]
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.save_pending_node_properties(anchor_id, tag, tag_start, property_end);
                     return Ok(comment);
@@ -1844,43 +1925,52 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Event::SequenceStart(StructureStyle::Block, anchor_id, tag),
                     mark.with_tag_start(tag_start),
                 );
-                let comments = match self.next_comment_events() {
-                    Ok(comments) => comments,
-                    Err(error) if !matches!(error.kind(), ErrorKind::TooManyComments) => {
-                        // `StrInput` can prove that a source has no comments and skips this
-                        // lookahead, while streaming inputs must probe for one. If that probe
-                        // discovers a later scanner error, the input backend must not determine
-                        // whether this already-recognized sequence start is emitted first.
-                        debug_assert!(self.deferred_error.is_none());
-                        self.deferred_error = Some(error);
+                #[cfg(feature = "parser-comments")]
+                {
+                    let comments = match self.next_comment_events() {
+                        Ok(comments) => comments,
+                        Err(error) if !matches!(error.kind(), ErrorKind::TooManyComments) => {
+                            // `StrInput` can prove that a source has no comments and skips this
+                            // lookahead, while streaming inputs must probe for one. If that probe
+                            // discovers a later scanner error, the input backend must not determine
+                            // whether this already-recognized sequence start is emitted first.
+                            debug_assert!(self.deferred_error.is_none());
+                            self.deferred_error = Some(error);
+                            self.pending_empty_scalar_span = Some(mark);
+                            self.state = State::IndentlessSequenceEntryNode;
+                            return Ok(start);
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    if comments.is_empty() {
                         self.pending_empty_scalar_span = Some(mark);
                         self.state = State::IndentlessSequenceEntryNode;
-                        return Ok(start);
+                        Ok(start)
+                    } else if let Ok(QueuedToken(
+                        _,
+                        QueuedTokenType::BlockEntry
+                        | QueuedTokenType::Key
+                        | QueuedTokenType::Value
+                        | QueuedTokenType::BlockEnd,
+                    )) = self.peek_token()
+                    {
+                        self.state = State::IndentlessSequenceEntry;
+                        Ok(self.queue_two_events_by_span(
+                            comments,
+                            start,
+                            (Event::empty_scalar(), mark),
+                        ))
+                    } else {
+                        self.pending_empty_scalar_span = Some(mark);
+                        self.state = State::IndentlessSequenceEntryNode;
+                        Ok(self.queue_event_by_span(comments, start))
                     }
-                    Err(error) => return Err(error),
-                };
-                if comments.is_empty() {
+                }
+                #[cfg(not(feature = "parser-comments"))]
+                {
                     self.pending_empty_scalar_span = Some(mark);
                     self.state = State::IndentlessSequenceEntryNode;
                     Ok(start)
-                } else if let Ok(QueuedToken(
-                    _,
-                    QueuedTokenType::BlockEntry
-                    | QueuedTokenType::Key
-                    | QueuedTokenType::Value
-                    | QueuedTokenType::BlockEnd,
-                )) = self.peek_token()
-                {
-                    self.state = State::IndentlessSequenceEntry;
-                    Ok(self.queue_two_events_by_span(
-                        comments,
-                        start,
-                        (Event::empty_scalar(), mark),
-                    ))
-                } else {
-                    self.pending_empty_scalar_span = Some(mark);
-                    self.state = State::IndentlessSequenceEntryNode;
-                    Ok(self.queue_event_by_span(comments, start))
                 }
             }
             QueuedToken(_, QueuedTokenType::Scalar(..)) => {
@@ -1981,12 +2071,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     self.pending_key_indent = Some(key_span.start.col());
                 }
                 self.skip();
+                #[cfg(feature = "parser-comments")]
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::BlockMappingKeyNode;
-                    Ok(comment)
-                } else {
-                    self.block_mapping_key_node()
+                    return Ok(comment);
                 }
+                self.block_mapping_key_node()
             }
             // A missing block-mapping key before `:` is represented as an empty scalar.
             QueuedToken(mark, QueuedTokenType::Value) => {
@@ -2034,21 +2124,28 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::Value) => {
                 self.skip();
-                let comments = self.next_comment_events()?;
-                if comments.is_empty() {
-                    self.block_mapping_value_node_with_empty_span(mark)
-                } else if let Ok(QueuedToken(
-                    _,
-                    QueuedTokenType::Key | QueuedTokenType::Value | QueuedTokenType::BlockEnd,
-                )) = self.peek_token()
+                #[cfg(feature = "parser-comments")]
                 {
-                    self.state = State::BlockMappingKey;
-                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
-                } else {
-                    self.pending_empty_scalar_span = Some(mark);
-                    self.state = State::BlockMappingValueNode;
-                    Ok(self.queue_tail_and_return_first(comments))
+                    let comments = self.next_comment_events()?;
+                    if !comments.is_empty() {
+                        if let Ok(QueuedToken(
+                            _,
+                            QueuedTokenType::Key
+                            | QueuedTokenType::Value
+                            | QueuedTokenType::BlockEnd,
+                        )) = self.peek_token()
+                        {
+                            self.state = State::BlockMappingKey;
+                            return Ok(
+                                self.queue_event_by_span(comments, (Event::empty_scalar(), mark))
+                            );
+                        }
+                        self.pending_empty_scalar_span = Some(mark);
+                        self.state = State::BlockMappingValueNode;
+                        return Ok(self.queue_tail_and_return_first(comments));
+                    }
                 }
+                self.block_mapping_value_node_with_empty_span(mark)
             }
             QueuedToken(mark, _) => {
                 self.state = State::BlockMappingKey;
@@ -2057,6 +2154,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     fn block_mapping_value_node<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -2102,6 +2200,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     match *self.peek_token()? {
                         QueuedToken(_, QueuedTokenType::FlowEntry) => {
                             self.skip();
+                            #[cfg(feature = "parser-comments")]
                             if let Some(comment) = self.maybe_next_comment_event()? {
                                 self.state = State::FlowMappingFirstKey;
                                 return Ok(comment);
@@ -2119,6 +2218,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 match *self.peek_token()? {
                     QueuedToken(_, QueuedTokenType::Key) => {
                         self.skip();
+                        #[cfg(feature = "parser-comments")]
                         if let Some(comment) = self.maybe_next_comment_event()? {
                             self.state = State::FlowMappingKeyNode;
                             return Ok(comment);
@@ -2177,24 +2277,29 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             match *self.peek_token()? {
                 QueuedToken(span, QueuedTokenType::Value) => {
                     self.skip();
-                    let comments = self.next_comment_events()?;
-                    if comments.is_empty() {
-                        return self.flow_mapping_value_node_with_empty_span(span);
-                    }
-                    if let Ok(QueuedToken(
-                        _,
-                        QueuedTokenType::FlowEntry | QueuedTokenType::FlowMappingEnd,
-                    )) = self.peek_token()
+                    #[cfg(feature = "parser-comments")]
                     {
-                        self.state = State::FlowMappingKey;
-                        return Ok(
-                            self.queue_event_by_span(comments, (Event::empty_scalar(), span))
-                        );
-                    }
+                        let comments = self.next_comment_events()?;
+                        if comments.is_empty() {
+                            return self.flow_mapping_value_node_with_empty_span(span);
+                        }
+                        if let Ok(QueuedToken(
+                            _,
+                            QueuedTokenType::FlowEntry | QueuedTokenType::FlowMappingEnd,
+                        )) = self.peek_token()
+                        {
+                            self.state = State::FlowMappingKey;
+                            return Ok(
+                                self.queue_event_by_span(comments, (Event::empty_scalar(), span))
+                            );
+                        }
 
-                    self.pending_empty_scalar_span = Some(span);
-                    self.state = State::FlowMappingValueNode;
-                    return Ok(self.queue_tail_and_return_first(comments));
+                        self.pending_empty_scalar_span = Some(span);
+                        self.state = State::FlowMappingValueNode;
+                        return Ok(self.queue_tail_and_return_first(comments));
+                    }
+                    #[cfg(not(feature = "parser-comments"))]
+                    return self.flow_mapping_value_node_with_empty_span(span);
                 }
                 QueuedToken(marker, _) => Span::empty(marker.start),
             }
@@ -2204,6 +2309,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         Ok((Event::empty_scalar(), span))
     }
 
+    #[cfg(feature = "parser-comments")]
     fn flow_mapping_value_node<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -2241,6 +2347,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(_, QueuedTokenType::FlowEntry) if !first => {
                 self.skip();
+                #[cfg(feature = "parser-comments")]
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::FlowSequenceFirstEntry;
                     return Ok(comment);
@@ -2276,24 +2383,29 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEntry) => {
                 self.skip();
-                let comments = self.next_comment_events()?;
-                if comments.is_empty() {
-                    self.indentless_sequence_entry_node_with_empty_span(mark)
-                } else if let Ok(QueuedToken(
-                    _,
-                    QueuedTokenType::BlockEntry
-                    | QueuedTokenType::Key
-                    | QueuedTokenType::Value
-                    | QueuedTokenType::BlockEnd,
-                )) = self.peek_token()
+                #[cfg(feature = "parser-comments")]
                 {
-                    self.state = State::IndentlessSequenceEntry;
-                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
-                } else {
-                    self.pending_empty_scalar_span = Some(mark);
-                    self.state = State::IndentlessSequenceEntryNode;
-                    Ok(self.queue_tail_and_return_first(comments))
+                    let comments = self.next_comment_events()?;
+                    if !comments.is_empty() {
+                        if let Ok(QueuedToken(
+                            _,
+                            QueuedTokenType::BlockEntry
+                            | QueuedTokenType::Key
+                            | QueuedTokenType::Value
+                            | QueuedTokenType::BlockEnd,
+                        )) = self.peek_token()
+                        {
+                            self.state = State::IndentlessSequenceEntry;
+                            return Ok(
+                                self.queue_event_by_span(comments, (Event::empty_scalar(), mark))
+                            );
+                        }
+                        self.pending_empty_scalar_span = Some(mark);
+                        self.state = State::IndentlessSequenceEntryNode;
+                        return Ok(self.queue_tail_and_return_first(comments));
+                    }
                 }
+                self.indentless_sequence_entry_node_with_empty_span(mark)
             }
             QueuedToken(mark, _) => {
                 self.end_block_collection();
@@ -2352,21 +2464,26 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             QueuedToken(mark, QueuedTokenType::BlockEntry) => {
                 self.skip();
-                let comments = self.next_comment_events()?;
-                if comments.is_empty() {
-                    self.block_sequence_entry_node_with_empty_span(mark)
-                } else if let Ok(QueuedToken(
-                    _,
-                    QueuedTokenType::BlockEntry | QueuedTokenType::BlockEnd,
-                )) = self.peek_token()
+                #[cfg(feature = "parser-comments")]
                 {
-                    self.state = State::BlockSequenceEntry;
-                    Ok(self.queue_event_by_span(comments, (Event::empty_scalar(), mark)))
-                } else {
-                    self.pending_empty_scalar_span = Some(mark);
-                    self.state = State::BlockSequenceEntryNode;
-                    Ok(self.queue_tail_and_return_first(comments))
+                    let comments = self.next_comment_events()?;
+                    if !comments.is_empty() {
+                        if let Ok(QueuedToken(
+                            _,
+                            QueuedTokenType::BlockEntry | QueuedTokenType::BlockEnd,
+                        )) = self.peek_token()
+                        {
+                            self.state = State::BlockSequenceEntry;
+                            return Ok(
+                                self.queue_event_by_span(comments, (Event::empty_scalar(), mark))
+                            );
+                        }
+                        self.pending_empty_scalar_span = Some(mark);
+                        self.state = State::BlockSequenceEntryNode;
+                        return Ok(self.queue_tail_and_return_first(comments));
+                    }
                 }
+                self.block_sequence_entry_node_with_empty_span(mark)
             }
             QueuedToken(span, _) => Err(ScanError::from_kind(
                 span.start,
@@ -2375,6 +2492,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
     }
 
+    #[cfg(feature = "parser-comments")]
     fn block_sequence_entry_node<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
@@ -2427,12 +2545,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         match *self.peek_token()? {
             QueuedToken(_, QueuedTokenType::Value) => {
                 self.skip();
+                #[cfg(feature = "parser-comments")]
                 if let Some(comment) = self.maybe_next_comment_event()? {
                     self.state = State::FlowSequenceEntryMappingValueNode;
-                    Ok(comment)
-                } else {
-                    self.flow_sequence_entry_mapping_value_node()
+                    return Ok(comment);
                 }
+                self.flow_sequence_entry_mapping_value_node()
             }
             QueuedToken(mark, _) => {
                 self.state = State::FlowSequenceEntryMappingEnd;
@@ -2581,10 +2699,10 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
             try_emit(recv, ev, span)?;
         }
 
-        let has_buffered_result = self.current.is_some()
-            || self.current_error.is_some()
-            || self.deferred_error.is_some()
-            || !self.queued_events.is_empty();
+        let has_buffered_result = self.current.is_some() || self.current_error.is_some();
+        #[cfg(feature = "parser-comments")]
+        let has_buffered_result =
+            has_buffered_result || self.deferred_error.is_some() || !self.queued_events.is_empty();
         if self.scanner.stream_ended() && !has_buffered_result {
             // The scanner has already reached EOF before the document loop, so emit the terminal
             // event and stop.
@@ -2673,6 +2791,7 @@ mod test {
             .expect("expected tagged scalar")
     }
 
+    #[cfg(feature = "parser-comments")]
     #[test]
     fn deferred_parse_node_can_emit_comment_before_flow_node() {
         let mut parser = Parser::new_from_str("---\n# deferred\nvalue\n");
@@ -2690,6 +2809,7 @@ mod test {
         assert_eq!(parser.state, State::FlowNode);
     }
 
+    #[cfg(feature = "parser-comments")]
     #[test]
     fn queued_node_event_gets_pending_key_indent() {
         let mut parser = Parser::new_from_str("");
@@ -2724,7 +2844,11 @@ mod test {
         let (event, _) = parser.state_machine().unwrap();
 
         assert!(matches!(event, Event::Scalar(value, ..) if value == "value"));
+    }
 
+    #[cfg(feature = "parser-comments")]
+    #[test]
+    fn state_machine_handles_deferred_flow_mapping_value_node() {
         let mut parser = Parser::new_from_str("value\n");
         assert_eq!(parser.stream_start().unwrap().0, Event::StreamStart);
         assert_eq!(
@@ -3497,10 +3621,11 @@ a5: *x
             "%YAML 1.2\n# directive comment\n%TAG !e! tag:example.com,2026:\n---\nkey: !e!thing value\n",
         )
         .map(|event| event.unwrap().0)
+        .filter(|event| !matches!(event, Event::Comment(..)))
         .collect::<Vec<_>>();
 
         assert!(matches!(
-            events.get(2),
+            events.get(1),
             Some(Event::DocumentStart(
                 true,
                 Some(YamlVersion { major: 1, minor: 2 })
@@ -3519,6 +3644,7 @@ a5: *x
         assert_eq!(tag.suffix, "thing");
     }
 
+    #[cfg(feature = "parser-comments")]
     #[test]
     fn tag_directive_state_borrows_str_input_across_comment() {
         let mut parser = Parser::new_from_str(

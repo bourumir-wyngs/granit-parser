@@ -30,6 +30,11 @@ pub const RAW_INPUTS: &[&str] = &[
     "[\"\\0\", '\u{7f}']",
 ];
 
+/// Build reproducible raw inputs or generator control bytes for a fuzz target.
+///
+/// # Panics
+/// Panics if `target` is not one of [`TARGETS`].
+#[must_use]
 pub fn seeds(target: &str) -> Vec<Vec<u8>> {
     let mut headers = Vec::new();
     match target {

@@ -109,6 +109,7 @@ fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn included_trailing_comments_are_emitted_before_parent_resumes() {
     // Keep the semantic oracle independent of the parser used by every backend.
     let expected = vec![
@@ -169,7 +170,10 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
                 Event::Comment(" after".into(), Placement::Above),
             ]
             .into_iter()
-            .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
+            .filter(|event| {
+                (cfg!(feature = "parser-comments") && emit_comments)
+                    || !matches!(event, Event::Comment(..))
+            })
             .collect::<Vec<_>>();
             assert_eq!(
                 actual
@@ -207,10 +211,10 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
                 Event::Comment(" trailing".into(), Placement::Right),
                 Event::Comment(" after".into(), Placement::Last),
             ];
-            for event in expected
-                .into_iter()
-                .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
-            {
+            for event in expected.into_iter().filter(|event| {
+                (cfg!(feature = "parser-comments") && emit_comments)
+                    || !matches!(event, Event::Comment(..))
+            }) {
                 assert_eq!(
                     next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
                     event
@@ -224,6 +228,7 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn nested_second_document_error_uses_its_own_pending_end_and_source() {
     const GRANDCHILD: &str = "grandchild\n... # grandchild tail\n---\nextra\n";
 
@@ -267,6 +272,7 @@ fn nested_second_document_error_uses_its_own_pending_end_and_source() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn pushing_during_a_peeked_trailing_comment_preserves_each_sources_validation() {
     const GRANDCHILD: &str = "grandchild\n... # grandchild tail\n";
 
@@ -310,10 +316,12 @@ fn scan_errors_after_trailing_comments_keep_their_kind_and_source() {
         let mut stack = stack_with_child(backend, INVALID_TAIL, Options::default());
         let expected = nested_events(CHILD);
         assert_eq!(stack.next_event().unwrap().unwrap(), expected[0]);
-        assert_eq!(
-            next_with_repeated_peek(&mut stack).unwrap().unwrap(),
-            expected[1]
-        );
+        if cfg!(feature = "parser-comments") {
+            assert_eq!(
+                next_with_repeated_peek(&mut stack).unwrap().unwrap(),
+                expected[1]
+            );
+        }
 
         let error = next_with_repeated_peek(&mut stack).unwrap().unwrap_err();
         assert_eq!(

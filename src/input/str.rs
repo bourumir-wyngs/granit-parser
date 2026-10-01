@@ -1,7 +1,7 @@
 use crate::{
     char_traits::is_breakz,
     error::ErrorKind,
-    input::{BorrowedInput, Input, SkipTabs},
+    input::{BorrowedInput, Input, SkipTabs, WhitespaceResult},
 };
 use alloc::string::String;
 
@@ -257,9 +257,10 @@ impl Input for StrInput<'_> {
         }
     }
 
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
-        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    fn skip_ws_to_eol(
+        &mut self,
+        skip_tabs: SkipTabs,
+    ) -> (usize, Result<WhitespaceResult, ErrorKind>) {
         let mut new_str = self.buffer;
         let mut has_yaml_ws = false;
         let mut encountered_tab = false;
@@ -307,13 +308,11 @@ impl Input for StrInput<'_> {
 
         (
             chars_consumed,
-            Ok(SkipTabs::Result(encountered_tab, has_yaml_ws)),
+            Ok(WhitespaceResult::new(encountered_tab, has_yaml_ws)),
         )
     }
 
-    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, SkipTabs) {
-        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, WhitespaceResult) {
         let bytes = self.buffer.as_bytes();
         let mut i = 0;
         let mut encountered_tab = false;
@@ -342,7 +341,7 @@ impl Input for StrInput<'_> {
 
         self.buffer = &self.buffer[i..];
 
-        (i, SkipTabs::Result(encountered_tab, has_yaml_ws))
+        (i, WhitespaceResult::new(encountered_tab, has_yaml_ws))
     }
 
     #[inline]
@@ -579,7 +578,7 @@ mod test {
 
     use crate::{
         error::ErrorKind,
-        input::{BorrowedInput, Input, SkipTabs},
+        input::{BorrowedInput, Input, SkipTabs, WhitespaceResult},
     };
 
     use super::StrInput;
@@ -693,13 +692,55 @@ mod test {
 
     #[test]
     fn skip_ws_to_eol_rejects_unseparated_comment() {
-        let mut input = StrInput::new("# comment\n");
+        for policy in [SkipTabs::Yes, SkipTabs::No] {
+            let mut input = StrInput::new("#é中\n");
 
-        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+            let (consumed, result) = input.skip_ws_to_eol(policy);
 
-        assert_eq!(consumed, 0);
-        assert_eq!(result.err(), Some(ErrorKind::CommentNotSeparated));
-        assert_eq!(input.peek(), '#');
+            assert_eq!(consumed, 0);
+            assert_eq!(result, Err(ErrorKind::CommentNotSeparated));
+            assert_eq!(input.byte_offset(), Some(0));
+            assert_eq!(input.peek(), '#');
+        }
+    }
+
+    #[test]
+    fn skip_ws_to_eol_counts_unicode_comments_and_tracks_whitespace_outside_them() {
+        for (source, consumed, expected, byte_offset, next) in [
+            ("", 0, WhitespaceResult::new(false, false), 0, '\0'),
+            (" \t#é中\r\n", 5, WhitespaceResult::new(true, true), 8, '\r'),
+            ("\t# é 中\n", 6, WhitespaceResult::new(true, false), 9, '\n'),
+            (" #é中", 4, WhitespaceResult::new(false, true), 7, '\0'),
+        ] {
+            let mut input = StrInput::new(source);
+            assert_eq!(
+                input.skip_ws_to_eol(SkipTabs::Yes),
+                (consumed, Ok(expected))
+            );
+            assert_eq!(input.byte_offset(), Some(byte_offset));
+            assert_eq!(input.peek(), next);
+        }
+    }
+
+    #[test]
+    fn skip_ws_to_eol_blanks_preserves_comments_and_unskipped_tabs() {
+        for (source, policy, consumed, found_tabs, found_spaces, next) in [
+            ("", SkipTabs::Yes, 0, false, false, '\0'),
+            ("  #é中\n", SkipTabs::Yes, 2, false, true, '#'),
+            ("\t#é中\n", SkipTabs::Yes, 1, true, false, '#'),
+            (" \t#é中\n", SkipTabs::Yes, 2, true, true, '#'),
+            (" \t#é中\n", SkipTabs::No, 1, false, true, '\t'),
+            ("\t#é中\n", SkipTabs::No, 0, false, false, '\t'),
+        ] {
+            let mut input = StrInput::new(source);
+            assert_eq!(
+                input.skip_ws_to_eol_blanks(policy),
+                (consumed, WhitespaceResult::new(found_tabs, found_spaces)),
+                "source: {source:?}",
+            );
+            assert_eq!(input.byte_offset(), Some(consumed));
+            assert_eq!(input.peek(), next, "source: {source:?}");
+        }
     }
 
     #[test]

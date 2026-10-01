@@ -1,7 +1,23 @@
 # Changelog
 
+## Unreleased (breaking API changes)
+
+- Made `Span` non-exhaustive so future releases can add source metadata. Construct spans with
+  `Span::new`, `Span::empty`, or `Span::default`, use the metadata builders or field assignment,
+  and include `..` when destructuring. External struct literals and struct-update syntax are
+  no longer supported.
+- Split the input whitespace API into the `SkipTabs::{Yes, No}` policy and `WhitespaceResult`
+  output. Custom `Input` implementations must return `(usize, Result<WhitespaceResult, ErrorKind>)`
+  from `skip_ws_to_eol` and `(usize, WhitespaceResult)` from `skip_ws_to_eol_blanks`.
+  Replace `SkipTabs::Result(found_tabs, has_valid_yaml_ws)` with
+  `WhitespaceResult::new(found_tabs, has_valid_yaml_ws)`; its result accessors are unchanged.
+  Consumed-character counts, comment separation errors, and tab behavior are preserved.
+
 ## 1.4.0
 
+- Added the default-enabled `parser-comments` feature. Omitting it removes parser comment
+  presentation machinery, improving the performance by about 13 %. Applications using `default-features = false` must
+  explicitly enable `parser-comments` to retain parser comment events.
 - Add `Options::strict_indentation` (default `false`) to require strict YAML-compliant indentation for flow
   entries, delimiters, and scalar continuations (compliant with case 9C9N). Default behavior
   is compatible with `PyYAML` and `ruamel.yaml`.

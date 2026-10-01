@@ -126,7 +126,11 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
                         Event::DocumentEnd,
                         Event::StreamEnd,
-                    ],
+                    ]
+                    .into_iter()
+                    .filter(|event| cfg!(feature = "parser-comments")
+                        || !matches!(event, Event::Comment(..)))
+                    .collect::<Vec<_>>(),
                     "input: {yaml:?}",
                 );
 

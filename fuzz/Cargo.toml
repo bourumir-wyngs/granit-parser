@@ -7,9 +7,13 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[features]
+default = ["parser-comments"]
+parser-comments = ["granit-parser/parser-comments"]
+
 [dependencies]
 libfuzzer-sys = "0.4"
-granit-parser = { path = ".." }
+granit-parser = { path = "..", default-features = false, features = ["std", "error_messages"] }
 
 [[bin]]
 name = "aliases_merges"

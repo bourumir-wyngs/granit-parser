@@ -76,7 +76,11 @@ fn reserved_directive_separated_comments_are_emitted_after_parameters() {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(comments, [(comment_text, tokens[2].span())]);
+        if cfg!(feature = "parser-comments") {
+            assert_eq!(comments, [(comment_text, tokens[2].span())]);
+        } else {
+            assert!(comments.is_empty());
+        }
         assert!(events.iter().any(|(event, span)| {
             matches!(event, Event::Scalar(value, ..) if value == "value")
                 && span.slice(yaml) == Some("value")

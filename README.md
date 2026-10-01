@@ -232,18 +232,52 @@ This parser supports explicit handling for JSON-style Unicode surrogate pairs in
   Mismatched brackets and quotes now report the position of the opening token instead of the end of file.
 
 
-### Performance improvements
+### Performance
 
 * **Zero-copy parsing for `&str` input**
 
   Uses `Cow<'input, str>` to avoid unnecessary allocations when parsing from in-memory strings.
 
+* Comment handling
+  If your application does not use comment parsing, it is possible to improve performance by disabling comment
+  emission. This can be done the best way by both setting `Options::emit_comments` to `false` and disabling the 
+  `parser-comments` Cargo feature. Comments can still be present in YAML, they are not emitted.  
 
 ### Internal extensions
 
 * **Parser stack support**
 
   Enables features such as `!include` by exposing additional internal capabilities.
+
+### API migration notes
+
+`Span` is non-exhaustive. Its public fields remain readable and writable, but external code
+must use constructors instead of struct literals or struct-update syntax. Use the metadata
+builders or assign individual fields, and include `..` when destructuring:
+
+```rust
+use granit_parser::{Marker, Span};
+
+let start = Marker::new(0, 1, 0);
+let end = Marker::new(3, 1, 3);
+let span = Span::new(start, end)
+    .with_indent(Some(0))
+    .with_tag_start(Some(start));
+let Span { start: actual_start, .. } = span;
+assert_eq!(actual_start, start);
+```
+
+For custom `Input` implementations, `SkipTabs` now contains only the input policies `Yes` and
+`No`. Whitespace results use `granit_parser::input::WhitespaceResult` instead:
+
+- `skip_ws_to_eol` returns `(usize, Result<WhitespaceResult, ErrorKind>)`.
+- `skip_ws_to_eol_blanks` returns `(usize, WhitespaceResult)`.
+
+Replace `SkipTabs::Result(found_tabs, has_valid_yaml_ws)` with
+`WhitespaceResult::new(found_tabs, has_valid_yaml_ws)`. The `found_tabs()` and
+`has_valid_yaml_ws()` accessors remain available on the result. The tuple's character count
+still reports consumed characters, including when `skip_ws_to_eol` returns an error.
+These are breaking API changes intended for the next major release.
 
 ### Error handling without grepping message text
   

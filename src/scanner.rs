@@ -24,7 +24,7 @@ use crate::{
         is_z,
     },
     error::{ErrorKind, ScanError},
-    input::{BorrowedInput, SkipTabs},
+    input::{BorrowedInput, SkipTabs, WhitespaceResult},
     Options,
 };
 
@@ -136,6 +136,43 @@ impl Marker {
 }
 
 /// A range of locations in a YAML document.
+///
+/// Construct spans with [`Self::new`], [`Self::empty`], or [`Self::default`], then use
+/// [`Self::with_indent`] and [`Self::with_tag_start`] to attach optional metadata. Fields remain
+/// readable and writable, but the type is non-exhaustive so future releases can add metadata.
+/// Destructuring patterns must include `..`.
+///
+/// ```rust
+/// use granit_parser::{Marker, Span};
+///
+/// let start = Marker::new(0, 1, 0);
+/// let end = Marker::new(3, 1, 3);
+/// let span = Span::new(start, end)
+///     .with_indent(Some(0))
+///     .with_tag_start(Some(start));
+/// let Span { start: actual_start, end: actual_end, .. } = span;
+/// assert_eq!(actual_start, start);
+/// assert_eq!(actual_end, end);
+/// assert_eq!(span.indent, Some(0));
+/// ```
+///
+/// Direct struct construction outside this crate is not supported:
+///
+/// ```compile_fail,E0639
+/// use granit_parser::{Marker, Span};
+///
+/// let marker = Marker::new(0, 1, 0);
+/// let span = Span { start: marker, end: marker, indent: None, tag_start: None };
+/// ```
+///
+/// Struct-update syntax is likewise unavailable; use the builders or assign individual fields:
+///
+/// ```compile_fail,E0639
+/// use granit_parser::{Marker, Span};
+///
+/// let span = Span { indent: Some(2), ..Span::empty(Marker::new(0, 1, 0)) };
+/// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub struct Span {
     /// The start (inclusive) of the range.
@@ -1983,13 +2020,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Skip YAML whitespace up to the end of the current line.
-    ///
-    /// # Panics
-    /// Panics in debug builds if `skip_tabs` is [`SkipTabs::Result`].
-    #[track_caller]
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
-        debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<WhitespaceResult, ScanError> {
         if !self.comments_possible {
             let (chars_consumed, result) = self.input.skip_ws_to_eol(skip_tabs);
             self.mark.col += chars_consumed;

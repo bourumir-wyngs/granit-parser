@@ -200,9 +200,10 @@ fn assert_parser_prefix<'input, T>(
     assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
     assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
     assert_eq!(disabled_events, enabled_events, "{context}");
-    assert!(
+    assert_eq!(
         enabled_comments > 0,
-        "{context}: fixture emitted no comments"
+        cfg!(feature = "parser-comments"),
+        "{context}: parser comment emission must match the compiled feature"
     );
     assert_eq!(disabled_comments, 0, "{context}");
     assert!(
@@ -307,10 +308,14 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
 
     let mut enabled = parse_str(yaml, Options::default())
         .expect("leading document end and comment should not open a document");
-    assert!(matches!(
-        enabled.as_slice(),
-        [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
-    ));
+    if cfg!(feature = "parser-comments") {
+        assert!(matches!(
+            enabled.as_slice(),
+            [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
+        ));
+    } else {
+        assert_eq!(enabled, [Event::StreamStart, Event::StreamEnd]);
+    }
     enabled.retain(|event| !matches!(event, Event::Comment(..)));
 
     let disabled = parse_str(yaml, no_comments())
@@ -333,7 +338,11 @@ fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
         let (disabled_events, disabled_comments, disabled_error) =
             parse_non_comment_prefix_until_error(disabled);
 
-        assert_eq!(enabled_comments, 1, "{context}");
+        assert_eq!(
+            enabled_comments,
+            usize::from(cfg!(feature = "parser-comments")),
+            "{context}"
+        );
         assert_eq!(disabled_comments, 0, "{context}");
         assert_eq!(disabled_events, enabled_events, "{context}");
         assert!(
@@ -382,11 +391,12 @@ fn disabled_comments_preserve_non_comment_event_spans() {
         let mut enabled = Parser::with_options(StrInput::new(yaml), Options::default())
             .collect::<Result<Vec<_>, _>>()
             .expect("enabled string parser should accept YAML");
-        assert!(
+        assert_eq!(
             enabled
                 .iter()
                 .any(|(event, _)| matches!(event, Event::Comment(..))),
-            "regression fixture must emit a comment event: {yaml:?}"
+            cfg!(feature = "parser-comments"),
+            "parser comment emission must match the compiled feature: {yaml:?}"
         );
         enabled.retain(|(event, _)| !matches!(event, Event::Comment(..)));
 
@@ -420,9 +430,10 @@ fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
                 no_comments(),
             ));
 
-        assert!(
+        assert_eq!(
             enabled_comments > 0,
-            "regression fixture emitted no comments: {name}"
+            cfg!(feature = "parser-comments"),
+            "parser comment emission must match the compiled feature: {name}"
         );
         assert_eq!(disabled_comments, 0, "{name}");
         assert_eq!(disabled_events, enabled_events, "{name}");

@@ -149,7 +149,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
             .iter()
             .filter(|(event, _)| matches!(event, Event::Comment(..)))
             .count(),
-        usize::from(options.emit_comments),
+        usize::from(cfg!(feature = "parser-comments") && options.emit_comments),
     );
     assert_eq!(
         events
@@ -212,6 +212,11 @@ fn check_primary_handle_override(selector: u8, payload: &str) {
 // Select one construction per iteration. Valid branches sanitize directive/tag
 // components and escape scalar data so tag resolution can be asserted. Raw branches
 // preserve malformed directives, percent escapes, node properties, and comments.
+/// Generate bounded directive and tag inputs and verify their parser and scanner behavior.
+///
+/// # Panics
+/// Panics if generated inputs violate the expected tags, aliases, comments, or resource-limit
+/// errors, or if input backends disagree.
 pub fn check_input(data: &[u8]) {
     if data.len() > MAX_INPUT_LEN {
         return;

@@ -22,6 +22,10 @@ fuzz_target!(|data: &[u8]| check_input(data));
 ///
 /// Every generated source is checked against explicit scalar/comment/error expectations, with
 /// comments both enabled and disabled and with both direct reads and repeated peeks.
+///
+/// # Panics
+/// Panics if a generated source cannot be prepared or parser-stack events, errors, comment
+/// placement, or repeated peeks violate the independent expectations.
 #[allow(clippy::too_many_lines)] // Keep each generated source and its independent oracle together.
 pub fn check_input(data: &[u8]) {
     if data.len() > 512 {
@@ -106,7 +110,7 @@ pub fn check_input(data: &[u8]) {
                     next_checked(&mut stack, peek).unwrap().unwrap().0,
                     scalar("middle")
                 );
-                if emit_comments {
+                if cfg!(feature = "parser-comments") && emit_comments {
                     // Suspend the middle source after its DocumentEnd has been consumed,
                     // leaving its trailing-comment validation pending during the child.
                     assert_eq!(
@@ -117,10 +121,10 @@ pub fn check_input(data: &[u8]) {
             }
             push_child(&mut stack, backend, &source);
 
-            for event in expected
-                .iter()
-                .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
-            {
+            for event in expected.iter().filter(|event| {
+                (cfg!(feature = "parser-comments") && emit_comments)
+                    || !matches!(event, Event::Comment(..))
+            }) {
                 let (actual, _) = next_checked(&mut stack, peek)
                     .expect("generated source ended before its expected events")
                     .expect("generated source failed before its expected events");

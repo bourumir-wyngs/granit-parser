@@ -909,6 +909,7 @@ fn replay_parser_preserves_comment_events() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_stack_forwards_comment_events_from_stacked_parsers() {
     let mut stack: MyStack = ParserStack::new();
     stack.push_str_parser(
@@ -936,6 +937,7 @@ fn parser_stack_forwards_comment_events_from_stacked_parsers() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_stack_include_preserves_comment_events_and_local_spans() {
     let included = "# inc\nincluded: value\n";
     let mut stack: MyStack = ParserStack::new();

@@ -6,8 +6,9 @@
 //!
 //! `granit-parser` is a low-level event parser. It reads YAML input and yields a stream of
 //! [`Event`] values paired with their source [`Span`].
-//! Comments are emitted as [`Event::Comment`]. They are presentation metadata, not YAML data
-//! nodes, so consumers building YAML value trees should ignore them.
+//! With the default `parser-comments` feature, comments are emitted as [`Event::Comment`]. They
+//! are presentation metadata, not YAML data nodes, so consumers building YAML value trees should
+//! ignore them.
 //!
 //! Add it to your project:
 //!
@@ -21,6 +22,8 @@
 //! use granit_parser::{Event, Parser, Placement};
 //!
 //! # fn main() -> Result<(), granit_parser::ScanError> {
+//! # #[cfg(feature = "parser-comments")]
+//! # {
 //! let yaml = r#"# header
 //! items: # inline
 //!   - milk
@@ -46,6 +49,7 @@
 //!         (" inline".to_owned(), Placement::Right, "# inline".to_owned()),
 //!     ]
 //! );
+//! # }
 //! # Ok(())
 //! # }
 //! ```
@@ -66,6 +70,8 @@
 //! directive data, 16 reserved-directive parameters, 255 nested flow collections, and 255 nested
 //! block collections.
 //! Existing constructors use these defaults.
+//! Without the `parser-comments` feature, parsers and parser stacks always suppress comment
+//! events. Standalone scanners continue to follow [`Options::emit_comments`].
 //! [`Parser::new_from_str_with_options`], [`Parser::new_from_iter_with_options`],
 //! [`Parser::new_from_fallible_iter_with_options`], [`Parser::with_options`],
 //! [`Scanner::with_options`], and [`ParserStack::with_options`] accept customized options created
@@ -73,6 +79,13 @@
 //!
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
+//!
+//! #### `parser-comments` (enabled by default)
+//! Enables comment events and their buffering, placement, and continuation state in [`Parser`].
+//! Without it, [`Parser`] uses its scanner's existing comment-skipping path and [`ParserStack`]
+//! suppresses comments, including replayed events. YAML comment syntax and source positions are
+//! still validated and tracked. Standalone [`Scanner`] comment tokens remain controlled by
+//! [`Options::emit_comments`], and public comment types and variants remain available.
 //!
 //! #### `error_messages` (enabled by default)
 //! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and

@@ -352,6 +352,9 @@ fn crlf_and_wide_character_spans() {
             ("b".to_string(), Some(18..19), Some("b".to_string())),
             ("2".to_string(), Some(21..22), Some("2".to_string())),
         ]
+        .into_iter()
+        .filter(|(text, _, _)| cfg!(feature = "parser-comments") || !text.starts_with('#'))
+        .collect::<Vec<_>>()
     );
 }
 

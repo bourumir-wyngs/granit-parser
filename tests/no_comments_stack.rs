@@ -63,7 +63,7 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
 }
 
 #[test]
-fn default_stack_preserves_replayed_comments() {
+fn default_stack_comment_emission_matches_compiled_feature() {
     let mut stack = Stack::new();
     stack.push_replay_parser(
         ReplayParser::new(
@@ -80,7 +80,11 @@ fn default_stack_preserves_replayed_comments() {
     );
 
     let first = stack.next_event().unwrap().unwrap().0;
-    assert!(matches!(first, Event::Comment(ref text, _) if text == " replay"));
+    if cfg!(feature = "parser-comments") {
+        assert!(matches!(first, Event::Comment(ref text, _) if text == " replay"));
+    } else {
+        assert!(matches!(first, Event::StreamEnd));
+    }
 }
 
 #[test]
@@ -112,6 +116,7 @@ fn no_comments_stack_suppresses_replayed_events() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(

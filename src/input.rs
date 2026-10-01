@@ -342,19 +342,16 @@ pub trait Input {
     /// Return a tuple with the number of characters that were consumed and the result of skipping
     /// whitespace. The number of characters returned can be used to advance the index and column,
     /// since no end-of-line character will be consumed.
-    /// See [`SkipTabs`] for more details on the success variant.
+    /// The [`WhitespaceResult`] reports whether tabs and spaces were consumed.
     ///
     /// # Errors
     /// Returns [`ErrorKind::CommentNotSeparated`] if a comment is encountered without preceding
     /// whitespace. In that event, the first tuple element contains the number of characters
     /// consumed prior to reaching the `#`.
-    ///
-    /// # Panics
-    /// Panics if `skip_tabs` is [`SkipTabs::Result`], which is an output-only variant.
-    #[track_caller]
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> (usize, Result<SkipTabs, ErrorKind>) {
-        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    fn skip_ws_to_eol(
+        &mut self,
+        skip_tabs: SkipTabs,
+    ) -> (usize, Result<WhitespaceResult, ErrorKind>) {
         let mut encountered_tab = false;
         let mut has_yaml_ws = false;
         let mut chars_consumed = 0;
@@ -386,7 +383,7 @@ pub trait Input {
 
         (
             chars_consumed,
-            Ok(SkipTabs::Result(encountered_tab, has_yaml_ws)),
+            Ok(WhitespaceResult::new(encountered_tab, has_yaml_ws)),
         )
     }
 
@@ -397,15 +394,9 @@ pub trait Input {
     /// the common run of spaces and tabs.
     ///
     /// # Return
-    /// Returns the number of consumed characters and a [`SkipTabs::Result`] describing whether
-    /// tabs and valid YAML whitespace (` `) were encountered.
-    ///
-    /// # Panics
-    /// Panics if `skip_tabs` is [`SkipTabs::Result`], which is an output-only variant.
-    #[track_caller]
-    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, SkipTabs) {
-        assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    /// Returns the number of consumed characters and a [`WhitespaceResult`] describing whether
+    /// tabs and spaces were consumed.
+    fn skip_ws_to_eol_blanks(&mut self, skip_tabs: SkipTabs) -> (usize, WhitespaceResult) {
         let mut encountered_tab = false;
         let mut has_yaml_ws = false;
         let mut chars_consumed = 0;
@@ -428,7 +419,7 @@ pub trait Input {
 
         (
             chars_consumed,
-            SkipTabs::Result(encountered_tab, has_yaml_ws),
+            WhitespaceResult::new(encountered_tab, has_yaml_ws),
         )
     }
 
@@ -810,42 +801,75 @@ pub trait Input {
 /// Behavior to adopt regarding treating tabs as whitespace.
 ///
 /// Although tab is valid YAML whitespace, it does not always behave the same as a space.
+/// Whitespace results cannot be used as input policies:
+///
+/// ```compile_fail,E0308
+/// use granit_parser::{input::WhitespaceResult, BufferedInput, Input};
+///
+/// let mut input = BufferedInput::new(" \tvalue".chars());
+/// let previous_result = WhitespaceResult::new(true, true);
+/// input.skip_ws_to_eol(previous_result); // Expected SkipTabs, not WhitespaceResult.
+/// ```
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum SkipTabs {
     /// Skip all tabs as whitespace.
     Yes,
     /// Don't skip any tab. Return from the function when encountering one.
     No,
-    /// Return value from the function.
-    Result(
-        /// Whether tabs were encountered.
-        bool,
-        /// Whether at least one valid YAML whitespace character has been encountered.
-        bool,
-    ),
 }
 
-impl SkipTabs {
-    /// Whether tabs were found while skipping whitespace.
+/// Information about whitespace consumed by an input scanning hook.
+///
+/// Tabs and spaces are tracked independently. When [`SkipTabs::No`] leaves a tab in the input,
+/// that tab is not included in this result. Characters inside a skipped comment do not affect
+/// either flag.
+///
+/// # Examples
+///
+/// ```
+/// use granit_parser::{input::{SkipTabs, WhitespaceResult}, BufferedInput, Input};
+///
+/// let mut input = BufferedInput::new(" \t#comment".chars());
+/// let (consumed, result) = input.skip_ws_to_eol_blanks(SkipTabs::Yes);
+/// assert_eq!(consumed, 2);
+/// assert_eq!(result, WhitespaceResult::new(true, true));
+/// assert!(result.found_tabs());
+/// assert!(result.has_valid_yaml_ws());
+/// ```
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct WhitespaceResult {
+    found_tabs: bool,
+    has_valid_yaml_ws: bool,
+}
+
+impl WhitespaceResult {
+    /// Create whitespace information from independently tracked tabs and spaces.
     ///
-    /// This function must be called after a call to `skip_ws_to_eol`.
+    /// `has_valid_yaml_ws` indicates whether at least one space was consumed outside a comment.
     #[must_use]
-    pub fn found_tabs(self) -> bool {
-        matches!(self, SkipTabs::Result(true, _))
+    pub const fn new(found_tabs: bool, has_valid_yaml_ws: bool) -> Self {
+        Self {
+            found_tabs,
+            has_valid_yaml_ws,
+        }
     }
 
-    /// Whether a valid YAML whitespace has been found in skipped-over content.
-    ///
-    /// This function must be called after a call to `skip_ws_to_eol`.
+    /// Return whether at least one tab was consumed outside a comment.
     #[must_use]
-    pub fn has_valid_yaml_ws(self) -> bool {
-        matches!(self, SkipTabs::Result(_, true))
+    pub const fn found_tabs(self) -> bool {
+        self.found_tabs
+    }
+
+    /// Return whether at least one space was consumed outside a comment.
+    #[must_use]
+    pub const fn has_valid_yaml_ws(self) -> bool {
+        self.has_valid_yaml_ws
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Input, SkipTabs};
+    use super::{Input, SkipTabs, WhitespaceResult};
     use crate::error::ErrorKind;
 
     struct MinimalInput;
@@ -901,12 +925,74 @@ mod tests {
 
     #[test]
     fn default_skip_ws_to_eol_rejects_unseparated_comment() {
-        let mut input = super::buffered::BufferedInput::new("#comment\n".chars());
+        for policy in [SkipTabs::Yes, SkipTabs::No] {
+            let mut input = super::buffered::BufferedInput::new("#é中\n".chars());
 
-        let (consumed, result) = input.skip_ws_to_eol(SkipTabs::Yes);
+            let (consumed, result) = input.skip_ws_to_eol(policy);
 
-        assert_eq!(consumed, 0);
-        assert_eq!(result.err(), Some(ErrorKind::CommentNotSeparated));
-        assert_eq!(input.peek(), '#');
+            assert_eq!(consumed, 0);
+            assert_eq!(result, Err(ErrorKind::CommentNotSeparated));
+            assert_eq!(input.peek(), '#');
+        }
+    }
+
+    #[test]
+    fn whitespace_result_flags_are_independent() {
+        const TAB_ONLY: WhitespaceResult = WhitespaceResult::new(true, false);
+        const TAB_FLAGS: (bool, bool) = (TAB_ONLY.found_tabs(), TAB_ONLY.has_valid_yaml_ws());
+        assert_eq!(TAB_FLAGS, (true, false));
+
+        for found_tabs in [false, true] {
+            for found_spaces in [false, true] {
+                let result = WhitespaceResult::new(found_tabs, found_spaces);
+                assert_eq!(result.found_tabs(), found_tabs);
+                assert_eq!(result.has_valid_yaml_ws(), found_spaces);
+            }
+        }
+    }
+
+    #[test]
+    fn default_skip_ws_to_eol_preserves_policy_flags_and_character_counts() {
+        for (source, policy, consumed, found_tabs, found_spaces, next) in [
+            ("", SkipTabs::Yes, 0, false, false, '\0'),
+            ("  value", SkipTabs::Yes, 2, false, true, 'v'),
+            ("\tvalue", SkipTabs::Yes, 1, true, false, 'v'),
+            (" \t#é中\r\n", SkipTabs::Yes, 5, true, true, '\r'),
+            ("\t# é 中\n", SkipTabs::Yes, 6, true, false, '\n'),
+            (" #é中", SkipTabs::Yes, 4, false, true, '\0'),
+            (" \t#é中\n", SkipTabs::No, 1, false, true, '\t'),
+            ("\t#é中\n", SkipTabs::No, 0, false, false, '\t'),
+        ] {
+            let mut input = super::buffered::BufferedInput::new(source.chars());
+            assert_eq!(
+                input.skip_ws_to_eol(policy),
+                (
+                    consumed,
+                    Ok(WhitespaceResult::new(found_tabs, found_spaces))
+                ),
+                "source: {source:?}",
+            );
+            assert_eq!(input.peek(), next, "source: {source:?}");
+        }
+    }
+
+    #[test]
+    fn default_skip_ws_to_eol_blanks_preserves_comments_and_unskipped_tabs() {
+        for (source, policy, consumed, found_tabs, found_spaces, next) in [
+            ("", SkipTabs::Yes, 0, false, false, '\0'),
+            ("  #é中\n", SkipTabs::Yes, 2, false, true, '#'),
+            ("\t#é中\n", SkipTabs::Yes, 1, true, false, '#'),
+            (" \t#é中\n", SkipTabs::Yes, 2, true, true, '#'),
+            (" \t#é中\n", SkipTabs::No, 1, false, true, '\t'),
+            ("\t#é中\n", SkipTabs::No, 0, false, false, '\t'),
+        ] {
+            let mut input = super::buffered::BufferedInput::new(source.chars());
+            assert_eq!(
+                input.skip_ws_to_eol_blanks(policy),
+                (consumed, WhitespaceResult::new(found_tabs, found_spaces)),
+                "source: {source:?}",
+            );
+            assert_eq!(input.peek(), next, "source: {source:?}");
+        }
     }
 }

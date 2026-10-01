@@ -149,8 +149,8 @@ fn missing_required_keys_keep_error_marker_and_preceding_event_timing() {
         assert_eq!(error.kind(), &ErrorKind::SimpleKeyExpected);
         assert_eq!(*error.marker(), Marker::new(13, 3, 0));
         assert_eq!(error.marker().byte_offset(), Some(13));
-        // A preceding comment is observable, but neither the unresolved key nor a later
-        // comment may be published ahead of the required-key error.
+        // With parser comments enabled, the preceding comment is observable. Neither the
+        // unresolved key nor a later comment may be published ahead of the required-key error.
         assert_eq!(
             outline(&trace[..trace.len() - 1]),
             [
@@ -161,6 +161,9 @@ fn missing_required_keys_keep_error_marker_and_preceding_event_timing() {
                 "scalar:b",
                 "comment: ready"
             ]
+            .into_iter()
+            .filter(|event| cfg!(feature = "parser-comments") || !event.starts_with("comment:"))
+            .collect::<Vec<_>>()
         );
     }
 }
@@ -201,7 +204,8 @@ fn comments_and_document_markers_preserve_event_order() {
             expected
                 .iter()
                 .copied()
-                .filter(|event| emit_comments || !event.starts_with("comment:"))
+                .filter(|event| (cfg!(feature = "parser-comments") && emit_comments)
+                    || !event.starts_with("comment:"))
                 .collect::<Vec<_>>()
         );
         for entry in &trace {

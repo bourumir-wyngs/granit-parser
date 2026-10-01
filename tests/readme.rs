@@ -62,7 +62,11 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
 fn minimal_example_output_matches_readme() {
     let section = minimal_example_section();
     let yaml = extract_yaml_input(section);
-    let expected = extract_expected_output(section);
+    let expected = extract_expected_output(section)
+        .lines()
+        .filter(|line| cfg!(feature = "parser-comments") || !line.starts_with("Comment("))
+        .collect::<Vec<_>>()
+        .join("\n");
     let actual =
         render_readme_example(yaml).expect("README example YAML should parse successfully");
 

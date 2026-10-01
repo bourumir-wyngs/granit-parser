@@ -1,9 +1,13 @@
-use std::{borrow::Cow, cell::Cell, rc::Rc};
+use std::borrow::Cow;
+#[cfg(feature = "parser-comments")]
+use std::{cell::Cell, rc::Rc};
+
+#[cfg(feature = "parser-comments")]
+use granit_parser::ErrorKind;
 
 use granit_parser::{
-    BorrowedInput, BufferedInput, Comment, ErrorKind, Event, EventReceiver, Marker, Options,
-    Parser, Placement, ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType,
-    TryEventReceiver,
+    BorrowedInput, BufferedInput, Comment, Event, EventReceiver, Marker, Options, Parser,
+    Placement, ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType, TryEventReceiver,
 };
 
 fn parser_events(source: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError> {
@@ -15,6 +19,7 @@ fn scanner_tokens(source: &str) -> Result<Vec<Token<'_>>, ScanError> {
 }
 
 /// Iterator wrapper that records how many characters the parser pulls from streaming input.
+#[cfg(feature = "parser-comments")]
 struct CountingChars<I> {
     /// Wrapped character iterator consumed by `Parser::new_from_iter`.
     iter: I,
@@ -26,6 +31,7 @@ struct CountingChars<I> {
     read: Rc<Cell<usize>>,
 }
 
+#[cfg(feature = "parser-comments")]
 impl<I> Iterator for CountingChars<I>
 where
     I: Iterator<Item = char>,
@@ -41,6 +47,7 @@ where
     }
 }
 
+#[cfg(feature = "parser-comments")]
 fn chars_pulled_until_error(source: &str, options: Options) -> (usize, ScanError) {
     let read = Rc::new(Cell::new(0));
     let iter = CountingChars {
@@ -60,6 +67,7 @@ fn chars_pulled_until_error(source: &str, options: Options) -> (usize, ScanError
     }
 }
 
+#[cfg(feature = "parser-comments")]
 fn chars_pulled_before_first_comment(source: &str, options: Options) -> usize {
     let read = Rc::new(Cell::new(0));
     let iter = CountingChars {
@@ -89,6 +97,7 @@ fn long_comment_run(start: usize, count: usize) -> String {
     comments
 }
 
+#[cfg(feature = "parser-comments")]
 fn long_indented_comment_run(start: usize, count: usize) -> String {
     let mut comments = String::new();
     for index in start..start + count {
@@ -123,6 +132,13 @@ fn assert_monotonic_spans(events: &[(Event<'_>, Span)]) {
 
         last = Some((event, *span));
     }
+}
+
+fn expected_names(names: Vec<&str>) -> Vec<&str> {
+    names
+        .into_iter()
+        .filter(|name| cfg!(feature = "parser-comments") || !name.starts_with("Comment("))
+        .collect()
 }
 
 #[test]
@@ -678,6 +694,7 @@ fn scanner_rejects_tab_immediately_after_explicit_key_indicator() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_emits_full_line_indented_and_trailing_comment_events() {
     let yaml = "# top\n  # indented\nkey: value # trailing\n#eof";
     let events = parser_events(yaml).expect("parser should accept comments");
@@ -702,6 +719,7 @@ fn parser_emits_full_line_indented_and_trailing_comment_events() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_refines_comment_placements() {
     let yaml = "# above\na: b # right\n\n# free\n\nc: d\n...\n# last\n";
     let events = parser_events(yaml).expect("parser should accept comments");
@@ -726,6 +744,7 @@ fn parser_refines_comment_placements() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn own_line_comment_before_invalid_token_is_emitted_before_error() {
     let mut parser = Parser::new_from_str("# c\n@\n");
 
@@ -744,6 +763,7 @@ fn own_line_comment_before_invalid_token_is_emitted_before_error() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn syntax_comment_before_invalid_token_is_emitted_before_error() {
     let mut parser = Parser::new_from_str("key: # c\n@\n");
 
@@ -764,6 +784,7 @@ fn syntax_comment_before_invalid_token_is_emitted_before_error() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_reports_comment_placements_in_nested_document() {
     let yaml = "\
 # root
@@ -800,6 +821,7 @@ next: value
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_marks_consecutive_own_line_comments_as_above() {
     let yaml = "# first\n# second\nkey: value\n";
     let events = parser_events(yaml).expect("parser should accept comment block");
@@ -819,6 +841,7 @@ fn parser_marks_consecutive_own_line_comments_as_above() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_emits_trailing_comment_after_plain_scalar_event() {
     let events = parser_events("key: value # trailing\n").expect("parser should emit events");
 
@@ -940,6 +963,7 @@ fn max_buffered_empty_node_comment_runs_preserve_span_order() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_streams_explicit_key_comment_runs_before_reading_tail() {
     let trailing_comments = long_indented_comment_run(1, 128);
     let yaml = format!("? # c0\n{trailing_comments}  key\n: value\n");
@@ -954,6 +978,7 @@ fn parser_streams_explicit_key_comment_runs_before_reading_tail() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_streams_tab_prefixed_comment_runs_before_reading_tail() {
     let comments = "\t# comment\n".repeat(128);
     let cases = [
@@ -980,6 +1005,7 @@ fn parser_streams_tab_prefixed_comment_runs_before_reading_tail() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_rejects_ambiguous_tab_prefixed_comment_runs_before_reading_tail() {
     let comments = "\t# comment\n".repeat(128);
     let cases = [
@@ -1033,6 +1059,7 @@ fn explicit_key_comment_run_does_not_hide_tab_indentation_error() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
     let default_limit = Options::default().max_buffered_comment_events;
     let trailing_comments = long_comment_run(1, default_limit * 4);
@@ -1088,7 +1115,7 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
 
     assert_eq!(
         names,
-        vec![
+        expected_names(vec![
             "Scalar(key)",
             "Scalar(first)",
             "Comment( empty)",
@@ -1096,7 +1123,7 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
             "SequenceEnd",
             "Scalar(next)",
             "Scalar(value)",
-        ]
+        ])
     );
 }
 
@@ -1117,7 +1144,7 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
 
     assert_eq!(
         names,
-        vec![
+        expected_names(vec![
             "Scalar(key)",
             "Scalar(first)",
             "Comment( value)",
@@ -1125,7 +1152,7 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
             "SequenceEnd",
             "Scalar(next)",
             "Scalar(value)",
-        ]
+        ])
     );
 }
 
@@ -1146,14 +1173,14 @@ fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
 
     assert_eq!(
         names,
-        vec![
+        expected_names(vec![
             "Scalar(key)",
             "Comment( value)",
             "Scalar(first)",
             "SequenceEnd",
             "Scalar(next)",
             "Scalar(value)",
-        ]
+        ])
     );
 }
 
@@ -1173,14 +1200,14 @@ fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
 
     assert_eq!(
         names,
-        vec![
+        expected_names(vec![
             "Comment( key)",
             "Scalar(key)",
             "Scalar(value)",
             "Comment( comma)",
             "Scalar(next)",
             "Scalar(value)",
-        ]
+        ])
     );
 }
 
@@ -1200,7 +1227,7 @@ fn parser_handles_flow_mapping_value_after_comment() {
 
     assert_eq!(
         names,
-        vec!["Scalar(key)", "Comment( value)", "Scalar(value)"]
+        expected_names(vec!["Scalar(key)", "Comment( value)", "Scalar(value)"])
     );
 }
 
@@ -1220,11 +1247,12 @@ fn parser_handles_implicit_flow_mapping_value_after_comment() {
 
     assert_eq!(
         names,
-        vec!["Scalar(key)", "Comment( value)", "Scalar(value)"]
+        expected_names(vec!["Scalar(key)", "Comment( value)", "Scalar(value)"])
     );
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_preserves_empty_comment_payloads_and_crlf_span() {
     let yaml = "#\r\n# \n";
     let events = parser_events(yaml).expect("parser should accept empty comments");
@@ -1241,6 +1269,7 @@ fn parser_preserves_empty_comment_payloads_and_crlf_span() {
 }
 
 #[test]
+#[cfg(feature = "parser-comments")]
 fn parser_peek_returns_and_preserves_pending_comment_event() {
     let mut parser = Parser::new_from_str("# first\nkey: value\n");
 
@@ -1296,8 +1325,13 @@ fn parser_load_and_try_load_deliver_comment_events() {
         .try_load(&mut try_load_sink, true)
         .expect("try_load should deliver comments");
 
-    assert_eq!(load_sink.comments, vec![Cow::Borrowed(" load")]);
-    assert_eq!(try_load_sink.comments, vec![Cow::Borrowed(" try")]);
+    if cfg!(feature = "parser-comments") {
+        assert_eq!(load_sink.comments, vec![Cow::Borrowed(" load")]);
+        assert_eq!(try_load_sink.comments, vec![Cow::Borrowed(" try")]);
+    } else {
+        assert!(load_sink.comments.is_empty());
+        assert!(try_load_sink.comments.is_empty());
+    }
 }
 
 #[test]
@@ -1322,7 +1356,7 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
 
     assert_eq!(
         names,
-        vec![
+        expected_names(vec![
             "StreamStart",
             "Comment( before doc)",
             "DocumentStart",
@@ -1338,7 +1372,7 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
             "Comment( after end)",
             "Comment( before stream end)",
             "StreamEnd",
-        ]
+        ])
     );
 }
 
@@ -1348,15 +1382,24 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
     let events =
         parser_events(yaml).expect("parser should preserve comments around mapping syntax");
 
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " key")));
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " anchor")));
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " alias")));
+    assert_eq!(
+        events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " key")),
+        cfg!(feature = "parser-comments")
+    );
+    assert_eq!(
+        events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " anchor")),
+        cfg!(feature = "parser-comments")
+    );
+    assert_eq!(
+        events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " alias")),
+        cfg!(feature = "parser-comments")
+    );
 
     let anchored_value = events
         .iter()
@@ -1376,9 +1419,12 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
 fn parser_combines_complementary_node_properties_across_comments() {
     for yaml in ["&a # anchor\n!t value\n", "!t # tag\n&a value\n"] {
         let events = parser_events(yaml).expect("complementary node properties should parse");
-        assert!(events
-            .iter()
-            .any(|(event, _)| matches!(event, Event::Comment(..))));
+        assert_eq!(
+            events
+                .iter()
+                .any(|(event, _)| matches!(event, Event::Comment(..))),
+            cfg!(feature = "parser-comments")
+        );
 
         let (anchor_id, tag) = events
             .iter()
