@@ -3617,6 +3617,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 }
             }
 
+            // An escaped line break (`\` at the end of a line) sets only `leading_blanks`, so the
+            // block-context check above skips it. s-double-escaped [112] still ends in
+            // s-flow-line-prefix(n): in strict mode the continuation must be indented past the
+            // enclosing block, as in flow context.
+            if leading_blanks
+                && !has_leading_break
+                && self.options.strict_indentation
+                && self.flow_level == 0
+                && self.input.peek() != '"'
+                && (self.mark.col as isize) <= self.flow_block_indent()
+            {
+                return Err(self.scan_error(ErrorKind::InvalidIndentation));
+            }
+
             // Join the whitespace or fold line breaks.
             if leading_blanks {
                 // Folding rule:

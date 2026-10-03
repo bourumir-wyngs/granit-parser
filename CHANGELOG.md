@@ -26,6 +26,8 @@
   instead of covering that token (`? ` of the next key).
 - Accept tabs after an explicit key indicator `?` inside flow collections (`{?\ta: b}`); the
   tab check only applies in block context, where a tab there would indent the key.
+- `strict_indentation` also checks the line after an escaped line break (`\` at the end of a
+  line) in a double-quoted scalar in block context (`key: "a\` then `b"` at column 0).
 
 ## 1.4.0
 

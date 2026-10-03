@@ -195,6 +195,36 @@ fn strict_rejects_under_indented_multiline_scalar_content() {
 }
 
 #[test]
+fn strict_rejects_under_indented_escaped_line_breaks_in_block_context() {
+    // An escaped line break in a double-quoted block value is followed by
+    // s-flow-line-prefix(n), like a folded break.
+    for (yaml, reference, line, col) in [
+        ("key: \"first\\\nsecond\"\n", "key: \"firstsecond\"\n", 2, 0),
+        ("- \"first\\\nsecond\"\n", "- \"firstsecond\"\n", 2, 0),
+        (
+            "outer:\n  key: \"first\\\n  second\"\n",
+            "outer:\n  key: \"firstsecond\"\n",
+            3,
+            2,
+        ),
+        (
+            "key: \"first\\\n\nsecond\"\n",
+            "key: \"first\\nsecond\"\n",
+            3,
+            0,
+        ),
+    ] {
+        assert_relaxed_only(yaml, reference, line, col);
+    }
+    // Indented continuations and a closing quote at the line start stay valid.
+    for yaml in ["key: \"first\\\n second\"\n", "key: \"first\\\n\"\n"] {
+        for result in events_with_inputs(yaml, true) {
+            result.unwrap_or_else(|error| panic!("strict rejected {yaml:?}: {error}"));
+        }
+    }
+}
+
+#[test]
 fn strict_rejects_tabs_used_instead_of_flow_indentation() {
     // A preceding plain scalar removes the scanner's temporary indentation level.
     // Tabs still cannot replace the spaces required by the enclosing block.
