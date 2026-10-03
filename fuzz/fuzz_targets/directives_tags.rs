@@ -86,7 +86,7 @@ fn assert_single_tag(
             .expect("tagged node must also carry the generated anchor");
         assert_eq!(aliases, [anchor_id]);
     } else {
-        assert!(aliases.is_empty());
+        assert_eq!(aliases, Vec::<usize>::new());
     }
 }
 

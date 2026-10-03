@@ -313,7 +313,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
             }
             Event::DocumentStart(..) => {
                 assert!(!document_open, "nested DocumentStart event");
-                assert!(collections.is_empty());
+                assert_eq!(collections, Vec::<Collection>::new());
                 document_open = true;
                 anchors.clear();
             }

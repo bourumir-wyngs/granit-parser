@@ -934,7 +934,7 @@ mod tests {
             },
         );
 
-        assert!(error.kind().to_string().is_empty());
-        assert!(error.info().is_empty());
+        assert_eq!(error.kind().to_string(), "");
+        assert_eq!(error.info(), "");
     }
 }

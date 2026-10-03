@@ -150,7 +150,7 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
             Span::new(Marker::new(21, 3, 0), Marker::new(28, 3, 7)),
             "{backend:?}: following comment span"
         );
-        assert!(stack.stack().is_empty());
+        assert_eq!(stack.stack(), Vec::<String>::new());
     }
 }
 

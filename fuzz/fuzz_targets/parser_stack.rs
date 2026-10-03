@@ -159,7 +159,7 @@ pub fn check_input(data: &[u8]) {
                 sources.pop();
                 assert_eq!(stack.stack(), sources);
             } else {
-                assert!(stack.stack().is_empty());
+                assert_eq!(stack.stack(), Vec::<String>::new());
             }
             for _ in 0..3 {
                 assert!(stack.next_event().is_none(), "stack did not fuse");
