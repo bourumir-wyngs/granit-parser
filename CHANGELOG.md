@@ -22,6 +22,8 @@
   (`a: "one\n two"`). They were rejected with "invalid indentation in multiline quoted scalar".
 - A block scalar ending in an indentation-only line with no line break at the end of input
   (`|\n  a\n  `) no longer gains an extra line break (`"a\n\n"`, now `"a\n"`).
+- The `SequenceEnd` span of an indentless sequence (`key:\n- a`) is empty at the next token,
+  instead of covering that token (`? ` of the next key).
 
 ## 1.4.0
 

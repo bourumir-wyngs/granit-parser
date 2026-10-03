@@ -2405,7 +2405,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             QueuedToken(mark, _) => {
                 self.end_block_collection();
                 self.pop_state();
-                Ok((Event::SequenceEnd, mark))
+                // The token that ends an indentless sequence belongs to the enclosing mapping
+                // (`? key`, `key:`, block end); the end event is empty, at that token's start.
+                Ok((Event::SequenceEnd, Span::empty(mark.start)))
             }
         }
     }

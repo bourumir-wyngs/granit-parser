@@ -95,6 +95,31 @@ fn span_helpers_report_length_empty_and_byte_range() {
 }
 
 #[test]
+fn indentless_sequence_end_span_is_empty_before_the_next_key() {
+    // The `?` that ends an indentless sequence belongs to the next mapping entry; the
+    // SequenceEnd span is empty at its start, like other block collection ends.
+    for (yaml, at) in [
+        ("k:\n- a\n? y\n", 7),
+        ("?\n- a\n?\n", 6),
+        ("k:\n- a\nj: 1\n", 7),
+    ] {
+        let spans = event_spans(yaml);
+        let end = spans
+            .iter()
+            .find(|(event, _)| matches!(event, Event::SequenceEnd))
+            .map(|(_, span)| span.byte_range())
+            .unwrap();
+        assert_eq!(end, Some(at..at), "{yaml:?}");
+        let mut last = 0;
+        for (event, span) in &spans {
+            let start = span.byte_range().unwrap().start;
+            assert!(start >= last, "{yaml:?}: {event:?} goes backwards");
+            last = start;
+        }
+    }
+}
+
+#[test]
 fn flow_collection_event_spans_cover_only_the_indicators() {
     assert_eq!(
         first_event_slice("[ # c\n  a]\n", |event| matches!(
