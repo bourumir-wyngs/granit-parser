@@ -18,6 +18,8 @@
   Consumed-character counts, comment separation errors, and tab behavior are preserved.
 - Accept an explicit key indicator `?` as the last character of the input (it was rejected with
   "expected whitespace", while `?` followed by a line break was accepted).
+- Accept quoted scalar continuation lines indented one column past the enclosing block
+  (`a: "one\n two"`). They were rejected with "invalid indentation in multiline quoted scalar".
 
 ## 1.4.0
 

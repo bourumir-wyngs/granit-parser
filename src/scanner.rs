@@ -3602,11 +3602,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 return Err(self.scan_error(ErrorKind::InvalidIndentation));
             }
 
-            // Preserve the existing continuation rules for quoted scalars in block context.
+            // Continuation lines of a quoted scalar in block context must be indented more than
+            // the enclosing block (s-flow-line-prefix(n), YAML 1.2.2 [69]). Compare against that
+            // block's indentation, not the temporary one-column indent added after `:` / `-`:
+            // `foo: "a\n b"` is valid (n = 1).
             if leading_blanks && has_leading_break && self.flow_level == 0 {
                 let next_ch = self.input.peek();
                 let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
-                if !is_closing_quote && (self.mark.col as isize) <= self.indent {
+                if !is_closing_quote && (self.mark.col as isize) <= self.flow_block_indent() {
                     return Err(self.scan_error(ErrorKind::InvalidQuotedScalarIndent));
                 }
             }
@@ -6052,6 +6055,32 @@ mod test {
             first_scanner_error_kind("a: \"one\nbad\"\n"),
             ErrorKind::InvalidQuotedScalarIndent
         );
+        assert_eq!(
+            first_scanner_error_kind("a:\n  b: 'one\n  bad'\n"),
+            ErrorKind::InvalidQuotedScalarIndent
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_continuation_one_column_past_block_indent() {
+        // s-flow-line-prefix(n): a continuation line needs only n spaces, where n is one more
+        // than the indentation of the enclosing block mapping or sequence.
+        for input in [
+            "a: \"one\n two\"\n",
+            "a: 'one\n two'\n",
+            "a:\n  b: \"one\n   two\"\n",
+            "- a: \"one\n   two\"\n",
+            "? k\n: \"one\n two\"\n",
+        ] {
+            let mut scanner = Scanner::new(StrInput::new(input));
+            loop {
+                match scanner.next_token() {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(error) => panic!("{input:?}: {error}"),
+                }
+            }
+        }
     }
 
     #[test]
