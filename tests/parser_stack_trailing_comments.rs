@@ -1,6 +1,9 @@
+mod support;
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
 use granit_parser::{
-    ErrorKind, Event, Marker, Options, Parser, ParserStack, ParserTrait, Placement, ReplayParser,
-    ScalarStyle, ScanError, Span, StrInput,
+    ErrorKind, Event, Marker, Options, Parser, ParserStack, ParserTrait, ReplayParser, ScalarStyle,
+    ScanError, Span, StrInput,
 };
 
 type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
@@ -154,8 +157,8 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
 #[test]
 fn trailing_comments_do_not_hide_a_second_included_document() {
     for backend in BACKENDS {
-        for emit_comments in [true, false] {
-            let options = granit_parser::options! { emit_comments: emit_comments };
+        for &emit_comments in support::comment_modes() {
+            let options = granit_parser::options! { #[cfg(feature = "comments")] emit_comments: emit_comments };
             let mut stack = stack_with_child(backend, TWO_DOCUMENTS, options);
             let mut actual = Vec::new();
             let error = loop {
@@ -166,13 +169,14 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
             };
             let expected = vec![
                 Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+                #[cfg(feature = "comments")]
                 Event::Comment(" trailing".into(), Placement::Right),
+                #[cfg(feature = "comments")]
                 Event::Comment(" after".into(), Placement::Above),
             ]
             .into_iter()
             .filter(|event| {
-                (cfg!(feature = "comments") && emit_comments)
-                    || !matches!(event, Event::Comment(..))
+                (cfg!(feature = "comments") && emit_comments) || !support::is_comment_event(event)
             })
             .collect::<Vec<_>>();
             assert_eq!(
@@ -195,12 +199,13 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
         Event::StreamStart,
         Event::DocumentEnd,
     ] {
-        for emit_comments in [true, false] {
+        for &emit_comments in support::comment_modes() {
             let mut events = ordinary_events(CHILD);
             assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
             events.push((unexpected.clone(), Span::empty(Marker::new(29, 4, 0))));
 
             let mut stack = Stack::with_options(granit_parser::options! {
+                #[cfg(feature = "comments")]
                 emit_comments: emit_comments,
             });
             stack.push_str_parser(Parser::new_from_str(PARENT), "parent.yaml".to_owned());
@@ -208,12 +213,13 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
 
             let expected = [
                 Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+                #[cfg(feature = "comments")]
                 Event::Comment(" trailing".into(), Placement::Right),
+                #[cfg(feature = "comments")]
                 Event::Comment(" after".into(), Placement::Last),
             ];
             for event in expected.into_iter().filter(|event| {
-                (cfg!(feature = "comments") && emit_comments)
-                    || !matches!(event, Event::Comment(..))
+                (cfg!(feature = "comments") && emit_comments) || !support::is_comment_event(event)
             }) {
                 assert_eq!(
                     next_with_repeated_peek(&mut stack).unwrap().unwrap().0,

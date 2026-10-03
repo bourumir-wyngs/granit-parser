@@ -3,10 +3,13 @@
 //! These tests target scattered error paths and default trait implementations that the
 //! regular test suite does not reach.
 
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
+
 use granit_parser::{
     input::{SkipTabs, WhitespaceResult},
-    BufferedInput, ErrorKind, Event, Input, Parser, Placement, ScanError, StrInput,
-    TryEventReceiver, TryLoadError,
+    BufferedInput, ErrorKind, Event, Input, Parser, ScanError, StrInput, TryEventReceiver,
+    TryLoadError,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -175,17 +178,22 @@ fn stray_flow_entry_in_block_mapping_value_reports_block_mapping_error() {
 fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
     let events = parse_events("[? a : # note\n b]\n").unwrap();
 
-    let comment_pos = events
-        .iter()
-        .position(|event| matches!(event, Event::Comment(text, _) if text == " note"));
-    assert_eq!(comment_pos.is_some(), cfg!(feature = "comments"));
-    if let Some(comment_pos) = comment_pos {
-        // The explicit `?` key inside a flow sequence opens a single-pair mapping.
+    #[cfg(not(feature = "comments"))]
+    assert!(events.windows(3).any(|events| matches!(
+        events,
+        [Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None), Event::Scalar(key, ..), Event::Scalar(value, ..)]
+            if key == "a" && value == "b"
+    )));
+    #[cfg(feature = "comments")]
+    {
+        let comment_pos = events
+            .iter()
+            .position(|event| matches!(event, Event::Comment(text, _) if text == " note"))
+            .expect("the comment between the key and value must be emitted");
         assert!(matches!(
             events[comment_pos - 2],
             Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None)
         ));
-        // The comment is emitted between the key and the value of the explicit pair.
         assert!(matches!(
             events[comment_pos - 1],
             Event::Scalar(ref value, ..) if value == "a"
@@ -198,12 +206,6 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
             events[comment_pos],
             Event::Comment(_, Placement::Right)
         ));
-    } else {
-        assert!(events.windows(3).any(|events| matches!(
-            events,
-            [Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None), Event::Scalar(key, ..), Event::Scalar(value, ..)]
-                if key == "a" && value == "b"
-        )));
     }
 }
 

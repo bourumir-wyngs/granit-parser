@@ -1,3 +1,5 @@
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
 extern crate alloc;
 
 use alloc::{
@@ -8,9 +10,9 @@ use alloc::{
 };
 use core::iter::Empty;
 use granit_parser::{
-    BorrowedInput, ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, Placement,
-    ReplayParser, ScalarStyle, ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle,
-    TryEventReceiver, TryLoadError,
+    BorrowedInput, ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser,
+    ScalarStyle, ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
+    TryLoadError,
 };
 
 type MyStack<'a> = ParserStack<'a, Empty<char>, StrInput<'a>>;
@@ -90,6 +92,7 @@ fn format_events(events: &[Event]) -> Vec<String> {
             Event::StreamEnd => "StreamEnd".to_string(),
             Event::DocumentStart(..) => "DocStart".to_string(),
             Event::DocumentEnd => "DocEnd".to_string(),
+            #[cfg(feature = "comments")]
             Event::Comment(text, _) => alloc::format!("Comment({})", text.as_ref()),
             Event::Scalar(val, _, _, _) => alloc::format!("Scalar({})", val.as_ref()),
             Event::MappingStart(..) => "MapStart".to_string(),
@@ -880,6 +883,7 @@ fn replay_parser_try_load_multi_reads_stream_end() {
 }
 
 #[test]
+#[cfg(feature = "comments")]
 fn replay_parser_preserves_comment_events() {
     let span = test_span();
     let replay_events = vec![

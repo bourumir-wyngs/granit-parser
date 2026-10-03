@@ -1,9 +1,10 @@
+mod support;
 use granit_parser::{ErrorKind, Event, Options, Parser, Scanner, StrInput, TokenType};
 
 fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
     assert!(events
         .iter()
-        .all(|(event, _)| !matches!(event, Event::Comment(..))));
+        .all(|(event, _)| !support::is_comment_event(event)));
     assert!(events
         .iter()
         .any(|(event, _)| { matches!(event, Event::Scalar(value, ..) if value == "value") }));
@@ -13,7 +14,9 @@ fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
     assert!(!defaults.strict_indentation);
+    #[cfg(feature = "comments")]
     assert!(defaults.emit_comments);
+    #[cfg(feature = "comments")]
     assert_eq!(defaults.max_buffered_comment_events, 96);
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
     assert_eq!(defaults.flow_nesting_limit, 255);
@@ -24,7 +27,9 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
 
     let options = granit_parser::options! {
         strict_indentation: true,
+        #[cfg(feature = "comments")]
         emit_comments: false,
+        #[cfg(feature = "comments")]
         max_buffered_comment_events: 7,
         simple_key_max_lookahead: 11,
         flow_nesting_limit: 13,
@@ -34,7 +39,9 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     };
 
     assert!(options.strict_indentation);
+    #[cfg(feature = "comments")]
     assert!(!options.emit_comments);
+    #[cfg(feature = "comments")]
     assert_eq!(options.max_buffered_comment_events, 7);
     assert_eq!(options.simple_key_max_lookahead, 11);
     assert_eq!(options.flow_nesting_limit, 13);
@@ -69,6 +76,7 @@ fn new_uses_default_options() {
 fn common_input_constructors_accept_options() {
     let yaml = String::from("# ignored\nvalue\n");
     let options = granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: false,
     };
 
@@ -117,7 +125,7 @@ fn buffered_comment_limit_can_be_raised() {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::Comment(..)))
+            .filter(|(event, _)| support::is_comment_event(event))
             .count(),
         raised_limit
     );

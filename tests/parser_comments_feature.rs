@@ -1,53 +1,78 @@
 #![cfg(not(feature = "comments"))]
 
 use granit_parser::{
-    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser, ParserStack,
-    Placement, ScalarStyle, Scanner, Span, StrInput, TokenType,
+    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ParserStack,
+    ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
 
+fn parsed_events(yaml: &str) -> Vec<(Event<'_>, Span)> {
+    let events = Parser::new_from_str(yaml)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        events,
+        Parser::new_from_iter(yaml.chars())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        "{yaml:?}"
+    );
+    events
+}
+
+fn assert_monotonic_spans(events: &[(Event<'_>, Span)]) {
+    for pair in events.windows(2) {
+        assert!(
+            pair[1].1.start.index() >= pair[0].1.start.index()
+                && pair[1].1.end.index() >= pair[0].1.end.index(),
+            "event spans moved backwards: {pair:?}"
+        );
+    }
+}
+
 #[test]
-fn default_parsers_suppress_comments_for_all_input_backends() {
+fn default_scanners_and_parsers_ignore_comments_for_all_input_backends() {
     for yaml in [
         "# header\nroot: # empty\nnext: value # trailing\n",
         "root:\n- # empty entry\n- value # trailing\n",
         "{root: # empty flow value\n, next: value}\n",
         "--- # document start\nvalue\n... # document end\n# tail\n",
     ] {
-        // Keeping the runtime option true also proves that it cannot enable an excluded feature.
-        let options = granit_parser::options! { max_buffered_comment_events: 0 };
-        assert!(options.emit_comments);
-        let string = Parser::new_from_str_with_options(yaml, options.clone())
+        let string = Parser::new_from_str(yaml)
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let buffered = Parser::new_from_iter_with_options(yaml.chars(), options.clone())
+        let buffered = Parser::new_from_iter(yaml.chars())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let fallible = Parser::new_from_fallible_iter_with_options(
-            yaml.chars().map(Ok::<char, ErrorKind>),
-            options,
-        )
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+        let fallible = Parser::new_from_fallible_iter(yaml.chars().map(Ok::<char, ErrorKind>))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(string, buffered, "{yaml:?}");
         assert_eq!(string, fallible, "{yaml:?}");
         assert!(string
             .iter()
-            .all(|(event, _)| !matches!(event, Event::Comment(..))));
-        assert!(string
-            .iter()
-            .any(|(event, _)| { matches!(event, Event::Scalar(value, ..) if value == "value") }));
-        let suppressed = Parser::new_from_str_with_options(
-            yaml,
-            granit_parser::options! { emit_comments: false },
-        )
+            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+
+        let string = Scanner::new(StrInput::new(yaml))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let buffered = Scanner::new(BufferedInput::new(yaml.chars()))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let fallible = Scanner::new(FallibleBufferedInput::new(
+            yaml.chars().map(Ok::<char, ErrorKind>),
+        ))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-        assert_eq!(string, suppressed, "{yaml:?}");
+        assert_eq!(string, buffered, "{yaml:?}");
+        assert_eq!(string, fallible, "{yaml:?}");
+        assert!(string.iter().any(|token| {
+            matches!(token.token_type(), TokenType::Scalar(_, value) if value == "value")
+        }));
     }
 }
 
 #[test]
-fn excluded_parser_comments_preserve_syntax_validation() {
+fn excluded_comments_preserve_syntax_validation() {
     for (yaml, expected) in [
         (
             "key: \"value\"# unseparated\n",
@@ -62,6 +87,7 @@ fn excluded_parser_comments_preserve_syntax_validation() {
             "key: value # control \u{1}\n",
             ErrorKind::UnexpectedCharacter { character: '\u{1}' },
         ),
+        ("?\tkey\n", ErrorKind::ExpectedWhitespace),
     ] {
         let string = Parser::new_from_str(yaml).find_map(Result::err).unwrap();
         let buffered = Parser::new_from_iter(yaml.chars())
@@ -73,57 +99,190 @@ fn excluded_parser_comments_preserve_syntax_validation() {
         assert_eq!(string.kind(), &expected, "{yaml:?}");
         assert_eq!(string, buffered, "{yaml:?}");
         assert_eq!(string, fallible, "{yaml:?}");
+        assert_eq!(
+            Scanner::new(StrInput::new(yaml))
+                .find_map(Result::err)
+                .unwrap(),
+            string,
+            "{yaml:?}",
+        );
     }
 }
 
 #[test]
-fn standalone_scanners_still_capture_comments_for_all_input_backends() {
-    let yaml = "# header\nkey: value # inline\n";
-    let string = Scanner::new(StrInput::new(yaml))
+fn ignored_unicode_comments_preserve_following_token_and_event_positions() {
+    let yaml = "# café 🪨\r\nclé: valeur # fin 漢字\r\nnext: value\r\n";
+    let byte_offset = yaml.find("next").unwrap();
+    let character_offset = yaml[..byte_offset].chars().count();
+    let tokens = Scanner::new(StrInput::new(yaml))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let buffered = Scanner::new(BufferedInput::new(yaml.chars()))
+    let token = tokens
+        .iter()
+        .find(|token| matches!(token.token_type(), TokenType::Scalar(_, value) if value == "next"))
+        .unwrap();
+    let events = Parser::new_from_str(yaml)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let fallible = Scanner::new(FallibleBufferedInput::new(
-        yaml.chars().map(Ok::<char, ErrorKind>),
-    ))
-    .collect::<Result<Vec<_>, _>>()
-    .unwrap();
-    assert_eq!(string, buffered);
-    assert_eq!(string, fallible);
-    assert_eq!(
-        string
-            .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::Comment(_)))
-            .count(),
-        2
-    );
+    let (_, span) = events
+        .iter()
+        .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "next"))
+        .unwrap();
+    for span in [token.span(), *span] {
+        assert_eq!(span.start.index(), character_offset);
+        assert_eq!(span.start.byte_offset(), Some(byte_offset));
+        assert_eq!((span.start.line(), span.start.col()), (3, 0));
+        assert_eq!(span.slice(yaml), Some("next"));
+    }
 }
 
 #[test]
-fn default_stack_suppresses_current_and_later_custom_comments() {
+fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
     type Stack = ParserStack<'static, core::iter::Empty<char>, StrInput<'static>>;
-    let span = Span::empty(Marker::new(0, 1, 0));
-    let current = (Event::Comment(" current".into(), Placement::Free), span);
-    let mut parser = Parser::new_from_str("# later\nvalue\n");
-    assert_eq!(parser.next_event().unwrap().unwrap().0, Event::StreamStart);
-    assert!(matches!(
-        parser.next_event().unwrap().unwrap().0,
-        Event::DocumentStart(..)
-    ));
-    let mut stack = Stack::with_options(Options::default());
-    stack.push_custom_parser_with_current(parser, "custom".into(), current);
-    let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
+
+    let yaml = "# ignored\n[plain#hash, \"# quoted\", '# single'] # ignored\n";
+    let values = Parser::new_from_str(yaml)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar(value, ..) => Some(value.into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(values, ["plain#hash", "# quoted", "# single"]);
+
+    let mut stack = Stack::new();
+    stack.push_str_parser(Parser::new_from_str("parent\n"), "parent".into());
+    stack.push_str_parser(
+        Parser::new_from_str("# header\nchild\n... # tail\n# after\n"),
+        "child".into(),
+    );
     assert_eq!(
-        events
+        stack
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
             .into_iter()
             .map(|(event, _)| event)
             .collect::<Vec<_>>(),
         [
-            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
+            Event::StreamStart,
+            Event::DocumentStart(false, None),
+            Event::Scalar("parent".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
-        ]
+        ],
     );
+}
+
+#[test]
+fn ignored_comments_preserve_empty_node_spans() {
+    for (yaml, expected) in [
+        ("key: # c\nnext: v\n", Marker::new(3, 1, 3)),
+        ("- # c\n- v\n", Marker::new(5, 1, 5)),
+        ("key:\n- # c\n- v\n", Marker::new(10, 2, 5)),
+        ("{key: # c\n}", Marker::new(4, 1, 4)),
+    ] {
+        let events = parsed_events(yaml);
+        let (_, span) = events
+            .iter()
+            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "~"))
+            .expect("comment-separated empty node should be emitted");
+        assert_eq!(span.start, expected, "{yaml:?}");
+        assert_eq!(span.end, expected, "{yaml:?}");
+        assert_eq!(span.start.byte_offset(), Some(expected.index()), "{yaml:?}");
+        assert_eq!(span.slice(yaml), Some(""), "{yaml:?}");
+        assert_monotonic_spans(&events);
+    }
+}
+
+#[test]
+fn ignored_comment_runs_preserve_span_order() {
+    let comments = "# later\n".repeat(95);
+    for yaml in [
+        "plain key: in-line value\n: # Both empty\n\"quoted key\":\n- entry\n".into(),
+        format!("key: # c0\n{comments}next: value\n"),
+        format!("- # c0\n{comments}- value\n"),
+        format!("key:\n- # c0\n{comments}next: value\n"),
+        format!("root: {{key: # c0\n{comments}}}\n"),
+    ] {
+        assert_monotonic_spans(&parsed_events(&yaml));
+    }
+}
+
+#[test]
+fn ignored_comments_preserve_collection_entry_order() {
+    for (yaml, expected) in [
+        (
+            "key:\n- # value\n  first\nnext: value\n",
+            ["key", "first", "<sequence end>", "next", "value"].as_slice(),
+        ),
+        (
+            "key:\n- first\n- # value\n  second\nnext: value\n",
+            ["key", "first", "second", "<sequence end>", "next", "value"].as_slice(),
+        ),
+        (
+            "key:\n- first\n- # empty\nnext: value\n",
+            ["key", "first", "~", "<sequence end>", "next", "value"].as_slice(),
+        ),
+        (
+            "{? # key\n  key\n: value, # comma\nnext: value}\n",
+            ["key", "value", "next", "value"].as_slice(),
+        ),
+        ("{key: # value\n value}\n", ["key", "value"].as_slice()),
+        (
+            "[key: # value\n value]\n",
+            ["key", "value", "<sequence end>"].as_slice(),
+        ),
+    ] {
+        let events = parsed_events(yaml);
+        let values = events
+            .iter()
+            .filter_map(|(event, _)| match event {
+                Event::Scalar(value, ScalarStyle::Plain, ..) => Some(value.as_ref()),
+                Event::SequenceEnd => Some("<sequence end>"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(values, expected, "{yaml:?}");
+    }
+}
+
+#[test]
+fn ignored_comments_preserve_complementary_node_properties() {
+    for yaml in ["&a # anchor\n!t value\n", "!t # tag\n&a value\n"] {
+        let events = parsed_events(yaml);
+        let (anchor_id, tag) = events
+            .iter()
+            .find_map(|(event, _)| match event {
+                Event::Scalar(value, _, anchor_id, Some(tag)) if value == "value" => {
+                    Some((*anchor_id, tag.original()))
+                }
+                _ => None,
+            })
+            .expect("comment-separated value should retain both node properties");
+        assert_ne!(anchor_id, 0, "{yaml:?}");
+        assert_eq!(tag, "!t", "{yaml:?}");
+    }
+}
+
+#[test]
+fn ignored_anchor_comments_preserve_aliases_and_self_reference() {
+    for yaml in [
+        "&a # anchor\n[*a]\n",
+        "? # key\n: &a # anchor\n  value\nref: *a # alias\n",
+    ] {
+        let events = parsed_events(yaml);
+        let anchor_id = events
+            .iter()
+            .find_map(|(event, _)| event.anchor_id().filter(|id| *id != 0))
+            .expect("comment-separated node should retain its anchor");
+        assert!(
+            events.iter().any(|(event, _)| {
+                matches!(event, Event::Alias(alias_id) if *alias_id == anchor_id)
+            }),
+            "{yaml:?}"
+        );
+    }
 }

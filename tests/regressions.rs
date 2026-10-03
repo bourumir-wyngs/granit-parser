@@ -322,6 +322,7 @@ fn crlf_and_wide_character_spans() {
                 span.byte_range(),
                 span.slice(yaml).map(ToOwned::to_owned),
             )),
+            #[cfg(feature = "comments")]
             Event::Comment(text, _) => Some((
                 format!("#{text}"),
                 span.byte_range(),

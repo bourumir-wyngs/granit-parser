@@ -140,6 +140,7 @@ impl core::error::Error for InputIoError {
 #[non_exhaustive]
 pub enum ErrorKind {
     /// Too many consecutive comments were buffered before a collection entry.
+    #[cfg(feature = "comments")]
     TooManyComments,
     /// Reading from the input source failed.
     InputIo {
@@ -358,6 +359,7 @@ impl fmt::Display for ErrorKind {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "comments")]
             Self::TooManyComments => {
                 f.write_str("too many consecutive comments before resolving collection entry")
             }

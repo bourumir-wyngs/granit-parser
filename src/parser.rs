@@ -7,10 +7,12 @@
 use crate::{
     error::{ErrorKind, ScanError},
     input::{str::StrInput, BorrowedInput},
-    scanner::{Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
+    scanner::{Marker, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span},
     BufferedInput, FallibleBufferedInput, Options,
 };
 
+#[cfg(feature = "comments")]
+use crate::scanner::Placement;
 #[cfg(feature = "comments")]
 use alloc::collections::VecDeque;
 use alloc::{
@@ -119,6 +121,7 @@ pub enum Event<'input> {
     /// exactly after `#`, excluding only the line break. The placement is a best-effort hint for
     /// correlating the comment with nearby YAML presentation. The companion parser [`Span`] covers
     /// the whole source comment, including `#` and excluding the line break.
+    #[cfg(feature = "comments")]
     Comment(
         /// Raw comment payload exactly after `#`, excluding only the line break.
         Cow<'input, str>,
@@ -592,7 +595,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 /// The [`EventReceiver`] trait only receives events. In order to receive both events and their
 /// location in the source, use [`SpannedEventReceiver`]. Note that [`EventReceiver`]s implement
 /// [`SpannedEventReceiver`] automatically.
-/// Non-spanned receivers receive [`Event::Comment(text, placement)`](Event::Comment) like any
+/// With the `comments` feature, non-spanned receivers receive `Event::Comment(text, placement)` like any
 /// other event, but without source location. Spanned receivers receive the same comment event plus
 /// the comment [`Span`] in [`SpannedEventReceiver::on_event`]. For comments, that span covers the
 /// whole source comment, including `#` and excluding the line break. When parsing from an input
@@ -607,7 +610,7 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 ///
 /// In a mapping, key-values are sent as consecutive data events. Comments can appear in the raw
 /// event stream between a key and its value; they are presentation metadata, not YAML data nodes.
-/// Consumers building YAML data trees should ignore [`Event::Comment`]. Any key/value alternation
+/// Consumers building YAML data trees should ignore `Event::Comment`. Any key/value alternation
 /// shortcut applies only after filtering out comments and other presentation metadata. After that
 /// filtering, the first event after an [`Event::MappingStart`] will be the key, and the following
 /// event will be its value. If the mapping contains no sub-mapping or sub-sequence, then even events
@@ -672,7 +675,7 @@ pub trait EventReceiver<'input> {
 /// Trait to be implemented for using the low-level parsing API.
 ///
 /// Functionally similar to [`EventReceiver`], but receives a [`Span`] as well as the event.
-/// For [`Event::Comment`], the span is the source range of the whole comment.
+/// With the `comments` feature, an `Event::Comment` span is the source range of the whole comment.
 pub trait SpannedEventReceiver<'input> {
     /// Handler called for each event that occurs.
     fn on_event(&mut self, ev: Event<'input>, span: Span);
@@ -956,22 +959,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// Use [`crate::options!`] to construct `options` without depending on exhaustive struct
     /// literal syntax.
-    /// Without the `comments` feature, the parser ignores `options.emit_comments` and
-    /// does not emit comment events. Direct scanner users retain their runtime comment options.
+    /// Without the `comments` feature, comment capture and emission are compiled out of both
+    /// the parser and its scanner. YAML comments are still skipped and validated.
     #[must_use]
     pub fn with_options(src: T, options: Options) -> Self {
-        #[cfg(not(feature = "comments"))]
-        let options = {
-            let mut options = options;
-            options.emit_comments = false;
-            options
-        };
         #[cfg(feature = "comments")]
         let max_buffered_comment_events = options.max_buffered_comment_events;
         let block_nesting_limit = options.block_nesting_limit;
         let scanner = Scanner::with_options(src, options);
-        #[cfg(not(feature = "comments"))]
-        debug_assert!(!scanner.comments_possible());
 
         Parser {
             scanner,
@@ -3621,7 +3616,17 @@ a5: *x
             "%YAML 1.2\n# directive comment\n%TAG !e! tag:example.com,2026:\n---\nkey: !e!thing value\n",
         )
         .map(|event| event.unwrap().0)
-        .filter(|event| !matches!(event, Event::Comment(..)))
+        .filter(|event| {
+            #[cfg(feature = "comments")]
+            {
+                !matches!(event, Event::Comment(..))
+            }
+            #[cfg(not(feature = "comments"))]
+            {
+                let _ = event;
+                true
+            }
+        })
         .collect::<Vec<_>>();
 
         assert!(matches!(
