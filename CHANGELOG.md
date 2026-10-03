@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased (breaking API changes)
+## 2.0.0 (breaking changes)
 
-- Disabling `comments` now compiles out scanner comment capture, parser and stack comment state,
+- Disabling the new feature `comments` now compiles out scanner comment capture, parser and stack comment state,
   and the public comment types, variants, and options. YAML comments are still skipped and
   validated. Applications using `default-features = false` must enable `comments` to access
   `Comment`, `Placement`, comment token/event variants, or comment-specific options.
