@@ -16,6 +16,8 @@
   Replace `SkipTabs::Result(found_tabs, has_valid_yaml_ws)` with
   `WhitespaceResult::new(found_tabs, has_valid_yaml_ws)`; its result accessors are unchanged.
   Consumed-character counts, comment separation errors, and tab behavior are preserved.
+- Accept an explicit key indicator `?` as the last character of the input (it was rejected with
+  "expected whitespace", while `?` followed by a line break was accepted).
 
 ## 1.4.0
 

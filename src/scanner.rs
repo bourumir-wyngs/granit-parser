@@ -2056,7 +2056,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        if need_whitespace {
+        // End of input also separates: `?` is a key indicator when followed by a blank, a line
+        // break or the end of input (`is_blank_or_breakz`), so `?` as the last character is a
+        // complete (empty) explicit key, like `?\n`.
+        if need_whitespace && !self.input.next_is_z() {
             Err(self.scan_error(ErrorKind::ExpectedWhitespace))
         } else {
             Ok(false)

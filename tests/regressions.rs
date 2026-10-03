@@ -360,6 +360,21 @@ fn crlf_and_wide_character_spans() {
 }
 
 #[test]
+fn explicit_key_indicator_at_end_of_input() {
+    // `?` followed by end of input is an empty explicit key, the same as `?\n`.
+    fn events(yaml: &str) -> Vec<Event<'_>> {
+        collect_ok_events(yaml)
+            .into_iter()
+            .map(|(event, _)| event)
+            .collect()
+    }
+    for input in ["?", "- ?", "a:\n  ?"] {
+        let with_newline = format!("{input}\n");
+        assert_eq!(events(input), events(&with_newline), "{input:?}");
+    }
+}
+
+#[test]
 fn nel_and_double_bom_probes() {
     assert_eq!(scalar_values("a\u{85}b\n"), ["a\u{85}b"]);
     assert_eq!(scalar_values("\u{FEFF}\u{FEFF}a: b\n"), ["a", "b"]);
