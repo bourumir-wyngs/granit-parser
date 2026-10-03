@@ -3296,13 +3296,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Chomp the tail.
         if chomping != Chomping::Strip {
-            string.push_str(&leading_break);
-            // If we had reached an eof but the last character wasn't an end-of-line, check if the
-            // last line was indented at least as the rest of the scalar, then we need to consider
-            // there is a newline.
-            if self.input.next_is_z() && self.mark.col >= indent.max(1) {
+            // If we had reached an eof but the last content line wasn't terminated by a line
+            // break, check if the last line was indented at least as the rest of the scalar, then
+            // we need to consider there is a newline. When that line already ended with a break
+            // (`leading_break`), the indentation-only remainder at EOF is not a line (it has no
+            // break, so it is no `l-empty`) and adds nothing.
+            if leading_break.is_empty() && self.input.next_is_z() && self.mark.col >= indent.max(1)
+            {
                 string.push('\n');
             }
+            string.push_str(&leading_break);
         }
 
         if chomping == Chomping::Keep {

@@ -20,6 +20,8 @@
   "expected whitespace", while `?` followed by a line break was accepted).
 - Accept quoted scalar continuation lines indented one column past the enclosing block
   (`a: "one\n two"`). They were rejected with "invalid indentation in multiline quoted scalar".
+- A block scalar ending in an indentation-only line with no line break at the end of input
+  (`|\n  a\n  `) no longer gains an extra line break (`"a\n\n"`, now `"a\n"`).
 
 ## 1.4.0
 

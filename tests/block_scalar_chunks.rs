@@ -132,6 +132,22 @@ fn more_indented_lines_blank_lines_and_tabs_preserve_folding_boundaries() {
 }
 
 #[test]
+fn indentation_only_last_line_at_eof_adds_no_line_break() {
+    // The final "  " has no line break, so it is not an empty line of the scalar: the result is
+    // the same as without it.
+    for indicator in ['|', '>'] {
+        for (chomp, expected) in [("-", "a"), ("", "a\n"), ("+", "a\n")] {
+            for tail in [" ", "  "] {
+                let source = format!("{indicator}{chomp}\n  a\n{tail}");
+                let events = parse_all_inputs(&source);
+                let (value, _, _) = block_scalar(&events);
+                assert_eq!(value, expected, "{source:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn unterminated_final_lines_preserve_short_boundaries_and_chomping() {
     for length in [1, 7, 8, 15, 16, 31, 32, 127, 128, 4096] {
         let contents = format!("{}é🦀", "x".repeat(length));
