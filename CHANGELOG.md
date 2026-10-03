@@ -24,6 +24,8 @@
   (`|\n  a\n  `) no longer gains an extra line break (`"a\n\n"`, now `"a\n"`).
 - The `SequenceEnd` span of an indentless sequence (`key:\n- a`) is empty at the next token,
   instead of covering that token (`? ` of the next key).
+- Accept tabs after an explicit key indicator `?` inside flow collections (`{?\ta: b}`); the
+  tab check only applies in block context, where a tab there would indent the key.
 
 ## 1.4.0
 

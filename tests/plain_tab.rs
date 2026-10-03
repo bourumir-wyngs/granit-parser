@@ -60,6 +60,27 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
 }
 
 #[test]
+fn tabs_separate_explicit_keys_in_flow_collections() {
+    // A tab after `?` is only rejected in block context, where it would indent the key node.
+    // Flow collections have no indentation; tabs there are ordinary s-white separation.
+    for separator in ["\t", " \t", "\t ", "\n\t"] {
+        for (yaml, expected) in [
+            (format!("{{?{separator}a: b}}"), vec!["a", "b"]),
+            (format!("[?{separator}a]"), vec!["a", "~"]),
+            (format!("{{?{separator}}}"), vec!["~", "~"]),
+        ] {
+            assert_eq!(
+                collect_scalars(&yaml).unwrap_or_else(|e| panic!("{yaml:?}: {e}")),
+                expected,
+                "input: {yaml:?}",
+            );
+        }
+    }
+    // Block context is unchanged.
+    assert!(collect_events("?\tkey\n: value\n").is_err());
+}
+
+#[test]
 fn tabs_after_colons_preserve_value_and_comment_parsing() {
     for (yaml, expected) in [
         ("key:\t\"value\"\n", "value"),

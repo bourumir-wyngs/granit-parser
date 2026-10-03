@@ -4194,11 +4194,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
-        let stopped_after_comment = self.skip_yaml_whitespace()?;
-        if self.input.peek() == '\t' {
-            return Err(self.scan_error(ErrorKind::TabNotAllowed));
+        // A tab after a block `?` would be indentation for the key node. In a flow collection
+        // there is no indentation and tabs are ordinary separation white space (s-white), which
+        // the next token fetch skips.
+        if self.flow_level == 0 {
+            let stopped_after_comment = self.skip_yaml_whitespace()?;
+            if self.input.peek() == '\t' {
+                return Err(self.scan_error(ErrorKind::TabNotAllowed));
+            }
+            self.explicit_key_tab_check_pending = stopped_after_comment;
         }
-        self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
             token_index,
             Token(Span::new(start_mark, end_mark), TokenType::Key),
