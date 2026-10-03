@@ -8,8 +8,8 @@ edition = "2021"
 cargo-fuzz = true
 
 [features]
-default = ["parser-comments"]
-parser-comments = ["granit-parser/parser-comments"]
+default = ["comments"]
+comments = ["granit-parser/comments"]
 
 [dependencies]
 libfuzzer-sys = "0.4"

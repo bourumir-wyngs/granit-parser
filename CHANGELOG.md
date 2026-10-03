@@ -2,6 +2,7 @@
 
 ## Unreleased (breaking API changes)
 
+- Renamed the default-enabled `parser-comments` Cargo feature to `comments`.
 - Made `Span` non-exhaustive so future releases can add source metadata. Construct spans with
   `Span::new`, `Span::empty`, or `Span::default`, use the metadata builders or field assignment,
   and include `..` when destructuring. External struct literals and struct-update syntax are

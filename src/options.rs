@@ -36,7 +36,7 @@ pub struct Options {
     /// as YAML syntax, but their text is not captured and no comment tokens or events are emitted.
     /// Comment bytes are still consumed, so this is not an input-size or processing-time limit.
     /// [`Self::max_buffered_comment_events`] has no effect while comment emission is disabled.
-    /// Without the `parser-comments` Cargo feature, [`crate::Parser`] and [`crate::ParserStack`]
+    /// Without the `comments` Cargo feature, [`crate::Parser`] and [`crate::ParserStack`]
     /// always suppress comment events, even when this option is `true`. Standalone scanners
     /// continue to honor this option in either feature configuration.
     pub emit_comments: bool,

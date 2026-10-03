@@ -128,8 +128,9 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         Event::StreamEnd,
                     ]
                     .into_iter()
-                    .filter(|event| cfg!(feature = "parser-comments")
-                        || !matches!(event, Event::Comment(..)))
+                    .filter(
+                        |event| cfg!(feature = "comments") || !matches!(event, Event::Comment(..))
+                    )
                     .collect::<Vec<_>>(),
                     "input: {yaml:?}",
                 );

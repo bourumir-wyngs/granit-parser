@@ -31,8 +31,8 @@ exclude = [
 ]
 
 [features]
-default = ["error_messages", "std", "parser-comments"]
-parser-comments = []
+default = ["error_messages", "std", "comments"]
+comments = []
 error_messages = []
 std = []
 debug_prints = ["std"]

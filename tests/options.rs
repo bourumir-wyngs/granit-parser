@@ -90,7 +90,7 @@ fn common_input_constructors_accept_options() {
 }
 
 #[test]
-#[cfg(feature = "parser-comments")]
+#[cfg(feature = "comments")]
 fn buffered_comment_limit_can_be_raised() {
     let default_limit = Options::default().max_buffered_comment_events;
     let raised_limit = default_limit + 1;
@@ -124,7 +124,7 @@ fn buffered_comment_limit_can_be_raised() {
 }
 
 #[test]
-#[cfg(feature = "parser-comments")]
+#[cfg(feature = "comments")]
 fn buffered_comment_limit_honors_lower_and_zero_boundaries() {
     let one_comment = "key: # one\nnext: value\n";
     let options = granit_parser::options! {
@@ -153,7 +153,7 @@ fn buffered_comment_limit_honors_lower_and_zero_boundaries() {
 }
 
 #[test]
-#[cfg(feature = "parser-comments")]
+#[cfg(feature = "comments")]
 fn zero_comment_limit_still_precedes_indentless_sequence_start() {
     let options = granit_parser::options! {
         max_buffered_comment_events: 0,

@@ -47,7 +47,7 @@ jobs:
       - name: Check library for no_std target
         run: cargo check --lib --no-default-features --target wasm32v1-none
       - name: Check parser comments for no_std target
-        run: cargo check --lib --no-default-features --features parser-comments --target wasm32v1-none
+        run: cargo check --lib --no-default-features --features comments --target wasm32v1-none
 
   test:
     name: Test using Rust ${{ matrix.rust }} on ${{ matrix.os }}

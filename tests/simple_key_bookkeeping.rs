@@ -162,7 +162,7 @@ fn missing_required_keys_keep_error_marker_and_preceding_event_timing() {
                 "comment: ready"
             ]
             .into_iter()
-            .filter(|event| cfg!(feature = "parser-comments") || !event.starts_with("comment:"))
+            .filter(|event| cfg!(feature = "comments") || !event.starts_with("comment:"))
             .collect::<Vec<_>>()
         );
     }
@@ -204,7 +204,7 @@ fn comments_and_document_markers_preserve_event_order() {
             expected
                 .iter()
                 .copied()
-                .filter(|event| (cfg!(feature = "parser-comments") && emit_comments)
+                .filter(|event| (cfg!(feature = "comments") && emit_comments)
                     || !event.starts_with("comment:"))
                 .collect::<Vec<_>>()
         );

@@ -80,7 +80,7 @@ fn default_stack_comment_emission_matches_compiled_feature() {
     );
 
     let first = stack.next_event().unwrap().unwrap().0;
-    if cfg!(feature = "parser-comments") {
+    if cfg!(feature = "comments") {
         assert!(matches!(first, Event::Comment(ref text, _) if text == " replay"));
     } else {
         assert!(matches!(first, Event::StreamEnd));
@@ -116,7 +116,7 @@ fn no_comments_stack_suppresses_replayed_events() {
 }
 
 #[test]
-#[cfg(feature = "parser-comments")]
+#[cfg(feature = "comments")]
 fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(

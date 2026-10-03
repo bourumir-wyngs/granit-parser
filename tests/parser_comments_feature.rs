@@ -1,4 +1,4 @@
-#![cfg(not(feature = "parser-comments"))]
+#![cfg(not(feature = "comments"))]
 
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser, ParserStack,

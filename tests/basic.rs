@@ -67,7 +67,7 @@ fn collection_styles(input: &str) -> Vec<(&'static str, StructureStyle)> {
 fn expected_events<'input>(events: impl IntoIterator<Item = Event<'input>>) -> Vec<Event<'input>> {
     events
         .into_iter()
-        .filter(|event| cfg!(feature = "parser-comments") || !matches!(event, Event::Comment(..)))
+        .filter(|event| cfg!(feature = "comments") || !matches!(event, Event::Comment(..)))
         .collect()
 }
 

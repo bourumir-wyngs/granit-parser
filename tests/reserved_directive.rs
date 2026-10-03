@@ -76,7 +76,7 @@ fn reserved_directive_separated_comments_are_emitted_after_parameters() {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        if cfg!(feature = "parser-comments") {
+        if cfg!(feature = "comments") {
             assert_eq!(comments, [(comment_text, tokens[2].span())]);
         } else {
             assert!(comments.is_empty());

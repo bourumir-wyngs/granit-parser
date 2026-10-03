@@ -202,7 +202,7 @@ fn assert_parser_prefix<'input, T>(
     assert_eq!(disabled_events, enabled_events, "{context}");
     assert_eq!(
         enabled_comments > 0,
-        cfg!(feature = "parser-comments"),
+        cfg!(feature = "comments"),
         "{context}: parser comment emission must match the compiled feature"
     );
     assert_eq!(disabled_comments, 0, "{context}");
@@ -308,7 +308,7 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
 
     let mut enabled = parse_str(yaml, Options::default())
         .expect("leading document end and comment should not open a document");
-    if cfg!(feature = "parser-comments") {
+    if cfg!(feature = "comments") {
         assert!(matches!(
             enabled.as_slice(),
             [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
@@ -340,7 +340,7 @@ fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
 
         assert_eq!(
             enabled_comments,
-            usize::from(cfg!(feature = "parser-comments")),
+            usize::from(cfg!(feature = "comments")),
             "{context}"
         );
         assert_eq!(disabled_comments, 0, "{context}");
@@ -395,7 +395,7 @@ fn disabled_comments_preserve_non_comment_event_spans() {
             enabled
                 .iter()
                 .any(|(event, _)| matches!(event, Event::Comment(..))),
-            cfg!(feature = "parser-comments"),
+            cfg!(feature = "comments"),
             "parser comment emission must match the compiled feature: {yaml:?}"
         );
         enabled.retain(|(event, _)| !matches!(event, Event::Comment(..)));
@@ -432,7 +432,7 @@ fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
 
         assert_eq!(
             enabled_comments > 0,
-            cfg!(feature = "parser-comments"),
+            cfg!(feature = "comments"),
             "parser comment emission must match the compiled feature: {name}"
         );
         assert_eq!(disabled_comments, 0, "{name}");

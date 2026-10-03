@@ -161,7 +161,7 @@ where
 ///
 /// By default, included parser events, including [`Event::Comment`] events, are replayed through
 /// the same event stream as parent events. Comment events are suppressed when comment emission is
-/// disabled through [`ParserStack::with_options`] or the `parser-comments` Cargo feature is absent.
+/// disabled through [`ParserStack::with_options`] or the `comments` Cargo feature is absent.
 /// Included [`Span`] values remain local to the
 /// included source, just like every other event span from an included parser. `ParserStack` does
 /// not attach file names, source IDs, or other include provenance to events or spans. Errors do
@@ -200,7 +200,7 @@ where
     /// streams supplied by the caller. Caller-supplied parsers retain their own scanning options;
     /// construct them with comment emission disabled as well to avoid capturing comments before
     /// the stack filters their events.
-    /// Without the `parser-comments` Cargo feature, all comment events are suppressed regardless
+    /// Without the `comments` Cargo feature, all comment events are suppressed regardless
     /// of the supplied options, including events supplied by replay parsers.
     #[must_use]
     pub fn with_options(options: Options) -> Self {
@@ -389,7 +389,7 @@ where
             parser.set_anchor_offset(parent.anchor_offset());
         }
         self.parsers.push(AnyParser::Custom { parser, name });
-        self.current = if (cfg!(feature = "parser-comments") && self.options.emit_comments)
+        self.current = if (cfg!(feature = "comments") && self.options.emit_comments)
             || !matches!(current.0, Event::Comment(..))
         {
             Some(current)
@@ -513,7 +513,7 @@ where
                     self.pending_document_ends.push((self.parsers.len(), span));
                 }
                 Some(Ok(event)) => {
-                    if (!cfg!(feature = "parser-comments") || !self.options.emit_comments)
+                    if (!cfg!(feature = "comments") || !self.options.emit_comments)
                         && matches!(event.0, Event::Comment(..))
                     {
                         continue;

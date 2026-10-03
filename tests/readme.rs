@@ -64,7 +64,7 @@ fn minimal_example_output_matches_readme() {
     let yaml = extract_yaml_input(section);
     let expected = extract_expected_output(section)
         .lines()
-        .filter(|line| cfg!(feature = "parser-comments") || !line.starts_with("Comment("))
+        .filter(|line| cfg!(feature = "comments") || !line.starts_with("Comment("))
         .collect::<Vec<_>>()
         .join("\n");
     let actual =

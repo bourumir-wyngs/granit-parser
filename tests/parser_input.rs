@@ -178,7 +178,7 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
     let comment_pos = events
         .iter()
         .position(|event| matches!(event, Event::Comment(text, _) if text == " note"));
-    assert_eq!(comment_pos.is_some(), cfg!(feature = "parser-comments"));
+    assert_eq!(comment_pos.is_some(), cfg!(feature = "comments"));
     if let Some(comment_pos) = comment_pos {
         // The explicit `?` key inside a flow sequence opens a single-pair mapping.
         assert!(matches!(

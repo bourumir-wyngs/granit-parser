@@ -241,7 +241,7 @@ This parser supports explicit handling for JSON-style Unicode surrogate pairs in
 * Comment handling
   If your application does not use comment parsing, it is possible to improve performance by disabling comment
   emission. This can be done the best way by both setting `Options::emit_comments` to `false` and disabling the 
-  `parser-comments` Cargo feature. Comments can still be present in YAML, they are not emitted.  
+  `comments` Cargo feature. Comments can still be present in YAML, they are not emitted.
 
 ### Internal extensions
 

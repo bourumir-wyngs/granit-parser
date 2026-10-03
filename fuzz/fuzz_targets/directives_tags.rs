@@ -149,7 +149,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
             .iter()
             .filter(|(event, _)| matches!(event, Event::Comment(..)))
             .count(),
-        usize::from(cfg!(feature = "parser-comments") && options.emit_comments),
+        usize::from(cfg!(feature = "comments") && options.emit_comments),
     );
     assert_eq!(
         events

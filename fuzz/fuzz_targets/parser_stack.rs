@@ -110,7 +110,7 @@ pub fn check_input(data: &[u8]) {
                     next_checked(&mut stack, peek).unwrap().unwrap().0,
                     scalar("middle")
                 );
-                if cfg!(feature = "parser-comments") && emit_comments {
+                if cfg!(feature = "comments") && emit_comments {
                     // Suspend the middle source after its DocumentEnd has been consumed,
                     // leaving its trailing-comment validation pending during the child.
                     assert_eq!(
@@ -122,7 +122,7 @@ pub fn check_input(data: &[u8]) {
             push_child(&mut stack, backend, &source);
 
             for event in expected.iter().filter(|event| {
-                (cfg!(feature = "parser-comments") && emit_comments)
+                (cfg!(feature = "comments") && emit_comments)
                     || !matches!(event, Event::Comment(..))
             }) {
                 let (actual, _) = next_checked(&mut stack, peek)
