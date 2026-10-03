@@ -99,11 +99,15 @@ pub fn check_comment_suppression(input: &str) {
     // Prevent the enabled parser from failing at the buffered-comment resource limit. That limit
     // intentionally does not apply when comment emission is disabled.
     let with_comments = granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: true,
+        #[cfg(feature = "comments")]
         max_buffered_comment_events: usize::MAX,
     };
     let without_comments = granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: false,
+        #[cfg(feature = "comments")]
         max_buffered_comment_events: usize::MAX,
     };
 
@@ -121,7 +125,7 @@ pub fn check_comment_suppression(input: &str) {
     let parser_non_comments: Vec<_> = parser_with
         .items
         .into_iter()
-        .filter(|(event, _)| !matches!(event, Event::Comment(..)))
+        .filter(|(event, _)| !is_comment_event(event))
         .collect();
     assert_eq!(
         parser_non_comments, parser_without.items,
@@ -143,7 +147,7 @@ pub fn check_comment_suppression(input: &str) {
     let scanner_non_comments: Vec<_> = scanner_with
         .items
         .into_iter()
-        .filter(|token| !matches!(token.token_type(), TokenType::Comment(_)))
+        .filter(|token| !is_comment_token(token.token_type()))
         .collect();
     assert_eq!(
         scanner_non_comments, scanner_without.items,
@@ -309,7 +313,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
             }
             Event::DocumentStart(..) => {
                 assert!(!document_open, "nested DocumentStart event");
-                assert!(collections.is_empty());
+                assert_eq!(collections, Vec::<Collection>::new());
                 document_open = true;
                 anchors.clear();
             }
@@ -404,4 +408,39 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         usize::from(complete),
         "scanner must emit StreamEnd exactly once on success and never before an error"
     );
+}
+
+pub fn is_comment_event(event: &Event<'_>) -> bool {
+    #[cfg(feature = "comments")]
+    {
+        matches!(event, Event::Comment(..))
+    }
+    #[cfg(not(feature = "comments"))]
+    {
+        let _ = event;
+        false
+    }
+}
+
+pub fn is_comment_token(token: &TokenType<'_>) -> bool {
+    #[cfg(feature = "comments")]
+    {
+        matches!(token, TokenType::Comment(_))
+    }
+    #[cfg(not(feature = "comments"))]
+    {
+        let _ = token;
+        false
+    }
+}
+
+pub fn comment_modes() -> &'static [bool] {
+    #[cfg(feature = "comments")]
+    {
+        &[true, false]
+    }
+    #[cfg(not(feature = "comments"))]
+    {
+        &[false]
+    }
 }

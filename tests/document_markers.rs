@@ -1,4 +1,7 @@
-use granit_parser::{Event, Parser, Placement, ScalarStyle, ScanError, Span};
+mod support;
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
+use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span};
 
 /// Run the parser through the string.
 ///
@@ -122,11 +125,15 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         Event::Scalar(format!("{body}{tail}").into(), style, 0, None),
                         Event::DocumentEnd,
                         Event::DocumentStart(true, None),
+                        #[cfg(feature = "comments")]
                         Event::Comment(" next document".into(), Placement::Right),
                         Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
                         Event::DocumentEnd,
                         Event::StreamEnd,
-                    ],
+                    ]
+                    .into_iter()
+                    .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
+                    .collect::<Vec<_>>(),
                     "input: {yaml:?}",
                 );
 

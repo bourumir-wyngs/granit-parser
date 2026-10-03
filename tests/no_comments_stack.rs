@@ -1,17 +1,21 @@
-use granit_parser::{
-    Event, Marker, Options, Parser, ParserStack, ParserTrait, Placement, ReplayParser, ScalarStyle,
-    Span, StrInput,
-};
-use std::{borrow::Cow, boxed::Box, vec::Vec};
+mod support;
+use granit_parser::{Event, Options, Parser, ParserStack, Span, StrInput};
+#[cfg(feature = "comments")]
+use granit_parser::{Marker, ParserTrait, Placement, ReplayParser, ScalarStyle};
+#[cfg(feature = "comments")]
+use std::borrow::Cow;
+use std::{boxed::Box, vec::Vec};
 
 type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
 
 fn no_comment_options() -> Options {
     granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: false,
     }
 }
 
+#[cfg(feature = "comments")]
 fn span() -> Span {
     Span::empty(Marker::new(0, 1, 0))
 }
@@ -31,7 +35,7 @@ fn assert_has_no_comments(events: &[(Event<'_>, Span)]) {
     assert!(
         events
             .iter()
-            .all(|(event, _)| !matches!(event, Event::Comment(..))),
+            .all(|(event, _)| !support::is_comment_event(event)),
         "comment event escaped a no-comments parser stack"
     );
 }
@@ -63,7 +67,8 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
 }
 
 #[test]
-fn default_stack_preserves_replayed_comments() {
+#[cfg(feature = "comments")]
+fn default_stack_emits_replayed_comments() {
     let mut stack = Stack::new();
     stack.push_replay_parser(
         ReplayParser::new(
@@ -84,6 +89,7 @@ fn default_stack_preserves_replayed_comments() {
 }
 
 #[test]
+#[cfg(feature = "comments")]
 fn no_comments_stack_suppresses_replayed_events() {
     let mut stack = Stack::with_options(no_comment_options());
     stack.push_replay_parser(
@@ -112,6 +118,7 @@ fn no_comments_stack_suppresses_replayed_events() {
 }
 
 #[test]
+#[cfg(feature = "comments")]
 fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(
@@ -188,6 +195,7 @@ fn suppressed_custom_comment_after_nested_document_end_is_not_a_second_document(
 }
 
 #[test]
+#[cfg(feature = "comments")]
 fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document() {
     let mut stack = stack_with_parent();
     stack.push_replay_parser(

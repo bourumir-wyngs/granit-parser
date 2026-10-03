@@ -3,9 +3,13 @@
 //! These tests target scattered error paths and default trait implementations that the
 //! regular test suite does not reach.
 
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
+
 use granit_parser::{
-    input::SkipTabs, BufferedInput, ErrorKind, Event, Input, Parser, Placement, ScanError,
-    StrInput, TryEventReceiver, TryLoadError,
+    input::{SkipTabs, WhitespaceResult},
+    BufferedInput, ErrorKind, Event, Input, Parser, ScanError, StrInput, TryEventReceiver,
+    TryLoadError,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -77,8 +81,7 @@ fn buffered_default_skip_ws_to_eol_consumes_blanks_and_comment() {
     // 2 spaces + 1 tab + 1 space + '#' + " note" (5 chars) = 10 characters.
     assert_eq!(consumed, 10);
     let skipped = result.expect("whitespace with a comment must be accepted");
-    assert!(skipped.found_tabs());
-    assert!(skipped.has_valid_yaml_ws());
+    assert_eq!(skipped, WhitespaceResult::new(true, true));
     // The line break must not be consumed.
     assert_eq!(input.look_ch(), '\n');
 }
@@ -106,8 +109,7 @@ fn buffered_default_skip_ws_to_eol_stops_at_tab_when_tabs_disallowed() {
 
     assert_eq!(consumed, 0);
     let skipped = result.expect("stopping at a tab is not an error");
-    assert!(!skipped.found_tabs());
-    assert!(!skipped.has_valid_yaml_ws());
+    assert_eq!(skipped, WhitespaceResult::new(false, false));
     assert_eq!(input.look_ch(), '\t');
 }
 
@@ -145,8 +147,7 @@ fn str_input_skip_ws_to_eol_blanks_stops_before_tab_when_tabs_disallowed() {
     let (consumed, skipped) = input.skip_ws_to_eol_blanks(SkipTabs::No);
 
     assert_eq!(consumed, 2);
-    assert!(!skipped.found_tabs());
-    assert!(skipped.has_valid_yaml_ws());
+    assert_eq!(skipped, WhitespaceResult::new(false, true));
     assert_eq!(input.look_ch(), '\t');
 }
 
@@ -177,28 +178,35 @@ fn stray_flow_entry_in_block_mapping_value_reports_block_mapping_error() {
 fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
     let events = parse_events("[? a : # note\n b]\n").unwrap();
 
-    let comment_pos = events
-        .iter()
-        .position(|event| matches!(event, Event::Comment(text, _) if text == " note"))
-        .expect("expected the inline comment event");
-    // The explicit `?` key inside a flow sequence opens a single-pair mapping.
-    assert!(matches!(
-        events[comment_pos - 2],
-        Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None)
-    ));
-    // The comment is emitted between the key and the value of the explicit pair.
-    assert!(matches!(
-        events[comment_pos - 1],
-        Event::Scalar(ref value, ..) if value == "a"
-    ));
-    assert!(matches!(
-        events[comment_pos + 1],
-        Event::Scalar(ref value, ..) if value == "b"
-    ));
-    assert!(matches!(
-        events[comment_pos],
-        Event::Comment(_, Placement::Right)
-    ));
+    #[cfg(not(feature = "comments"))]
+    assert!(events.windows(3).any(|events| matches!(
+        events,
+        [Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None), Event::Scalar(key, ..), Event::Scalar(value, ..)]
+            if key == "a" && value == "b"
+    )));
+    #[cfg(feature = "comments")]
+    {
+        let comment_pos = events
+            .iter()
+            .position(|event| matches!(event, Event::Comment(text, _) if text == " note"))
+            .expect("the comment between the key and value must be emitted");
+        assert!(matches!(
+            events[comment_pos - 2],
+            Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None)
+        ));
+        assert!(matches!(
+            events[comment_pos - 1],
+            Event::Scalar(ref value, ..) if value == "a"
+        ));
+        assert!(matches!(
+            events[comment_pos + 1],
+            Event::Scalar(ref value, ..) if value == "b"
+        ));
+        assert!(matches!(
+            events[comment_pos],
+            Event::Comment(_, Placement::Right)
+        ));
+    }
 }
 
 // --- parser.rs: `try_load` returning an error buffered by `peek`

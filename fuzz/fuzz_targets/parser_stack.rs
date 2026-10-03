@@ -1,10 +1,17 @@
 #![cfg_attr(not(test), no_main)]
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
+
+#[cfg(not(test))]
+mod common;
+#[cfg(test)]
+use crate::common;
 
 use std::fmt::Write;
 
 use granit_parser::{
-    ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, Placement, ReplayParser,
-    ScalarStyle, ScanError, Span, StrInput,
+    ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, ScalarStyle,
+    ScanError, Span, StrInput,
 };
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
@@ -22,6 +29,10 @@ fuzz_target!(|data: &[u8]| check_input(data));
 ///
 /// Every generated source is checked against explicit scalar/comment/error expectations, with
 /// comments both enabled and disabled and with both direct reads and repeated peeks.
+///
+/// # Panics
+/// Panics if a generated source cannot be prepared or parser-stack events, errors, comment
+/// placement, or repeated peeks violate the independent expectations.
 #[allow(clippy::too_many_lines)] // Keep each generated source and its independent oracle together.
 pub fn check_input(data: &[u8]) {
     if data.len() > 512 {
@@ -51,6 +62,7 @@ pub fn check_input(data: &[u8]) {
     let mut source = format!("child{newline}... # tail {payload}{newline}");
     let mut expected = vec![
         scalar("child"),
+        #[cfg(feature = "comments")]
         Event::Comment(format!(" tail {payload}").into(), Placement::Right),
     ];
     for index in 0..comment_count {
@@ -58,6 +70,7 @@ pub fn check_input(data: &[u8]) {
         source.push('#');
         source.push_str(&text);
         source.push_str(newline);
+        #[cfg(feature = "comments")]
         expected.push(Event::Comment(
             text.into(),
             // Placement::Last requires no further token before StreamEnd. A following
@@ -94,9 +107,10 @@ pub fn check_input(data: &[u8]) {
         }
     };
 
-    for emit_comments in [true, false] {
+    for &emit_comments in common::comment_modes() {
         for peek in [false, true] {
             let mut stack = Stack::with_options(granit_parser::options! {
+                #[cfg(feature = "comments")]
                 emit_comments: emit_comments,
             });
             stack.push_str_parser(Parser::new_from_str(PARENT), "parent.yaml".into());
@@ -106,6 +120,7 @@ pub fn check_input(data: &[u8]) {
                     next_checked(&mut stack, peek).unwrap().unwrap().0,
                     scalar("middle")
                 );
+                #[cfg(feature = "comments")]
                 if emit_comments {
                     // Suspend the middle source after its DocumentEnd has been consumed,
                     // leaving its trailing-comment validation pending during the child.
@@ -117,10 +132,9 @@ pub fn check_input(data: &[u8]) {
             }
             push_child(&mut stack, backend, &source);
 
-            for event in expected
-                .iter()
-                .filter(|event| emit_comments || !matches!(event, Event::Comment(..)))
-            {
+            for event in expected.iter().filter(|event| {
+                (cfg!(feature = "comments") && emit_comments) || !common::is_comment_event(event)
+            }) {
                 let (actual, _) = next_checked(&mut stack, peek)
                     .expect("generated source ended before its expected events")
                     .expect("generated source failed before its expected events");
@@ -145,7 +159,7 @@ pub fn check_input(data: &[u8]) {
                 sources.pop();
                 assert_eq!(stack.stack(), sources);
             } else {
-                assert!(stack.stack().is_empty());
+                assert_eq!(stack.stack(), Vec::<String>::new());
             }
             for _ in 0..3 {
                 assert!(stack.next_event().is_none(), "stack did not fuse");
