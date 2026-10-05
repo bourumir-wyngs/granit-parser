@@ -1,8 +1,9 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser::{
-    Event, Parser, Placement, ScalarStyle, ScanError, StructureStyle, YamlVersion,
-};
+mod support;
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
+use granit_parser::{Event, Parser, ScalarStyle, ScanError, StructureStyle, YamlVersion};
 
 /// Run the parser through the string.
 ///
@@ -61,6 +62,13 @@ fn collection_styles(input: &str) -> Vec<(&'static str, StructureStyle)> {
             Event::MappingStart(style, ..) => Some(("mapping", style)),
             _ => None,
         })
+        .collect()
+}
+
+fn expected_events<'input>(events: impl IntoIterator<Item = Event<'input>>) -> Vec<Event<'input>> {
+    events
+        .into_iter()
+        .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
         .collect()
 }
 
@@ -169,20 +177,24 @@ a: b # This is another comment
 
     assert_eq!(
         run_parser(s).unwrap(),
-        [
+        expected_events([
             Event::StreamStart,
+            #[cfg(feature = "comments")]
             Event::Comment(" This is a comment".into(), Placement::Above),
             Event::DocumentStart(false, None),
             Event::MappingStart(StructureStyle::Block, 0, None),
             Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
             Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+            #[cfg(feature = "comments")]
             Event::Comment(" This is another comment".into(), Placement::Right),
+            #[cfg(feature = "comments")]
             Event::Comment("#".into(), Placement::Above),
+            #[cfg(feature = "comments")]
             Event::Comment("".into(), Placement::Above),
             Event::MappingEnd,
             Event::DocumentEnd,
             Event::StreamEnd,
-        ]
+        ])
     );
 }
 
@@ -323,15 +335,17 @@ foobar";
 
     assert_eq!(
         run_parser(s).unwrap(),
-        [
+        expected_events([
             Event::StreamStart,
+            #[cfg(feature = "comments")]
             Event::Comment(" This is a comment".into(), Placement::Above),
             Event::DocumentStart(true, Some(YamlVersion::new(1, 2))),
+            #[cfg(feature = "comments")]
             Event::Comment("-------".into(), Placement::Right),
             Event::Scalar("foobar".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
-        ]
+        ])
     );
 }
 
@@ -407,26 +421,28 @@ fn test_bad_docstart() {
 
     assert_eq!(
         run_parser("--- #comment").unwrap(),
-        [
+        expected_events([
             Event::StreamStart,
             Event::DocumentStart(true, None),
+            #[cfg(feature = "comments")]
             Event::Comment("comment".into(), Placement::Right),
             Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
             Event::DocumentEnd,
             Event::StreamEnd,
-        ]
+        ])
     );
 
     assert_eq!(
         run_parser("---- #comment").unwrap(),
-        [
+        expected_events([
             Event::StreamStart,
             Event::DocumentStart(false, None),
             Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
+            #[cfg(feature = "comments")]
             Event::Comment("comment".into(), Placement::Right),
             Event::DocumentEnd,
             Event::StreamEnd,
-        ]
+        ])
     );
 }
 

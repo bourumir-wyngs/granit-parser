@@ -8,15 +8,11 @@
 /// ```rust
 /// let options = granit_parser::options! {
 ///     strict_indentation: true,
-///     max_buffered_comment_events: 64,
-///     emit_comments: false,
 ///     flow_nesting_limit: 512,
 ///     block_nesting_limit: 256,
 /// };
 ///
 /// assert!(options.strict_indentation);
-/// assert_eq!(options.max_buffered_comment_events, 64);
-/// assert!(!options.emit_comments);
 /// assert_eq!(options.flow_nesting_limit, 512);
 /// assert_eq!(options.block_nesting_limit, 256);
 /// ```
@@ -36,11 +32,15 @@ pub struct Options {
     /// as YAML syntax, but their text is not captured and no comment tokens or events are emitted.
     /// Comment bytes are still consumed, so this is not an input-size or processing-time limit.
     /// [`Self::max_buffered_comment_events`] has no effect while comment emission is disabled.
+    /// This option is available only with the `comments` Cargo feature.
+    #[cfg(feature = "comments")]
     pub emit_comments: bool,
     /// Maximum number of consecutive comment events buffered while resolving an ambiguous
     /// collection entry.
     ///
     /// The default is 96. A value of zero rejects the first comment that would need buffering.
+    /// This option is available only with the `comments` Cargo feature.
+    #[cfg(feature = "comments")]
     pub max_buffered_comment_events: usize,
     /// Maximum number of characters inspected while resolving a simple key.
     ///
@@ -77,7 +77,9 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             strict_indentation: false,
+            #[cfg(feature = "comments")]
             emit_comments: true,
+            #[cfg(feature = "comments")]
             max_buffered_comment_events: 96,
             simple_key_max_lookahead: 1024,
             flow_nesting_limit: 255,

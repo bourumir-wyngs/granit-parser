@@ -24,7 +24,7 @@ use crate::{
         is_z,
     },
     error::{ErrorKind, ScanError},
-    input::{BorrowedInput, SkipTabs},
+    input::{BorrowedInput, SkipTabs, WhitespaceResult},
     Options,
 };
 
@@ -136,6 +136,43 @@ impl Marker {
 }
 
 /// A range of locations in a YAML document.
+///
+/// Construct spans with [`Self::new`], [`Self::empty`], or [`Self::default`], then use
+/// [`Self::with_indent`] and [`Self::with_tag_start`] to attach optional metadata. Fields remain
+/// readable and writable, but the type is non-exhaustive so future releases can add metadata.
+/// Destructuring patterns must include `..`.
+///
+/// ```rust
+/// use granit_parser::{Marker, Span};
+///
+/// let start = Marker::new(0, 1, 0);
+/// let end = Marker::new(3, 1, 3);
+/// let span = Span::new(start, end)
+///     .with_indent(Some(0))
+///     .with_tag_start(Some(start));
+/// let Span { start: actual_start, end: actual_end, .. } = span;
+/// assert_eq!(actual_start, start);
+/// assert_eq!(actual_end, end);
+/// assert_eq!(span.indent, Some(0));
+/// ```
+///
+/// Direct struct construction outside this crate is not supported:
+///
+/// ```compile_fail,E0639
+/// use granit_parser::{Marker, Span};
+///
+/// let marker = Marker::new(0, 1, 0);
+/// let span = Span { start: marker, end: marker, indent: None, tag_start: None };
+/// ```
+///
+/// Struct-update syntax is likewise unavailable; use the builders or assign individual fields:
+///
+/// ```compile_fail,E0639
+/// use granit_parser::{Marker, Span};
+///
+/// let span = Span { indent: Some(2), ..Span::empty(Marker::new(0, 1, 0)) };
+/// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
 pub struct Span {
     /// The start (inclusive) of the range.
@@ -264,6 +301,7 @@ impl Span {
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
+#[cfg(feature = "comments")]
 pub enum Placement {
     /// An own-line comment immediately before another YAML token.
     ///
@@ -293,6 +331,7 @@ pub enum Placement {
 /// Comments are presentation metadata, not YAML data. This type carries the raw comment payload and
 /// a best-effort [`Placement`] hint. The companion [`Token`] carries the comment's source span.
 #[derive(Clone, PartialEq, Debug, Eq)]
+#[cfg(feature = "comments")]
 pub struct Comment<'input> {
     /// Raw comment payload exactly after `#`, excluding only the line break.
     ///
@@ -302,6 +341,7 @@ pub struct Comment<'input> {
     placement: Placement,
 }
 
+#[cfg(feature = "comments")]
 impl<'input> Comment<'input> {
     /// Create captured YAML comment metadata from a raw payload.
     ///
@@ -349,6 +389,7 @@ impl<'input> Comment<'input> {
     }
 }
 
+#[cfg(feature = "comments")]
 impl AsRef<str> for Comment<'_> {
     fn as_ref(&self) -> &str {
         self.text.as_ref()
@@ -425,6 +466,7 @@ pub enum TokenType<'input> {
     /// The token payload carries the raw text exactly after `#` and an initial [`Placement`] hint.
     /// The companion [`Token`] span covers the whole source comment, including `#` and excluding the
     /// line break.
+    #[cfg(feature = "comments")]
     Comment(
         /// Captured comment metadata.
         Comment<'input>,
@@ -494,6 +536,7 @@ pub(crate) enum QueuedTokenType<'input> {
     Anchor(Cow<'input, str>),
     Tag(Cow<'input, str>, Cow<'input, str>),
     Scalar(ScalarStyle, Cow<'input, str>),
+    #[cfg(feature = "comments")]
     Comment(Comment<'input>),
     ReservedDirective(String, Vec<String>),
 }
@@ -522,6 +565,7 @@ impl<'input> QueuedTokenType<'input> {
             Self::Anchor(name) => TokenType::Anchor(name),
             Self::Tag(handle, suffix) => TokenType::Tag(handle, suffix),
             Self::Scalar(style, value) => TokenType::Scalar(style, value),
+            #[cfg(feature = "comments")]
             Self::Comment(comment) => TokenType::Comment(comment),
             Self::ReservedDirective(name, params) => TokenType::ReservedDirective(name, params),
         }
@@ -552,6 +596,7 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
             TokenType::Anchor(name) => Self::Anchor(name),
             TokenType::Tag(handle, suffix) => Self::Tag(handle, suffix),
             TokenType::Scalar(style, value) => Self::Scalar(style, value),
+            #[cfg(feature = "comments")]
             TokenType::Comment(comment) => Self::Comment(comment),
             TokenType::ReservedDirective(name, params) => Self::ReservedDirective(name, params),
         }
@@ -746,12 +791,14 @@ pub struct Scanner<'input, T> {
     /// Whether a terminal error has been emitted by the iterator.
     failed: bool,
     /// Error found after one or more already-scanned comment tokens.
+    #[cfg(feature = "comments")]
     deferred_error: Option<ScanError>,
     /// Whether the input may contain `#` comment indicators.
     ///
     /// This remains a source-content hint when comment emission is disabled. In that mode it is
     /// conservatively set to `true`, because the `false` fast path may only be used when the
     /// source is known not to contain comments.
+    #[cfg(feature = "comments")]
     comments_possible: bool,
 
     /// Whether we have already emitted the `StreamStart` token.
@@ -870,6 +917,7 @@ type ScanResult = Result<(), ScanError>;
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct SkipToNextTokenOutcome {
     saw_comment: bool,
+    #[cfg(feature = "comments")]
     queued_comment: bool,
 }
 
@@ -1224,16 +1272,19 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Self::with_options(input, Options::default())
     }
 
-    /// Create a scanner over the given input source with configurable resource limits and comment
-    /// emission behavior.
-    ///
-    /// [`Options::max_buffered_comment_events`] has no effect when using a scanner directly,
-    /// because comment-event buffering is performed by [`crate::Parser`].
+    /// Create a scanner over the given input source with configurable resource limits.
+    #[cfg_attr(
+        feature = "comments",
+        doc = "\n[`Options::emit_comments`] controls comment emission. \
+               [`Options::max_buffered_comment_events`] has no effect when using a scanner \
+               directly, because comment-event buffering is performed by [`crate::Parser`]."
+    )]
     #[must_use]
     pub fn with_options(input: T, options: Options) -> Self {
         let initial_byte_offset = input.byte_offset();
         // Avoid the full-string `may_contain_comments` pre-scan when comments will not be emitted.
         // `true` also keeps comment validation on the scanner's comment-aware path.
+        #[cfg(feature = "comments")]
         let comments_possible = !options.emit_comments || input.may_contain_comments();
         Scanner {
             input,
@@ -1241,7 +1292,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             failed: false,
+            #[cfg(feature = "comments")]
             deferred_error: None,
+            #[cfg(feature = "comments")]
             comments_possible,
 
             stream_start_produced: false,
@@ -1379,11 +1432,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "comments"))]
     fn scan_comment_token(&mut self) -> Result<Token<'input>, ScanError> {
         Ok(self.scan_comment_queued_token()?.into_public())
     }
 
+    #[cfg(feature = "comments")]
     fn scan_comment_queued_token(&mut self) -> Result<QueuedToken<'input>, ScanError> {
         let start_mark = self.mark;
         debug_assert_eq!(self.input.peek(), '#');
@@ -1438,6 +1492,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         ))
     }
 
+    #[cfg(feature = "comments")]
     fn push_comment_token(&mut self) -> ScanResult {
         let token = self.scan_comment_queued_token()?;
         self.tokens.push_back(token);
@@ -1446,13 +1501,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Consume the comment at the current position and return whether it was queued as a token.
     fn consume_comment(&mut self) -> Result<bool, ScanError> {
+        #[cfg(feature = "comments")]
         if self.options.emit_comments {
             self.push_comment_token()?;
-            Ok(true)
-        } else {
-            self.skip_comment()?;
-            Ok(false)
+            return Ok(true);
         }
+        self.skip_comment()?;
+        Ok(false)
     }
 
     fn skip_comment(&mut self) -> ScanResult {
@@ -1488,6 +1543,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Return whether this scanner may emit comment tokens.
+    #[cfg(feature = "comments")]
     #[inline]
     pub(crate) fn comments_possible(&self) -> bool {
         self.options.emit_comments && self.comments_possible
@@ -1574,7 +1630,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
         loop {
             let outcome = self.skip_to_next_token()?;
-            if outcome.queued_comment || (outcome.saw_comment && !self.tokens.is_empty()) {
+            #[cfg(feature = "comments")]
+            if outcome.queued_comment {
+                return Ok(());
+            }
+            if outcome.saw_comment && !self.tokens.is_empty() {
                 return Ok(());
             }
             if !outcome.saw_comment {
@@ -1677,6 +1737,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// # Errors
     /// Returns `ScanError` when scanning fails to find an expected next token.
     pub(crate) fn next_queued_token(&mut self) -> Result<Option<QueuedToken<'input>>, ScanError> {
+        #[cfg(feature = "comments")]
         if self.deferred_error.is_some() {
             if !matches!(
                 self.tokens.front().map(|token| &token.1),
@@ -1694,6 +1755,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         if !self.token_available {
+            #[cfg(feature = "comments")]
             if let Err(error) = self.fetch_more_tokens() {
                 if matches!(
                     self.tokens.front().map(|token| &token.1),
@@ -1704,6 +1766,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     return Err(error);
                 }
             }
+            #[cfg(not(feature = "comments"))]
+            self.fetch_more_tokens()?;
         }
         let Some(t) = self.tokens.pop_front() else {
             unreachable!("fetch_more_tokens succeeded without producing a token")
@@ -1736,14 +1800,24 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.tokens.is_empty() {
                 need_more = true;
             } else {
-                need_more = false;
+                #[cfg(feature = "comments")]
+                {
+                    need_more = false;
+                }
                 // Stale potential keys that we know won't be keys.
                 self.stale_simple_keys()?;
+                #[cfg(feature = "comments")]
                 if !matches!(
                     self.tokens.front().map(|token| &token.1),
                     Some(QueuedTokenType::Comment(_))
                 ) {
                     // Only the oldest possible key can refer to the next token to emit.
+                    need_more = self.first_simple_key.is_some_and(|index| {
+                        self.simple_keys[index].token_number == self.tokens_parsed
+                    });
+                }
+                #[cfg(not(feature = "comments"))]
+                {
                     need_more = self.first_simple_key.is_some_and(|index| {
                         self.simple_keys[index].token_number == self.tokens_parsed
                     });
@@ -1809,10 +1883,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
     /// Skip over whitespace (`\t`, ` `, `\n`, `\r`) until the next non-comment token.
     ///
-    /// When comment emission is enabled, encountered comments are queued as
-    /// [`TokenType::Comment`] tokens so the parser can emit them as presentation events. The
-    /// function returns after one comment, whether it was queued or ignored, so callers can
+    /// The function returns after one comment, whether it was queued or ignored, so callers can
     /// publish completed syntax before scanning later input that may fail.
+    #[cfg_attr(
+        feature = "comments",
+        doc = "\nWhen comment emission is enabled, encountered comments are queued as \
+               [`TokenType::Comment`] tokens so the parser can emit presentation events."
+    )]
     ///
     /// # Errors
     /// This function returns an error if a tab is encountered where there should not be
@@ -1892,8 +1969,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
                 '#' => {
                     outcome.saw_comment = true;
-                    let queued = self.consume_comment()?;
-                    outcome.queued_comment |= queued;
+                    #[cfg(feature = "comments")]
+                    {
+                        outcome.queued_comment |= self.consume_comment()?;
+                    }
+                    #[cfg(not(feature = "comments"))]
+                    self.skip_comment()?;
 
                     // Micro-opt: comment-only lines are common; consume the following line break here.
                     if matches!(self.input.look_ch(), '\n' | '\r') {
@@ -1983,13 +2064,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Skip YAML whitespace up to the end of the current line.
-    ///
-    /// # Panics
-    /// Panics in debug builds if `skip_tabs` is [`SkipTabs::Result`].
-    #[track_caller]
-    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<SkipTabs, ScanError> {
-        debug_assert!(!matches!(skip_tabs, SkipTabs::Result(..)));
-
+    fn skip_ws_to_eol(&mut self, skip_tabs: SkipTabs) -> Result<WhitespaceResult, ScanError> {
+        #[cfg(feature = "comments")]
         if !self.comments_possible {
             let (chars_consumed, result) = self.input.skip_ws_to_eol(skip_tabs);
             self.mark.col += chars_consumed;
@@ -4273,6 +4349,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             .iter()
             .any(|&col| (col as isize) <= block_indent);
         for token in self.tokens.iter().skip(token_index) {
+            #[cfg(feature = "comments")]
             if matches!(token.1, QueuedTokenType::Comment(_)) {
                 continue;
             }
@@ -4501,13 +4578,25 @@ mod test {
     use core::cell::Cell;
 
     use crate::error::{ErrorKind, ScanError};
+    #[cfg(feature = "comments")]
+    use crate::scanner::{Comment, Placement};
     use crate::{
         input::{str::StrInput, BorrowedInput, BufferedInput, Input},
         scanner::{
-            Comment, Marker, Placement, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span,
-            Token, TokenType,
+            Marker, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span, Token, TokenType,
         },
     };
+
+    fn ignoring_comments_options() -> crate::Options {
+        #[cfg(feature = "comments")]
+        {
+            crate::options! { emit_comments: false }
+        }
+        #[cfg(not(feature = "comments"))]
+        {
+            crate::Options::default()
+        }
+    }
 
     struct CountingChars {
         chars: alloc::vec::IntoIter<char>,
@@ -4818,6 +4907,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn comment_capture_does_not_change_leading_whitespace() {
         let mut scanner = Scanner::new(StrInput::new("# comment\n"));
 
@@ -4836,6 +4926,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn comment_capture_falls_back_to_owned_slice_when_borrow_unavailable() {
         let mut scanner = Scanner::new(SlicingOnlyInput::new("# sliced\n", true));
         scanner.input.lookahead(2);
@@ -4848,6 +4939,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn comment_capture_errors_when_offsets_have_no_slice() {
         let mut scanner = Scanner::new(SlicingOnlyInput::new("# broken\n", false));
 
@@ -4858,7 +4950,7 @@ mod test {
 
     #[test]
     fn disabled_comments_do_not_require_input_slicing() {
-        let options = crate::options! { emit_comments: false };
+        let options = ignoring_comments_options();
         let scanner = Scanner::with_options(
             SlicingOnlyInput::new("# ignored\nkey: value\n", false),
             options,
@@ -4868,9 +4960,14 @@ mod test {
             .collect::<Result<Vec<_>, _>>()
             .expect("ignored comments should not capture their payload");
 
+        #[cfg(feature = "comments")]
         assert!(tokens
             .iter()
             .all(|token| !matches!(token.1, TokenType::Comment(_))));
+        assert!(tokens.iter().any(|token| matches!(
+            token.1,
+            TokenType::Scalar(ScalarStyle::Plain, ref text) if text == "value"
+        )));
     }
 
     #[test]
@@ -4907,6 +5004,7 @@ mod test {
                 span,
                 TokenType::Scalar(ScalarStyle::Literal, Cow::Borrowed("scalar")),
             ),
+            #[cfg(feature = "comments")]
             Token(
                 span,
                 TokenType::Comment(
@@ -4941,6 +5039,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn yaml_whitespace_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new(" # queued\n# later\n"));
 
@@ -4956,6 +5055,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn token_skip_can_stop_after_queued_comment() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\n"));
 
@@ -4972,13 +5072,14 @@ mod test {
 
     #[test]
     fn token_skip_stops_after_one_ignored_comment_without_queuing_it() {
-        let options = crate::options! { emit_comments: false };
+        let options = ignoring_comments_options();
         let mut scanner =
             Scanner::with_options(StrInput::new("# first\n# second\nvalue\n"), options);
 
         let outcome = scanner.skip_to_next_token().unwrap();
 
         assert!(outcome.saw_comment);
+        #[cfg(feature = "comments")]
         assert!(!outcome.queued_comment);
         assert!(scanner.tokens.is_empty());
         assert_eq!((scanner.mark.line(), scanner.mark.col()), (2, 0));
@@ -4987,7 +5088,7 @@ mod test {
 
     #[test]
     fn yaml_whitespace_stops_after_one_separated_ignored_comment() {
-        let options = crate::options! { emit_comments: false };
+        let options = ignoring_comments_options();
         let mut scanner =
             Scanner::with_options(StrInput::new(" # first\n# second\nvalue\n"), options);
 
@@ -5000,7 +5101,7 @@ mod test {
 
     #[test]
     fn scanner_skips_consecutive_leading_ignored_comments_before_next_token() {
-        let options = crate::options! { emit_comments: false };
+        let options = ignoring_comments_options();
         let mut scanner =
             Scanner::with_options(StrInput::new("# first\n# second\nvalue\n"), options);
 
@@ -5012,6 +5113,7 @@ mod test {
             scanner.next_token().unwrap().unwrap().1,
             TokenType::Scalar(ScalarStyle::Plain, ref value) if value == "value"
         ));
+        #[cfg(feature = "comments")]
         assert!(scanner
             .tokens
             .iter()
@@ -5019,6 +5121,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn scanner_emits_first_leading_comment_before_scanning_next_comment() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\nkey: value\n"));
 
@@ -5038,6 +5141,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn scanner_emits_quoted_scalar_comment_before_scanning_following_value() {
         let mut scanner = Scanner::new(StrInput::new("\"key\" # quoted\n: value\n"));
 
@@ -5056,6 +5160,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn flow_scalar_comment_disables_adjacent_value_lookahead() {
         let mut scanner = Scanner::new(StrInput::new("\"key\"\n# quoted\n: value\n"));
 
@@ -5074,20 +5179,22 @@ mod test {
 
     #[test]
     fn ignored_flow_scalar_comment_still_disables_adjacent_value_lookahead() {
-        let options = crate::options! { emit_comments: false };
+        let options = ignoring_comments_options();
         let mut scanner =
             Scanner::with_options(StrInput::new("\"key\"\n# ignored\n: value\n"), options);
 
         scanner.fetch_flow_scalar(false).unwrap();
 
         assert_eq!(scanner.adjacent_value_allowed_at, usize::MAX);
-        assert!(scanner
-            .tokens
-            .iter()
-            .all(|QueuedToken(_, token)| { !matches!(token, QueuedTokenType::Comment(_)) }));
+        assert_eq!(scanner.tokens.len(), 1);
+        assert!(matches!(
+            scanner.tokens.front().unwrap().1,
+            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
+        ));
     }
 
     #[test]
+    #[cfg(feature = "comments")]
     fn deferred_error_waits_for_all_comment_tokens() {
         let mut scanner = Scanner::new(StrInput::new("# first\n# second\n@\n"));
 
@@ -6028,14 +6135,19 @@ mod test {
             &deep,
         ] {
             for limit in [0, 4, 1024, usize::MAX] {
-                for emit_comments in [false, true] {
-                    let mut scanner = Scanner::with_options(
-                        StrInput::new(source),
-                        crate::options! {
-                            simple_key_max_lookahead: limit,
-                            emit_comments: emit_comments,
-                        },
-                    );
+                #[cfg(feature = "comments")]
+                let emission_modes = [false, true].as_slice();
+                #[cfg(not(feature = "comments"))]
+                let emission_modes = [false].as_slice();
+                for &emit_comments in emission_modes {
+                    let options = crate::options! { simple_key_max_lookahead: limit };
+                    #[cfg(feature = "comments")]
+                    let options = {
+                        let mut options = options;
+                        options.emit_comments = emit_comments;
+                        options
+                    };
+                    let mut scanner = Scanner::with_options(StrInput::new(source), options);
                     loop {
                         let result = scanner.next();
                         assert_eq!(

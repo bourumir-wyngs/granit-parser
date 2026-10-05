@@ -21,6 +21,11 @@ const MAX_NESTING_DEPTH: usize = 32;
 #[cfg(not(test))]
 fuzz_target!(|data: &[u8]| check_input(data));
 
+/// Generate bounded flow collections and compare parser backends with semantic expectations.
+///
+/// # Panics
+/// Panics if generated valid YAML fails to parse, a regression case violates its expected
+/// scalar or error behavior, or parser backends disagree.
 pub fn check_input(data: &[u8]) {
     let mode = data.first().copied().unwrap_or(0);
     let shape = data.get(1).copied().unwrap_or(0);

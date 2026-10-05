@@ -7,7 +7,35 @@ Due to dependency management, only some of them are available as binaries from t
 | `dump_events` | `cargo run --bin dump_events -- [...]` |
 | `run_parser` | `cargo run --bin run_parser -- [...]` |
 | `time_parser` | `cargo run --bin time_parser -- [...]` |
+| `codspeed` | `cargo +stable bench --manifest-path tools/codspeed/Cargo.toml --bench parser --locked` |
 | `walk` | `cargo run --manifest-path tools/walk/Cargo.toml -- [...]` |
+
+## `codspeed`
+
+The parser benchmarks live in an unpublished standalone package with their own
+dependencies and lockfile. Run this package with stable Rust; CodSpeed's toolchain
+requirements are independent of the parser's Rust 1.81 minimum version.
+
+Run the benchmarks locally from the repository root:
+
+```sh
+cargo +stable bench --manifest-path tools/codspeed/Cargo.toml --bench parser --locked
+```
+
+To benchmark without parser comments, add `--no-default-features --features std,error_messages`.
+The package forwards the parser's `comments`, `std`, `error_messages`, and
+`debug_prints` features.
+
+For CodSpeed instrumentation, install `cargo-codspeed` and run from the package directory:
+
+```sh
+cd tools/codspeed
+cargo +stable codspeed build -m simulation --locked
+cargo +stable codspeed run
+```
+
+The CodSpeed workflow runs these commands on stable Rust. The root CI and release
+checks continue to check all root package targets with Rust 1.81.
 
 ## `dump_events`
 This is a debugging helper for the parser. It outputs events emitted by the parser for a given file.

@@ -1,11 +1,14 @@
-//! Parser benchmarks, run with `cargo bench --bench parser` or through `CodSpeed`.
+//! Parser benchmarks, run from `tools/codspeed` with `cargo bench --bench parser`
+//! or through `CodSpeed`.
 //!
 //! The inputs are generated deterministically so that results stay comparable across runs.
 
 use std::fmt::Write as _;
 
 use divan::{black_box, Bencher};
-use granit_parser::{options, Event, Parser, Span, SpannedEventReceiver};
+#[cfg(feature = "comments")]
+use granit_parser::options;
+use granit_parser::{Event, Parser, Span, SpannedEventReceiver};
 
 fn main() {
     divan::main();
@@ -140,6 +143,7 @@ fn comments_anchors_tags(bencher: Bencher, entries: usize) {
 }
 
 #[divan::bench(args = [100])]
+#[cfg(feature = "comments")]
 fn comments_disabled(bencher: Bencher, entries: usize) {
     let input = annotated(entries);
     bencher.bench(|| {

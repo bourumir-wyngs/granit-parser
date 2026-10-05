@@ -578,10 +578,7 @@ fn scanner_does_not_emit_unseparated_comment_after_quoted_scalar_error() {
         }
     };
 
-    assert_eq!(
-        error.info(),
-        "comments must be separated from other tokens by whitespace"
-    );
+    assert_eq!(error.kind(), &ErrorKind::CommentNotSeparated);
     assert!(!saw_comment);
 }
 
@@ -672,7 +669,7 @@ fn scanner_rejects_tab_immediately_after_explicit_key_indicator() {
         }
     };
 
-    assert_eq!(error.info(), "expected whitespace");
+    assert_eq!(error.kind(), &ErrorKind::ExpectedWhitespace);
     assert_eq!(error.marker().line(), 1);
     assert_eq!(error.marker().col(), 1);
 }
@@ -740,7 +737,10 @@ fn own_line_comment_before_invalid_token_is_emitted_before_error() {
     ));
 
     let error = parser.next_event().unwrap().unwrap_err();
-    assert!(error.info().contains("unexpected character"));
+    assert_eq!(
+        error.kind(),
+        &ErrorKind::UnexpectedCharacter { character: '@' }
+    );
 }
 
 #[test]
@@ -760,7 +760,10 @@ fn syntax_comment_before_invalid_token_is_emitted_before_error() {
     assert_eq!(comment, " c");
 
     let error = parser.next_event().unwrap().unwrap_err();
-    assert!(error.info().contains("unexpected character"));
+    assert_eq!(
+        error.kind(),
+        &ErrorKind::UnexpectedCharacter { character: '@' }
+    );
 }
 
 #[test]
@@ -1018,7 +1021,7 @@ fn explicit_key_comment_does_not_hide_tab_indentation_error() {
         .find_map(Result::err)
         .expect("parser should reject tab indentation after explicit key comment");
 
-    assert_eq!(err.info(), "tabs disallowed in this context");
+    assert_eq!(err.kind(), &ErrorKind::TabNotAllowed);
 }
 
 #[test]
@@ -1029,7 +1032,7 @@ fn explicit_key_comment_run_does_not_hide_tab_indentation_error() {
         .find_map(Result::err)
         .expect("parser should reject tab indentation after explicit key comment run");
 
-    assert_eq!(err.info(), "tabs disallowed in this context");
+    assert_eq!(err.kind(), &ErrorKind::TabNotAllowed);
 }
 
 #[test]
@@ -1060,8 +1063,8 @@ fn parser_rejects_ambiguous_large_comment_runs_before_reading_tail() {
         let (pulled, error) = chars_pulled_until_error(&yaml, Options::default());
 
         assert_eq!(
-            error.info(),
-            "too many consecutive comments before resolving collection entry",
+            error.kind(),
+            &ErrorKind::TooManyComments,
             "{name}: unexpected parser error",
         );
         assert!(
@@ -1348,15 +1351,11 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
     let events =
         parser_events(yaml).expect("parser should preserve comments around mapping syntax");
 
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " key")));
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " anchor")));
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == " alias")));
+    for expected in [" key", " anchor", " alias"] {
+        assert!(events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == expected)));
+    }
 
     let anchored_value = events
         .iter()
