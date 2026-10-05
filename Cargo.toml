@@ -31,8 +31,9 @@ exclude = [
 ]
 
 [features]
-default = ["error_messages", "std", "parser-comments"]
-parser-comments = []
+default = ["error_messages", "std", "comments"]
+# Capture and emit comments; without this feature, YAML comments are validated and then ignored
+comments = []
 error_messages = []
 std = []
 debug_prints = ["std"]
@@ -48,6 +49,14 @@ libtest-mimic = "0.8.2"
 [[test]]
 name = "yaml-test-suite"
 harness = false
+
+[[test]]
+name = "comment"
+required-features = ["comments"]
+
+[[test]]
+name = "comments_possible"
+required-features = ["comments"]
 
 [[bench]]
 name = "parser"

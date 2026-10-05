@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{ErrorKind, Event, Marker, Options, Parser, ScanError, Span};
 
 fn trace_all_inputs(source: &str, options: Options) -> Vec<Result<(Event<'_>, Span), ScanError>> {
@@ -29,6 +30,7 @@ fn outline(trace: &[Result<(Event<'_>, Span), ScanError>]) -> Vec<String> {
         .iter()
         .map(|entry| match entry {
             Ok((Event::Scalar(value, ..), _)) => format!("scalar:{value}"),
+            #[cfg(feature = "comments")]
             Ok((Event::Comment(value, ..), _)) => format!("comment:{value}"),
             Ok((Event::StreamStart, _)) => "+STR".into(),
             Ok((Event::StreamEnd, _)) => "-STR".into(),
@@ -162,7 +164,7 @@ fn missing_required_keys_keep_error_marker_and_preceding_event_timing() {
                 "comment: ready"
             ]
             .into_iter()
-            .filter(|event| cfg!(feature = "parser-comments") || !event.starts_with("comment:"))
+            .filter(|event| cfg!(feature = "comments") || !event.starts_with("comment:"))
             .collect::<Vec<_>>()
         );
     }
@@ -196,18 +198,20 @@ fn comments_and_document_markers_preserve_event_order() {
         "-DOC",
         "-STR",
     ];
-    for emit_comments in [true, false] {
-        let options = granit_parser::options! { emit_comments: emit_comments };
+    for &emit_comments in support::comment_modes() {
+        let options =
+            granit_parser::options! { #[cfg(feature = "comments")] emit_comments: emit_comments };
         let trace = trace_all_inputs(source, options);
         assert_eq!(
             outline(&trace),
             expected
                 .iter()
                 .copied()
-                .filter(|event| (cfg!(feature = "parser-comments") && emit_comments)
+                .filter(|event| (cfg!(feature = "comments") && emit_comments)
                     || !event.starts_with("comment:"))
                 .collect::<Vec<_>>()
         );
+        #[cfg(feature = "comments")]
         for entry in &trace {
             if let Ok((Event::Comment(value, ..), span)) = entry {
                 assert_eq!(span.slice(source), Some(format!("#{value}").as_str()));

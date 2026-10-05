@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased (breaking API changes)
+## 2.0.0 (breaking changes)
 
+- Disabling the new feature `comments` now compiles out scanner comment capture, parser and stack comment state,
+  and the public comment types, variants, and options. YAML comments are still skipped and
+  validated. Applications using `default-features = false` must enable `comments` to access
+  `Comment`, `Placement`, comment token/event variants, or comment-specific options.
 - Made `Span` non-exhaustive so future releases can add source metadata. Construct spans with
   `Span::new`, `Span::empty`, or `Span::default`, use the metadata builders or field assignment,
   and include `..` when destructuring. External struct literals and struct-update syntax are

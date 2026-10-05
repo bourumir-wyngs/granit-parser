@@ -12,6 +12,7 @@ use granit_parser::{ErrorKind, Options, Parser, Scanner, StrInput};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
+#[cfg(feature = "comments")]
 const COMMENT_LIMITS: &[usize] = &[0, 1, 31, 32, 33, 95, 96, 97, 255];
 const KEY_LIMITS: &[usize] = &[0, 1, 15, 16, 17, 127, 128, 129, 1023, 1024, 1025, 4096];
 const FLOW_LIMITS: &[usize] = &[0, 1, 2, 254, 255, 256, 512];
@@ -43,7 +44,10 @@ fn assert_outcome(input: &str, options: Options, expected_error: Option<&ErrorKi
 
 fn check_generated_boundary(mode: u8, flags: u8, selector: u8) {
     let mut options = Options::default();
-    options.emit_comments = flags & 1 != 0;
+    #[cfg(feature = "comments")]
+    {
+        options.emit_comments = flags & 1 != 0;
+    }
     match mode {
         252 => {
             let length = DIRECTIVE_LIMITS[usize::from(selector) % DIRECTIVE_LIMITS.len()];
@@ -100,6 +104,8 @@ pub fn check_input(data: &[u8]) {
     let [mode, flags, comment, key, flow, input @ ..] = data else {
         return;
     };
+    #[cfg(not(feature = "comments"))]
+    let _ = comment;
     if input.len() > 64 * 1024 {
         return;
     }
@@ -119,8 +125,15 @@ pub fn check_input(data: &[u8]) {
     }
 
     let mut options = Options::default();
-    options.emit_comments = flags & 1 != 0;
-    options.max_buffered_comment_events = COMMENT_LIMITS[*comment as usize % COMMENT_LIMITS.len()];
+    #[cfg(feature = "comments")]
+    {
+        options.emit_comments = flags & 1 != 0;
+    }
+    #[cfg(feature = "comments")]
+    {
+        options.max_buffered_comment_events =
+            COMMENT_LIMITS[*comment as usize % COMMENT_LIMITS.len()];
+    }
     options.simple_key_max_lookahead = KEY_LIMITS[*key as usize % KEY_LIMITS.len()];
     options.flow_nesting_limit = FLOW_LIMITS[*flow as usize % FLOW_LIMITS.len()];
     options.block_nesting_limit = BLOCK_LIMITS[usize::from(*flow >> 3) % BLOCK_LIMITS.len()];

@@ -1,4 +1,6 @@
 #![cfg_attr(not(test), no_main)]
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
 
 #[cfg(not(test))]
 mod common;
@@ -6,7 +8,7 @@ mod common;
 use crate::common;
 
 use common::{parse_with_both_inputs, parse_with_options, scan_with_options};
-use granit_parser::{ErrorKind, Event, Options, Parser, Placement, Scanner, StrInput, TokenType};
+use granit_parser::{ErrorKind, Event, Options, Parser, Scanner, StrInput, TokenType};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
@@ -84,7 +86,7 @@ fn assert_single_tag(
             .expect("tagged node must also carry the generated anchor");
         assert_eq!(aliases, [anchor_id]);
     } else {
-        assert!(aliases.is_empty());
+        assert_eq!(aliases, Vec::<usize>::new());
     }
 }
 
@@ -114,7 +116,10 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
     let separator = if selector & 4 == 0 { " " } else { "\t \t" };
     let yaml = format!("%{directive}{separator}#{comment}\n---\nvalue\n");
     let mut options = Options::default();
-    options.emit_comments = selector & 8 != 0;
+    #[cfg(feature = "comments")]
+    {
+        options.emit_comments = selector & 8 != 0;
+    }
     options.max_directive_bytes = directive.len();
     options.max_reserved_directive_params = parameters.len();
 
@@ -125,31 +130,36 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
         tokens[1].token_type(),
         &TokenType::ReservedDirective("FUTURE".into(), parameters.clone()),
     );
-    let comments = tokens
-        .iter()
-        .filter_map(|token| match token.token_type() {
-            TokenType::Comment(comment) => Some((comment, token.span())),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(comments.len(), usize::from(options.emit_comments));
-    if options.emit_comments {
-        assert_eq!(comments[0].0.text(), comment);
-        assert_eq!(comments[0].0.placement(), Placement::Right);
-        assert_eq!(
-            comments[0].1.slice(&yaml),
-            Some(format!("#{comment}").as_str())
-        );
+    #[cfg(feature = "comments")]
+    {
+        let comments = tokens
+            .iter()
+            .filter_map(|token| match token.token_type() {
+                #[cfg(feature = "comments")]
+                TokenType::Comment(comment) => Some((comment, token.span())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(comments.len(), usize::from(options.emit_comments));
+        if options.emit_comments {
+            assert_eq!(comments[0].0.text(), comment);
+            assert_eq!(comments[0].0.placement(), Placement::Right);
+            assert_eq!(
+                comments[0].1.slice(&yaml),
+                Some(format!("#{comment}").as_str())
+            );
+        }
     }
     let events = Parser::new_from_str_with_options(&yaml, options.clone())
         .collect::<Result<Vec<_>, _>>()
         .expect("a separated directive comment must preserve the following document");
+    #[cfg(feature = "comments")]
     assert_eq!(
         events
             .iter()
             .filter(|(event, _)| matches!(event, Event::Comment(..)))
             .count(),
-        usize::from(cfg!(feature = "parser-comments") && options.emit_comments),
+        usize::from(cfg!(feature = "comments") && options.emit_comments),
     );
     assert_eq!(
         events

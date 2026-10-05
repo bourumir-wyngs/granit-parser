@@ -684,7 +684,7 @@ fn test_ex5_8_quoted_scalar_indicators() {
 
 #[test]
 fn test_ex5_1_byte_order_mark() {
-    assert!(str_to_test_events(EX5_1).is_empty());
+    assert_eq!(str_to_test_events(EX5_1), Vec::<TestEvent>::new());
 }
 
 #[test]

@@ -1,6 +1,9 @@
+mod support;
+#[cfg(feature = "comments")]
+use granit_parser::Placement;
 use granit_parser::{
-    options, BufferedInput, ErrorKind, Event, Options, Parser, Placement, ScanError, Scanner,
-    StrInput, Token, TokenType,
+    options, BufferedInput, ErrorKind, Event, Options, Parser, ScanError, Scanner, StrInput, Token,
+    TokenType,
 };
 
 /// Drive the parser to completion and return the first error, if any.
@@ -25,7 +28,7 @@ fn scanner_tokens(yaml: &str, options: Options) -> Vec<Token<'_>> {
 }
 
 #[test]
-fn reserved_directive_separated_comments_are_emitted_after_parameters() {
+fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
     for (yaml, name, param, comment_text) in [
         (
             "%FUTURE option # keep this comment\n---\nvalue\n",
@@ -46,19 +49,24 @@ fn reserved_directive_separated_comments_are_emitted_after_parameters() {
             " actual comment",
         ),
     ] {
+        #[cfg(not(feature = "comments"))]
+        let _ = comment_text;
         let tokens = scanner_tokens(yaml, Options::default());
         assert_eq!(
             tokens[1].token_type(),
             &TokenType::ReservedDirective(name.into(), vec![param.into()]),
         );
-        let TokenType::Comment(comment) = tokens[2].token_type() else {
-            panic!("expected a comment after the directive: {yaml:?}");
-        };
-        assert_eq!(comment.text(), comment_text);
-        assert_eq!(comment.placement(), Placement::Right);
-        assert_eq!(tokens[1].span().end, tokens[2].span().start);
-        let comment_source = format!("#{comment_text}");
-        assert_eq!(tokens[2].span().slice(yaml), Some(comment_source.as_str()));
+        #[cfg(feature = "comments")]
+        {
+            let TokenType::Comment(comment) = tokens[2].token_type() else {
+                panic!("expected a comment after the directive: {yaml:?}");
+            };
+            assert_eq!(comment.text(), comment_text);
+            assert_eq!(comment.placement(), Placement::Right);
+            assert_eq!(tokens[1].span().end, tokens[2].span().start);
+            let comment_source = format!("#{comment_text}");
+            assert_eq!(tokens[2].span().slice(yaml), Some(comment_source.as_str()));
+        }
 
         let events = Parser::new_from_str(yaml)
             .collect::<Result<Vec<_>, _>>()
@@ -69,18 +77,19 @@ fn reserved_directive_separated_comments_are_emitted_after_parameters() {
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
         );
-        let comments = events
-            .iter()
-            .filter_map(|(event, span)| match event {
-                Event::Comment(text, _) => Some((text.as_ref(), *span)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if cfg!(feature = "parser-comments") {
+        #[cfg(feature = "comments")]
+        {
+            let comments = events
+                .iter()
+                .filter_map(|(event, span)| match event {
+                    #[cfg(feature = "comments")]
+                    Event::Comment(text, _) => Some((text.as_ref(), *span)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             assert_eq!(comments, [(comment_text, tokens[2].span())]);
-        } else {
-            assert!(comments.is_empty());
         }
+
         assert!(events.iter().any(|(event, span)| {
             matches!(event, Event::Scalar(value, ..) if value == "value")
                 && span.slice(yaml) == Some("value")
@@ -99,9 +108,14 @@ fn reserved_directive_comments_do_not_consume_parameter_or_byte_limits() {
                 max_directive_bytes: directive.len(),
             },
         ] {
-            for emit_comments in [true, false] {
-                let mut options = limits.clone();
-                options.emit_comments = emit_comments;
+            for &emit_comments in support::comment_modes() {
+                let options = limits.clone();
+                #[cfg(feature = "comments")]
+                let options = {
+                    let mut options = options;
+                    options.emit_comments = emit_comments;
+                    options
+                };
                 let tokens = scanner_tokens(&yaml, options.clone());
                 let TokenType::ReservedDirective(_, params) = tokens[1].token_type() else {
                     panic!("expected a reserved directive");
@@ -110,7 +124,7 @@ fn reserved_directive_comments_do_not_consume_parameter_or_byte_limits() {
                 assert_eq!(
                     tokens
                         .iter()
-                        .filter(|token| { matches!(token.token_type(), TokenType::Comment(_)) })
+                        .filter(|token| { support::is_comment_token(token.token_type()) })
                         .count(),
                     usize::from(emit_comments)
                 );
@@ -127,9 +141,10 @@ fn reserved_directive_comments_do_not_hide_excess_parameters() {
         "%FUTURE option # comment\n---\nvalue\n",
         "%FUTURE option#value # comment\n---\nvalue\n",
     ] {
-        for emit_comments in [true, false] {
+        for &emit_comments in support::comment_modes() {
             let options = options! {
                 max_reserved_directive_params: 0,
+                #[cfg(feature = "comments")]
                 emit_comments: emit_comments,
             };
             for error in [
@@ -151,8 +166,9 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
     for (directive, params) in [("FUTURE", vec![]), ("FUTURE option", vec!["option".into()])] {
         for comment_text in ["", " café 漢字"] {
             let yaml = format!("%{directive} #{comment_text}");
-            for emit_comments in [true, false] {
-                let options = options! { emit_comments: emit_comments };
+            for &emit_comments in support::comment_modes() {
+                let options =
+                    options! { #[cfg(feature = "comments")] emit_comments: emit_comments };
                 let tokens = scanner_tokens(&yaml, options.clone());
                 assert_eq!(
                     tokens[1].token_type(),
@@ -160,6 +176,7 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
                 );
                 assert_eq!(tokens.len(), 3 + usize::from(emit_comments));
                 assert_eq!(tokens.last().unwrap().token_type(), &TokenType::StreamEnd);
+                #[cfg(feature = "comments")]
                 if emit_comments {
                     let TokenType::Comment(comment) = tokens[2].token_type() else {
                         panic!("expected EOF comment: {yaml:?}");
@@ -186,8 +203,10 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
 fn reserved_directive_comments_still_validate_control_characters_when_suppressed() {
     for character in ['\u{1}', '\u{7f}'] {
         let yaml = format!("%FUTURE option # café {character}\n---\nvalue\n");
-        for emit_comments in [true, false] {
-            let options = options! { emit_comments: emit_comments };
+        for &emit_comments in support::comment_modes() {
+            #[cfg(not(feature = "comments"))]
+            let _ = emit_comments;
+            let options = options! { #[cfg(feature = "comments")] emit_comments: emit_comments };
             for error in [
                 first_error(&yaml, options.clone()),
                 first_iter_error(&yaml, options),
@@ -208,10 +227,11 @@ fn reserved_directive_comments_still_validate_control_characters_when_suppressed
 fn reserved_directive_comment_separator_is_excluded_from_utf8_byte_limit() {
     for directive in ["FUTURE\toption#value", "FÜTURE é"] {
         let yaml = format!("%{directive}{}# comment\n---\nvalue\n", " \t".repeat(1024));
-        for emit_comments in [true, false] {
+        for &emit_comments in support::comment_modes() {
             let exact = options! {
                 max_directive_bytes: directive.len(),
                 max_reserved_directive_params: 1,
+                #[cfg(feature = "comments")]
                 emit_comments: emit_comments,
             };
             let tokens = scanner_tokens(&yaml, exact.clone());

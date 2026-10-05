@@ -1,3 +1,4 @@
+mod support;
 use std::{
     borrow::Cow,
     fs::{self, DirEntry},
@@ -388,7 +389,7 @@ pub struct EventReporter<'input> {
 
 impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
     fn on_event(&mut self, ev: Event<'input>, span: Span) {
-        if matches!(ev, Event::Comment(..)) {
+        if support::is_comment_event(&(ev)) {
             return;
         }
 
@@ -437,6 +438,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 )
             }
             Event::Alias(idx) => format!("=ALI *{idx}"),
+            #[cfg(feature = "comments")]
             Event::Comment(..) => unreachable!("comments are ignored above"),
             _ => return,
         };

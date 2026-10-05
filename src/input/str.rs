@@ -198,6 +198,7 @@ impl Input for StrInput<'_> {
         self.original.get(start..end)
     }
 
+    #[cfg(feature = "comments")]
     #[inline]
     fn may_contain_comments(&self) -> bool {
         self.original.as_bytes().contains(&b'#')

@@ -83,7 +83,7 @@ jobs:
         run: cargo check  --offline --lib --no-default-features --target wasm32v1-none
 
       - name: Check parser comments on no_std target
-        run: cargo check  --offline --lib --no-default-features --features parser-comments --target wasm32v1-none
+        run: cargo check  --offline --lib --no-default-features --features comments --target wasm32v1-none
 
       - name: Check MSRV
         run: cargo +"${MSRV}" check  --offline --all-targets

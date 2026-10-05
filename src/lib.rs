@@ -6,7 +6,7 @@
 //!
 //! `granit-parser` is a low-level event parser. It reads YAML input and yields a stream of
 //! [`Event`] values paired with their source [`Span`].
-//! With the default `parser-comments` feature, comments are emitted as [`Event::Comment`]. They
+//! With the default `comments` feature, comments are emitted as `Event::Comment`. They
 //! are presentation metadata, not YAML data nodes, so consumers building YAML value trees should
 //! ignore them.
 //!
@@ -19,11 +19,11 @@
 //! # Usage
 //!
 //! ```rust
+//! # fn main() -> Result<(), granit_parser::ScanError> {
+//! # #[cfg(feature = "comments")]
+//! # {
 //! use granit_parser::{Event, Parser, Placement};
 //!
-//! # fn main() -> Result<(), granit_parser::ScanError> {
-//! # #[cfg(feature = "parser-comments")]
-//! # {
 //! let yaml = r#"# header
 //! items: # inline
 //!   - milk
@@ -63,15 +63,16 @@
 //! [`Options::strict_indentation`] enables strict YAML indentation for flow collections. It
 //! defaults to `false` for compatibility with `PyYAML` and ruamel.yaml, accepting under-indented flow entries
 //! and delimiters. [`Options`] also controls comment emission and limits on buffered comments,
-//! simple-key lookahead, directive retention, and flow- and block-collection nesting. Comment
-//! tokens and events are emitted by default; setting [`Options::emit_comments`] to `false`
+//! simple-key lookahead, directive retention, and flow- and block-collection nesting. With the
+//! `comments` feature, comment tokens and events are emitted by default; setting
+//! `Options::emit_comments` to `false`
 //! recognizes and validates comments without capturing their text or emitting them. The defaults
 //! allow 96 buffered comment events, 1024 characters of simple-key lookahead, 1024 bytes of retained
 //! directive data, 16 reserved-directive parameters, 255 nested flow collections, and 255 nested
 //! block collections.
 //! Existing constructors use these defaults.
-//! Without the `parser-comments` feature, parsers and parser stacks always suppress comment
-//! events. Standalone scanners continue to follow [`Options::emit_comments`].
+//! Without the `comments` feature, comment capture and emission are compiled out of scanners,
+//! parsers, and parser stacks. YAML comments are still skipped and validated.
 //! [`Parser::new_from_str_with_options`], [`Parser::new_from_iter_with_options`],
 //! [`Parser::new_from_fallible_iter_with_options`], [`Parser::with_options`],
 //! [`Scanner::with_options`], and [`ParserStack::with_options`] accept customized options created
@@ -80,12 +81,15 @@
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
 //!
-//! #### `parser-comments` (enabled by default)
-//! Enables comment events and their buffering, placement, and continuation state in [`Parser`].
-//! Without it, [`Parser`] uses its scanner's existing comment-skipping path and [`ParserStack`]
-//! suppresses comments, including replayed events. YAML comment syntax and source positions are
-//! still validated and tracked. Standalone [`Scanner`] comment tokens remain controlled by
-//! [`Options::emit_comments`], and public comment types and variants remain available.
+//! #### `comments` (enabled by default)
+//! Enables scanner comment tokens, parser comment events, and their capture, placement, buffering,
+//! and continuation state. Without it, scanners skip comments without retaining their text, and
+//! comment-specific state is compiled out. YAML comment syntax and source positions are still
+//! validated and tracked.
+//!
+//! `Comment`, `Placement`, `TokenType::Comment`, `Event::Comment`, `ErrorKind::TooManyComments`,
+//! `Options::emit_comments`, `Options::max_buffered_comment_events`, and
+//! `Input::may_contain_comments` are available only with this feature.
 //!
 //! #### `error_messages` (enabled by default)
 //! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and
@@ -135,12 +139,41 @@ pub use crate::parser::{
     Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
 pub use crate::parser_stack::{ParserStack, ReplayParser};
-pub use crate::scanner::{
-    Comment, Marker, Placement, ScalarStyle, Scanner, Span, Token, TokenType,
-};
+#[cfg(feature = "comments")]
+pub use crate::scanner::{Comment, Placement};
+pub use crate::scanner::{Marker, ScalarStyle, Scanner, Span, Token, TokenType};
 
 // Keep every Rust example in the package README covered by `cargo test --doc` without duplicating
 // the README in the rendered crate-level documentation.
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
+
+// Verify the feature-disabled public API without adding these checks to rendered documentation.
+#[cfg(all(doctest, not(feature = "comments")))]
+/// ```compile_fail
+/// use granit_parser::Comment;
+/// ```
+/// ```compile_fail
+/// use granit_parser::Placement;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::Event::Comment;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::TokenType::Comment;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::Options::default().emit_comments;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::Options::default().max_buffered_comment_events;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::ErrorKind::TooManyComments;
+/// ```
+/// ```compile_fail
+/// use granit_parser::{Input, StrInput};
+/// let _ = <StrInput<'_> as Input>::may_contain_comments(&StrInput::new(""));
+/// ```
+mod comments_disabled_doctests {}

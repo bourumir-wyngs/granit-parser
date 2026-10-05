@@ -9,22 +9,21 @@
 ///
 /// ```rust
 /// let options = granit_parser::options! {
-///     max_buffered_comment_events: 64,
+///     #[cfg(feature = "comments")]
 ///     emit_comments: false,
 ///     simple_key_max_lookahead: 2048,
 /// };
 ///
-/// assert_eq!(options.max_buffered_comment_events, 64);
-/// assert!(!options.emit_comments);
 /// assert_eq!(options.simple_key_max_lookahead, 2048);
 /// assert_eq!(options.flow_nesting_limit, 255);
 /// assert_eq!(options.block_nesting_limit, 255);
 /// ```
 #[macro_export]
 macro_rules! options {
-    ($($field:ident : $value:expr),* $(,)?) => {{
+    ($($(#[$attr:meta])* $field:ident : $value:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
         let mut options = $crate::Options::default();
-        $(options.$field = $value;)*
+        $($(#[$attr])* { options.$field = $value; })*
         options
     }};
 }

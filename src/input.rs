@@ -206,6 +206,7 @@ pub trait Input {
     ///
     /// This is a conservative performance hint. Inputs that cannot answer cheaply should return
     /// `true`, which keeps full comment handling enabled.
+    #[cfg(feature = "comments")]
     #[inline]
     #[must_use]
     fn may_contain_comments(&self) -> bool {

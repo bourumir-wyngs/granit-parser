@@ -1,3 +1,4 @@
+mod support;
 use std::{cell::Cell, rc::Rc};
 
 use granit_parser::{
@@ -7,13 +8,16 @@ use granit_parser::{
 
 fn no_comments() -> Options {
     granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: false,
     }
 }
 
 fn no_comments_with_zero_buffer() -> Options {
     granit_parser::options! {
+        #[cfg(feature = "comments")]
         emit_comments: false,
+        #[cfg(feature = "comments")]
         max_buffered_comment_events: 0,
     }
 }
@@ -50,7 +54,7 @@ where
     loop {
         match scanner.next() {
             Some(Ok(token)) => {
-                if matches!(token.token_type(), TokenType::Comment(_)) {
+                if support::is_comment_token(token.token_type()) {
                     comment_count += 1;
                 } else {
                     prefix.push(token);
@@ -77,7 +81,7 @@ where
     loop {
         match parser.next() {
             Some(Ok(event)) => {
-                if matches!(event.0, Event::Comment(..)) {
+                if support::is_comment_event(&(event.0)) {
                     comment_count += 1;
                 } else {
                     prefix.push(event);
@@ -94,9 +98,7 @@ where
 
 fn assert_no_comment_events(events: &[Event<'_>]) {
     assert!(
-        events
-            .iter()
-            .all(|event| !matches!(event, Event::Comment(..))),
+        events.iter().all(|event| !support::is_comment_event(event)),
         "comment event escaped suppression: {events:?}",
     );
 }
@@ -105,7 +107,7 @@ fn assert_no_comment_tokens(tokens: &[Token<'_>]) {
     assert!(
         tokens
             .iter()
-            .all(|token| !matches!(token.token_type(), TokenType::Comment(_))),
+            .all(|token| !support::is_comment_token(token.token_type())),
         "comment token escaped suppression: {tokens:?}",
     );
 }
@@ -171,9 +173,10 @@ fn assert_scanner_prefix<'input, T>(
     assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
     assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
     assert_eq!(disabled_tokens, enabled_tokens, "{context}");
-    assert!(
+    assert_eq!(
         enabled_comments > 0,
-        "{context}: fixture emitted no comments"
+        cfg!(feature = "comments"),
+        "{context}: scanner comment emission must match the compiled feature"
     );
     assert_eq!(disabled_comments, 0, "{context}");
     assert!(
@@ -202,7 +205,7 @@ fn assert_parser_prefix<'input, T>(
     assert_eq!(disabled_events, enabled_events, "{context}");
     assert_eq!(
         enabled_comments > 0,
-        cfg!(feature = "parser-comments"),
+        cfg!(feature = "comments"),
         "{context}: parser comment emission must match the compiled feature"
     );
     assert_eq!(disabled_comments, 0, "{context}");
@@ -287,14 +290,14 @@ fn disabled_comments_match_enabled_yaml_semantics_after_filtering_comments() {
 
     let mut enabled_str =
         parse_str(yaml, Options::default()).expect("enabled string parser should accept YAML");
-    enabled_str.retain(|event| !matches!(event, Event::Comment(..)));
+    enabled_str.retain(|event| !support::is_comment_event(event));
     let disabled_str =
         parse_str(yaml, no_comments()).expect("disabled string parser should accept YAML");
     assert_eq!(disabled_str, enabled_str);
 
     let mut enabled_iter =
         parse_iter(yaml, Options::default()).expect("enabled iterator parser should accept YAML");
-    enabled_iter.retain(|event| !matches!(event, Event::Comment(..)));
+    enabled_iter.retain(|event| !support::is_comment_event(event));
     let disabled_iter =
         parse_iter(yaml, no_comments()).expect("disabled iterator parser should accept YAML");
     assert_eq!(disabled_iter, enabled_iter);
@@ -308,15 +311,16 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
 
     let mut enabled = parse_str(yaml, Options::default())
         .expect("leading document end and comment should not open a document");
-    if cfg!(feature = "parser-comments") {
+    #[cfg(feature = "comments")]
+    {
         assert!(matches!(
             enabled.as_slice(),
             [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
         ));
-    } else {
-        assert_eq!(enabled, [Event::StreamStart, Event::StreamEnd]);
     }
-    enabled.retain(|event| !matches!(event, Event::Comment(..)));
+    #[cfg(not(feature = "comments"))]
+    assert_eq!(enabled, [Event::StreamStart, Event::StreamEnd]);
+    enabled.retain(|event| !support::is_comment_event(event));
 
     let disabled = parse_str(yaml, no_comments())
         .expect("comment suppression should preserve the empty stream");
@@ -340,7 +344,7 @@ fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
 
         assert_eq!(
             enabled_comments,
-            usize::from(cfg!(feature = "parser-comments")),
+            usize::from(cfg!(feature = "comments")),
             "{context}"
         );
         assert_eq!(disabled_comments, 0, "{context}");
@@ -394,11 +398,11 @@ fn disabled_comments_preserve_non_comment_event_spans() {
         assert_eq!(
             enabled
                 .iter()
-                .any(|(event, _)| matches!(event, Event::Comment(..))),
-            cfg!(feature = "parser-comments"),
+                .any(|(event, _)| support::is_comment_event(event)),
+            cfg!(feature = "comments"),
             "parser comment emission must match the compiled feature: {yaml:?}"
         );
-        enabled.retain(|(event, _)| !matches!(event, Event::Comment(..)));
+        enabled.retain(|(event, _)| !support::is_comment_event(event));
 
         let disabled = Parser::with_options(StrInput::new(yaml), no_comments())
             .collect::<Result<Vec<_>, _>>()
@@ -432,7 +436,7 @@ fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
 
         assert_eq!(
             enabled_comments > 0,
-            cfg!(feature = "parser-comments"),
+            cfg!(feature = "comments"),
             "parser comment emission must match the compiled feature: {name}"
         );
         assert_eq!(disabled_comments, 0, "{name}");
@@ -572,6 +576,7 @@ fn ignored_tab_prefixed_comments_preserve_completed_scalars_before_later_errors(
         let enabled = granit_parser::options! { strict_indentation: strict_indentation };
         let disabled = granit_parser::options! {
             strict_indentation: strict_indentation,
+            #[cfg(feature = "comments")]
             emit_comments: false,
         };
 
@@ -779,6 +784,7 @@ fn completed_plain_scalar_is_returned_before_long_suppressed_comment_tail_is_rea
             .expect("parser should return the completed scalar")
             .expect("the comment tail should not fail");
         match event {
+            #[cfg(feature = "comments")]
             Event::Comment(..) => panic!("disabled comments must not be emitted"),
             Event::Scalar(value, ScalarStyle::Plain, ..) if value == "foo" => break,
             _ => {}
@@ -807,6 +813,7 @@ fn completed_plain_scalar_is_returned_before_fallible_suppressed_comment_tail_fa
             .next_event()
             .expect("parser should return the completed scalar")
         {
+            #[cfg(feature = "comments")]
             Ok((Event::Comment(..), _)) => panic!("disabled comments must not be emitted"),
             Ok((Event::Scalar(value, ScalarStyle::Plain, ..), _)) if value == "foo" => break,
             Ok(_) => {}
