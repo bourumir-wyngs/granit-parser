@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
       - run: rustup toolchain install 1.81.0 --profile minimal --no-self-update
       - name: Check MSRV
-        run: cargo +1.81.0 check --all-targets
+        run: cargo +1.81.0 check --all-targets --locked
 
   no_std:
     name: no_std checks

@@ -43,7 +43,6 @@ arraydeque = { version = "0.5.1", default-features = false }
 smallvec = {  version = ">=1.6.1, < 2.0.0" }
 
 [dev-dependencies]
-divan = { version = "5.0.2", package = "codspeed-divan-compat" }
 libtest-mimic = "0.8.2"
 
 [[test]]
@@ -57,10 +56,6 @@ required-features = ["comments"]
 [[test]]
 name = "comments_possible"
 required-features = ["comments"]
-
-[[bench]]
-name = "parser"
-harness = false
 
 [[bin]]
 name = "dump_events"

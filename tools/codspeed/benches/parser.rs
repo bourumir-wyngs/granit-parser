@@ -1,4 +1,5 @@
-//! Parser benchmarks, run with `cargo bench --bench parser` or through `CodSpeed`.
+//! Parser benchmarks, run from `tools/codspeed` with `cargo bench --bench parser`
+//! or through `CodSpeed`.
 //!
 //! The inputs are generated deterministically so that results stay comparable across runs.
 

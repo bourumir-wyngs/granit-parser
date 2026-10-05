@@ -25,14 +25,25 @@ jobs:
         uses: moonrepo/setup-rust@v1
         with:
           channel: stable
+          components: rustfmt, clippy
           cache-target: release
+          target-dirs: tools/codspeed/target
+          cache-extra-identifier: ${{ hashFiles('tools/codspeed/Cargo.lock') }}
           bins: cargo-codspeed
 
+      - name: Check benchmark formatting and lints
+        working-directory: tools/codspeed
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings -D clippy::pedantic
+
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -m simulation
+        working-directory: tools/codspeed
+        run: cargo codspeed build -m simulation --locked
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v5
         with:
           mode: simulation
+          working-directory: tools/codspeed
           run: cargo codspeed run

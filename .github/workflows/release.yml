@@ -58,8 +58,8 @@ jobs:
 
       - name: Prefetch dependencies
         run: |
-          cargo fetch 
-          cargo +"${MSRV}" fetch 
+          cargo fetch --locked
+          cargo +"${MSRV}" fetch --locked
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -86,7 +86,7 @@ jobs:
         run: cargo check  --offline --lib --no-default-features --features comments --target wasm32v1-none
 
       - name: Check MSRV
-        run: cargo +"${MSRV}" check  --offline --all-targets
+        run: cargo +"${MSRV}" check --offline --all-targets --locked
 
       - name: Verify crate packaging
         run: cargo publish  --dry-run
