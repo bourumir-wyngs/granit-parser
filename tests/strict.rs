@@ -19,6 +19,16 @@ fn events_with_inputs(
 }
 
 fn assert_relaxed_only(yaml: &str, reference: &str, line: usize, col: usize) {
+    assert_relaxed_only_with_kind(yaml, reference, line, col, &ErrorKind::InvalidIndentation);
+}
+
+fn assert_relaxed_only_with_kind(
+    yaml: &str,
+    reference: &str,
+    line: usize,
+    col: usize,
+    kind: &ErrorKind,
+) {
     let expected = Parser::new_from_str(reference)
         .map(|result| result.expect("valid reference").0)
         .collect::<Vec<_>>();
@@ -54,6 +64,7 @@ fn assert_relaxed_only(yaml: &str, reference: &str, line: usize, col: usize) {
             yaml,
             line,
             col,
+            kind,
         );
     }
     let error = Scanner::with_options(
@@ -62,7 +73,7 @@ fn assert_relaxed_only(yaml: &str, reference: &str, line: usize, col: usize) {
     )
     .find_map(Result::err)
     .expect("strict scanner accepted relaxed indentation");
-    assert_indent_error(&error, yaml, line, col);
+    assert_indent_error(&error, yaml, line, col, kind);
 
     // The corresponding conforming spelling must also work through every input backend.
     for result in events_with_inputs(reference, true) {
@@ -75,12 +86,8 @@ fn assert_relaxed_only(yaml: &str, reference: &str, line: usize, col: usize) {
     }
 }
 
-fn assert_indent_error(error: &ScanError, yaml: &str, line: usize, col: usize) {
-    assert_eq!(
-        error.kind(),
-        &ErrorKind::InvalidIndentation,
-        "input: {yaml:?}"
-    );
+fn assert_indent_error(error: &ScanError, yaml: &str, line: usize, col: usize, kind: &ErrorKind) {
+    assert_eq!(error.kind(), kind, "input: {yaml:?}");
     assert_eq!(
         (error.marker().line(), error.marker().col()),
         (line, col),
@@ -201,6 +208,15 @@ fn strict_rejects_under_indented_escaped_line_breaks_in_block_context() {
     for (yaml, reference, line, col) in [
         ("key: \"first\\\nsecond\"\n", "key: \"firstsecond\"\n", 2, 0),
         ("- \"first\\\nsecond\"\n", "- \"firstsecond\"\n", 2, 0),
+        ("key: \"first\\\n\"\n", "key: \"first\"\n", 2, 0),
+        ("- \"first\\\n\"\n", "- \"first\"\n", 2, 0),
+        (
+            "outer:\n  key: \"first\\\n  \"\n",
+            "outer:\n  key: \"first\"\n",
+            3,
+            2,
+        ),
+        ("- key: \"first\\\n  \"\n", "- key: \"first\"\n", 2, 2),
         (
             "outer:\n  key: \"first\\\n  second\"\n",
             "outer:\n  key: \"firstsecond\"\n",
@@ -213,13 +229,39 @@ fn strict_rejects_under_indented_escaped_line_breaks_in_block_context() {
             3,
             0,
         ),
+        ("key: \"first\\\n\n\"\n", "key: \"first\\n\"\n", 3, 0),
+        ("key: \"first\\\r\n\"\r\n", "key: \"first\"\n", 2, 0),
     ] {
         assert_relaxed_only(yaml, reference, line, col);
     }
-    // Indented continuations and a closing quote at the line start stay valid.
-    for yaml in ["key: \"first\\\n second\"\n", "key: \"first\\\n\"\n"] {
+    // Indented continuations and closing quotes stay valid; root scalars need no indentation.
+    for yaml in [
+        "key: \"first\\\n second\"\n",
+        "key: \"first\\\n \"\n",
+        "outer:\n  key: \"first\\\n   \"\n",
+        "- key: \"first\\\n   \"\n",
+        "\"first\\\n\"\n",
+    ] {
         for result in events_with_inputs(yaml, true) {
             result.unwrap_or_else(|error| panic!("strict rejected {yaml:?}: {error}"));
+        }
+    }
+}
+
+#[test]
+fn strict_rejects_under_indented_closing_quotes_after_folded_line_breaks() {
+    for quote in ['\'', '"'] {
+        for (prefix, indent, line) in [("key: ", 0, 2), ("- ", 0, 2), ("outer:\n  key: ", 2, 3)] {
+            let spaces = " ".repeat(indent);
+            let yaml = format!("{prefix}{quote}first\n{spaces}{quote}\n");
+            let reference = format!("{prefix}{quote}first\n{spaces} {quote}\n");
+            assert_relaxed_only_with_kind(
+                &yaml,
+                &reference,
+                line,
+                indent,
+                &ErrorKind::InvalidQuotedScalarIndent,
+            );
         }
     }
 }
@@ -310,6 +352,8 @@ fn strict_rejects_tabs_used_instead_of_flow_indentation() {
 #[test]
 fn conforming_flow_indentation_has_identical_events_in_both_modes() {
     for yaml in [
+        "'first\n'\n",
+        "\"first\n\"\n",
         "[\nvalue,\n{key: value}\n]\n",
         "key: [\n 1, 2, 3,\n 4, 5, 6\n ]\n",
         "key:\n  [\n value\n ]\n",

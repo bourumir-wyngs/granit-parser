@@ -3608,11 +3608,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // Continuation lines of a quoted scalar in block context must be indented more than
             // the enclosing block (s-flow-line-prefix(n), YAML 1.2.2 [69]). Compare against that
             // block's indentation, not the temporary one-column indent added after `:` / `-`:
-            // `foo: "a\n b"` is valid (n = 1).
+            // `foo: "a\n b"` is valid (n = 1). In strict mode this also applies to closing quotes.
             if leading_blanks && has_leading_break && self.flow_level == 0 {
                 let next_ch = self.input.peek();
                 let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
-                if !is_closing_quote && (self.mark.col as isize) <= self.flow_block_indent() {
+                if (!is_closing_quote || self.options.strict_indentation)
+                    && (self.mark.col as isize) <= self.flow_block_indent()
+                {
                     return Err(self.scan_error(ErrorKind::InvalidQuotedScalarIndent));
                 }
             }
@@ -3620,12 +3622,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // An escaped line break (`\` at the end of a line) sets only `leading_blanks`, so the
             // block-context check above skips it. s-double-escaped [112] still ends in
             // s-flow-line-prefix(n): in strict mode the continuation must be indented past the
-            // enclosing block, as in flow context.
+            // enclosing block, including before a closing quote, as in flow context.
             if leading_blanks
                 && !has_leading_break
                 && self.options.strict_indentation
                 && self.flow_level == 0
-                && self.input.peek() != '"'
                 && (self.mark.col as isize) <= self.flow_block_indent()
             {
                 return Err(self.scan_error(ErrorKind::InvalidIndentation));
