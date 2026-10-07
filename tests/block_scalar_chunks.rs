@@ -148,6 +148,51 @@ fn indentation_only_last_line_at_eof_adds_no_line_break() {
 }
 
 #[test]
+fn empty_block_scalar_at_eof_preserves_yaml_suite_chomping() {
+    // JEF9-02 expects keep chomping to retain one newline for a whitespace-only scalar
+    // at EOF, even when the final spaces have no terminating line break.
+    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+        for newline in ["\n", "\r", "\r\n"] {
+            for (empty_lines, kept) in [(0, "\n"), (1, "\n"), (2, "\n\n")] {
+                for (header, expected) in [
+                    ("", ""),
+                    ("-", ""),
+                    ("+", kept),
+                    ("2", ""),
+                    ("2-", ""),
+                    ("2+", kept),
+                ] {
+                    let source = format!(
+                        "{indicator}{header}{newline}{}  ",
+                        format!("  {newline}").repeat(empty_lines)
+                    );
+                    let events = parse_all_inputs(&source);
+                    let (value, actual_style, span) = block_scalar(&events);
+                    assert_eq!(value, expected, "{source:?}");
+                    assert_eq!(actual_style, style);
+                    assert_eq!(
+                        span.end,
+                        Marker::new(source.chars().count(), empty_lines + 2, 2)
+                    );
+                    assert_eq!(span.end.byte_offset(), Some(source.len()));
+                }
+            }
+        }
+    }
+
+    for (source, expected) in [
+        ("|+\n", ""),
+        ("- |+\n", ""),
+        ("- |+\n   ", "\n"),
+        ("- |+\n   \n", "\n"),
+    ] {
+        let events = parse_all_inputs(source);
+        let (value, _, _) = block_scalar(&events);
+        assert_eq!(value, expected, "{source:?}");
+    }
+}
+
+#[test]
 fn unterminated_final_lines_preserve_short_boundaries_and_chomping() {
     for length in [1, 7, 8, 15, 16, 31, 32, 127, 128, 4096] {
         let contents = format!("{}é🦀", "x".repeat(length));
