@@ -9,7 +9,8 @@ use std::{
 use libtest_mimic::{run, Arguments, Failed, Trial};
 
 use granit_parser::{
-    Event, Marker, Options, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver, Tag,
+    Event, Marker, Options, Parser, ScalarStyle, ScanError, Span, SpannedEventReceiver,
+    StructureStyle, Tag,
 };
 
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -41,11 +42,11 @@ fn main() -> Result<ExitCode> {
     }
 
     if !Path::new(YAML_TEST_SUITE_SRC).is_dir() {
-        eprintln!("===================================================================");
-        eprintln!("/!\\ yaml-test-suite/src directory not found, Skipping tests /!\\");
-        eprintln!("If you intend to contribute to the library, restore the test suite.");
-        eprintln!("===================================================================");
-        return Ok(ExitCode::SUCCESS);
+        return Err(format!(
+            "{YAML_TEST_SUITE_SRC} is missing; run from the repository root after \
+             `git submodule update --init tests/yaml-test-suite`"
+        )
+        .into());
     }
 
     let mut arguments = Arguments::from_args();
@@ -60,6 +61,9 @@ fn main() -> Result<ExitCode> {
         })
         .collect::<Result<_>>()?;
     let mut tests: Vec<_> = tests.into_iter().flatten().collect();
+    if tests.is_empty() {
+        return Err("yaml-test-suite contains no active tests".into());
+    }
     tests.sort_by(|a, b| a.name().cmp(b.name()));
 
     Ok(run(&arguments, tests).exit_code())
@@ -159,6 +163,9 @@ fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Trial>> {
         }
 
         if current_test.skip == Some(true) {
+            // Respect upstream's definition of the active suite, but make these
+            // exclusions visible rather than silently omitting them.
+            eprintln!("{name}: disabled by upstream (skip: true)");
             continue;
         }
 
@@ -268,8 +275,8 @@ fn parse_suite_field(
         Ok(next_idx)
     } else {
         match key {
-            "fail" => test.expected_error = Some(value == "true"),
-            "skip" => test.skip = Some(true),
+            "fail" => test.expected_error = Some(value.trim().parse()?),
+            "skip" => test.skip = Some(value.trim().parse()?),
             _ => {}
         }
         Ok(next_idx)
@@ -344,7 +351,12 @@ fn parse_to_events(source: &str, options: Options) -> Result<EventReporter<'_>, 
     // Parse as string
     for x in Parser::new_from_str_with_options(source, options.clone()) {
         match x {
-            Ok(event) => str_events.push(event),
+            Ok(event) => {
+                // Validate every emitted event, including comments and the prefix
+                // of malformed input before its expected parse error.
+                assert_valid_byte_span(source, &event.0, event.1);
+                str_events.push(event);
+            }
             Err(e) => {
                 str_error = Some(e);
                 break;
@@ -379,6 +391,30 @@ fn parse_to_events(source: &str, options: Options) -> Result<EventReporter<'_>, 
     Ok(reporter)
 }
 
+fn assert_valid_byte_span(source: &str, event: &Event<'_>, span: Span) {
+    assert!(
+        span.end.index() >= span.start.index(),
+        "{event:?} span end before start: {span:?}; input: {source:?}",
+    );
+
+    for (which, marker) in [("start", span.start), ("end", span.end)] {
+        let byte = marker.byte_offset().unwrap_or_else(|| {
+            panic!("{event:?} {which} marker has no byte offset; input: {source:?}")
+        });
+        assert!(
+            source.is_char_boundary(byte),
+            "{event:?} {which} byte offset {byte} is outside the input or not a char boundary; \
+             input: {source:?}",
+        );
+        assert_eq!(
+            source[..byte].chars().count(),
+            marker.index(),
+            "{event:?} {which} byte offset {byte} does not match its character index; \
+             input: {source:?}",
+        );
+    }
+}
+
 #[derive(Default)]
 /// A [`SpannedEventReceiver`] checking for inconsistencies in event [`Spans`].
 pub struct EventReporter<'input> {
@@ -409,16 +445,32 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
             Event::StreamStart => "+STR".into(),
             Event::StreamEnd => "-STR".into(),
 
-            Event::DocumentStart(..) => "+DOC".into(),
+            Event::DocumentStart(explicit, _) => if explicit { "+DOC ---" } else { "+DOC" }.into(),
             Event::DocumentEnd => "-DOC".into(),
 
-            Event::SequenceStart(_, idx, tag) => {
-                format!("+SEQ{}{}", format_index(idx), format_tag(tag.as_ref()))
+            Event::SequenceStart(style, idx, tag) => {
+                let style = match style {
+                    StructureStyle::Block => "",
+                    StructureStyle::Flow => " []",
+                };
+                format!(
+                    "+SEQ{style}{}{}",
+                    format_index(idx),
+                    format_tag(tag.as_ref())
+                )
             }
             Event::SequenceEnd => "-SEQ".into(),
 
-            Event::MappingStart(_, idx, tag) => {
-                format!("+MAP{}{}", format_index(idx), format_tag(tag.as_ref()))
+            Event::MappingStart(style, idx, tag) => {
+                let style = match style {
+                    StructureStyle::Block => "",
+                    StructureStyle::Flow => " {}",
+                };
+                format!(
+                    "+MAP{style}{}{}",
+                    format_index(idx),
+                    format_tag(tag.as_ref())
+                )
             }
             Event::MappingEnd => "-MAP".into(),
 
@@ -515,10 +567,10 @@ fn visual_to_raw(yaml: &str) -> String {
     yaml
 }
 
-/// Adapt the expectations to the yaml-rust reasonable limitations
+/// Adapt suite events to the parser's public event representation.
 ///
-/// Drop information on node styles (flow/block) and anchor names.
-/// Both are things that can be omitted according to spec.
+/// Anchors use numeric IDs, missing untagged nodes use `~`, and document ends
+/// do not expose whether the marker was explicit. Preserve the other metadata.
 fn expected_events(expected_tree: &str) -> Vec<String> {
     let mut anchors = vec![];
     expected_tree
@@ -546,12 +598,9 @@ fn expected_events(expected_tree: &str) -> Vec<String> {
                     .0;
                 s = s.replace(&s[start..], &format!("*{}", idx + 1));
             }
-            // Dropping style information
             match &*s {
-                "+DOC ---" => "+DOC".into(),
+                // The public event does not carry document-end explicitness.
                 "-DOC ..." => "-DOC".into(),
-                s if s.starts_with("+SEQ []") => s.replacen("+SEQ []", "+SEQ", 1),
-                s if s.starts_with("+MAP {}") => s.replacen("+MAP {}", "+MAP", 1),
                 // The parser represents untagged missing/null scalars as a plain "~" event.
                 // Normalize the YAML test-suite's canonical empty-content form to that local
                 // convention, including anchored nodes.

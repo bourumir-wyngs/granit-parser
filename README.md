@@ -336,6 +336,25 @@ See CHANGELOG.md for details.
 YAML 1.1 line breaks. YAML 1.1 defines NEL (U+0085), LS (U+2028) and PS (U+2029) as line breaks, this parser
 uses `\n`/`\r` only line-breaking that as expected in YAML 1.2. 
 
+## Testing
+
+Run the tests from a repository checkout with the official YAML suite initialized:
+
+```sh
+git submodule update --init tests/yaml-test-suite
+cargo test
+cargo test --test yaml-test-suite -- ::strict
+```
+
+Strict mode runs every active upstream case without case-specific overrides. The
+runner reports cases disabled by upstream's own `skip: true` metadata separately
+(currently the four `ZYU8` directive variants). The relaxed-mode compatibility
+override for `9C9N` does not apply to strict mode.
+
+Missing or empty suite data fails the run. The suite data is not included in the
+published crate, so running these conformance tests requires a repository checkout.
+The filesystem-backed suite is not run under Miri isolation.
+
 ## Tools
 
 The repository includes a few developer tools for inspecting parser output and measuring performance.
