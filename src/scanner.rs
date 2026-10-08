@@ -2056,7 +2056,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        if need_whitespace {
+        // End of input also separates: `?` is a key indicator when followed by a blank, a line
+        // break or the end of input (`is_blank_or_breakz`), so `?` as the last character is a
+        // complete (empty) explicit key, like `?\n`.
+        if need_whitespace && !self.input.next_is_z() {
             Err(self.scan_error(ErrorKind::ExpectedWhitespace))
         } else {
             Ok(false)
@@ -3293,13 +3296,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         // Chomp the tail.
         if chomping != Chomping::Strip {
-            string.push_str(&leading_break);
-            // If we had reached an eof but the last character wasn't an end-of-line, check if the
-            // last line was indented at least as the rest of the scalar, then we need to consider
-            // there is a newline.
-            if self.input.next_is_z() && self.mark.col >= indent.max(1) {
+            // If we had reached an eof but the last content line wasn't terminated by a line
+            // break, check if the last line was indented at least as the rest of the scalar, then
+            // we need to consider there is a newline. When that line already ended with a break
+            // (`leading_break`), the indentation-only remainder at EOF is not a line (it has no
+            // break, so it is no `l-empty`) and adds nothing.
+            if leading_break.is_empty() && self.input.next_is_z() && self.mark.col >= indent.max(1)
+            {
                 string.push('\n');
             }
+            string.push_str(&leading_break);
         }
 
         if chomping == Chomping::Keep {
@@ -3599,13 +3605,30 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 return Err(self.scan_error(ErrorKind::InvalidIndentation));
             }
 
-            // Preserve the existing continuation rules for quoted scalars in block context.
+            // Continuation lines of a quoted scalar in block context must be indented more than
+            // the enclosing block (s-flow-line-prefix(n), YAML 1.2.2 [69]). Compare against that
+            // block's indentation, not the temporary one-column indent added after `:` / `-`:
+            // `foo: "a\n b"` is valid (n = 1).
             if leading_blanks && has_leading_break && self.flow_level == 0 {
                 let next_ch = self.input.peek();
                 let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
-                if !is_closing_quote && (self.mark.col as isize) <= self.indent {
+                if !is_closing_quote && (self.mark.col as isize) <= self.flow_block_indent() {
                     return Err(self.scan_error(ErrorKind::InvalidQuotedScalarIndent));
                 }
+            }
+
+            // An escaped line break (`\` at the end of a line) sets only `leading_blanks`, so the
+            // block-context check above skips it. s-double-escaped [112] still ends in
+            // s-flow-line-prefix(n): in strict mode the continuation must be indented past the
+            // enclosing block, as in flow context.
+            if leading_blanks
+                && !has_leading_break
+                && self.options.strict_indentation
+                && self.flow_level == 0
+                && self.input.peek() != '"'
+                && (self.mark.col as isize) <= self.flow_block_indent()
+            {
+                return Err(self.scan_error(ErrorKind::InvalidIndentation));
             }
 
             // Join the whitespace or fold line breaks.
@@ -4185,11 +4208,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
-        let stopped_after_comment = self.skip_yaml_whitespace()?;
-        if self.input.peek() == '\t' {
-            return Err(self.scan_error(ErrorKind::TabNotAllowed));
+        // A tab after a block `?` would be indentation for the key node. In a flow collection
+        // there is no indentation and tabs are ordinary separation white space (s-white), which
+        // the next token fetch skips.
+        if self.flow_level == 0 {
+            let stopped_after_comment = self.skip_yaml_whitespace()?;
+            if self.input.peek() == '\t' {
+                return Err(self.scan_error(ErrorKind::TabNotAllowed));
+            }
+            self.explicit_key_tab_check_pending = stopped_after_comment;
         }
-        self.explicit_key_tab_check_pending = stopped_after_comment;
         self.insert_token(
             token_index,
             Token(Span::new(start_mark, end_mark), TokenType::Key),
@@ -6049,6 +6077,32 @@ mod test {
             first_scanner_error_kind("a: \"one\nbad\"\n"),
             ErrorKind::InvalidQuotedScalarIndent
         );
+        assert_eq!(
+            first_scanner_error_kind("a:\n  b: 'one\n  bad'\n"),
+            ErrorKind::InvalidQuotedScalarIndent
+        );
+    }
+
+    #[test]
+    fn quoted_scalar_continuation_one_column_past_block_indent() {
+        // s-flow-line-prefix(n): a continuation line needs only n spaces, where n is one more
+        // than the indentation of the enclosing block mapping or sequence.
+        for input in [
+            "a: \"one\n two\"\n",
+            "a: 'one\n two'\n",
+            "a:\n  b: \"one\n   two\"\n",
+            "- a: \"one\n   two\"\n",
+            "? k\n: \"one\n two\"\n",
+        ] {
+            let mut scanner = Scanner::new(StrInput::new(input));
+            loop {
+                match scanner.next_token() {
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(error) => panic!("{input:?}: {error}"),
+                }
+            }
+        }
     }
 
     #[test]

@@ -16,6 +16,18 @@
   Replace `SkipTabs::Result(found_tabs, has_valid_yaml_ws)` with
   `WhitespaceResult::new(found_tabs, has_valid_yaml_ws)`; its result accessors are unchanged.
   Consumed-character counts, comment separation errors, and tab behavior are preserved.
+- Accept an explicit key indicator `?` as the last character of the input (it was rejected with
+  "expected whitespace", while `?` followed by a line break was accepted).
+- Accept quoted scalar continuation lines indented one column past the enclosing block
+  (`a: "one\n two"`). They were rejected with "invalid indentation in multiline quoted scalar".
+- A block scalar ending in an indentation-only line with no line break at the end of input
+  (`|\n  a\n  `) no longer gains an extra line break (`"a\n\n"`, now `"a\n"`).
+- The `SequenceEnd` span of an indentless sequence (`key:\n- a`) is empty at the next token,
+  instead of covering that token (`? ` of the next key).
+- Accept tabs after an explicit key indicator `?` inside flow collections (`{?\ta: b}`); the
+  tab check only applies in block context, where a tab there would indent the key.
+- `strict_indentation` also checks the line after an escaped line break (`\` at the end of a
+  line) in a double-quoted scalar in block context (`key: "a\` then `b"` at column 0).
 
 ## 1.4.0
 
