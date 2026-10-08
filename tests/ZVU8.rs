@@ -38,6 +38,7 @@ fn zyu8_01_punctuation_directive() {
 }
 
 #[test]
+#[ignore = "Disabled upstream: formally valid YAML 1.2, but support is not encouraged"]
 fn zyu8_02_extra_version_parameter() {
     assert_empty_document("%YAML 1.1 1.2\n---\n");
 }
