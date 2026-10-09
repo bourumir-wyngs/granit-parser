@@ -3,7 +3,7 @@ name = "granit-parser-benchmarks"
 version = "0.0.0"
 publish = false
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.81"
 license = "MIT OR Apache-2.0"
 
 [features]
@@ -15,6 +15,13 @@ debug_prints = ["std", "granit-parser/debug_prints"]
 
 [dependencies]
 granit-parser = { path = "../..", default-features = false }
+
+# Keep the benchmark toolchain aligned with the repository MSRV.
+# clap 4.6.x requires edition2024 support, which Cargo 1.81 cannot parse.
+[patch.crates-io]
+clap = "=4.5.40"
+clap_builder = "=4.5.40"
+clap_derive = "=4.5.40"
 
 [dev-dependencies]
 divan = { version = "5.0.2", package = "codspeed-divan-compat" }
