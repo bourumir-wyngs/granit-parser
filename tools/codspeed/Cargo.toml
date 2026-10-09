@@ -3,7 +3,8 @@ name = "granit-parser-benchmarks"
 version = "0.0.0"
 publish = false
 edition = "2021"
-rust-version = "1.81"
+# CodSpeed is built with stable Rust, independently of the parser's MSRV.
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 
 [features]
@@ -18,11 +19,6 @@ granit-parser = { path = "../..", default-features = false }
 
 [dev-dependencies]
 divan = { version = "5.0.2", package = "codspeed-divan-compat" }
-
-[patch.crates-io]
-clap = "=4.5.40"
-clap_builder = "=4.5.40"
-clap_derive = "=4.5.40"
 
 [[bench]]
 name = "parser"
