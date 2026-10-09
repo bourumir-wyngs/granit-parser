@@ -112,7 +112,7 @@ checksum = "9f1f0d310082fd5de539d4f41601182241147498444a7695c520288a0cdbead6"
 
 [[package]]
 name = "granit-parser"
-version = "2.0.0-rc0"
+version = "2.0.0"
 dependencies = [
  "arraydeque",
  "libtest-mimic",
