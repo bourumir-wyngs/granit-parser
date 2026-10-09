@@ -73,6 +73,8 @@
 //! Existing constructors use these defaults.
 //! Without the `comments` feature, comment capture and emission are compiled out of scanners,
 //! parsers, and parser stacks. YAML comments are still skipped and validated.
+//! [`Options::emit_comments`] remains available and defaults to `true` with the feature enabled
+//! and `false` without it. Setting it to `true` has no effect without the feature.
 //! [`Parser::new_from_str_with_options`], [`Parser::new_from_iter_with_options`],
 //! [`Parser::new_from_fallible_iter_with_options`], [`Parser::with_options`],
 //! [`Scanner::with_options`], and [`ParserStack::with_options`] accept customized options created
@@ -88,8 +90,8 @@
 //! validated and tracked.
 //!
 //! `Comment`, `Placement`, `TokenType::Comment`, `Event::Comment`, `ErrorKind::TooManyComments`,
-//! `Options::emit_comments`, `Options::max_buffered_comment_events`, and
-//! `Input::may_contain_comments` are available only with this feature.
+//! `Options::max_buffered_comment_events`, and `Input::may_contain_comments` are available only
+//! with this feature.
 //!
 //! #### `error_messages` (enabled by default)
 //! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and
@@ -162,9 +164,6 @@ mod readme_doctests {}
 /// ```
 /// ```compile_fail
 /// let _ = granit_parser::TokenType::Comment;
-/// ```
-/// ```compile_fail
-/// let _ = granit_parser::Options::default().emit_comments;
 /// ```
 /// ```compile_fail
 /// let _ = granit_parser::Options::default().max_buffered_comment_events;

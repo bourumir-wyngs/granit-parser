@@ -43,8 +43,11 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 Comments are emitted as [`Event::Comment(text, placement)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
 
-Applications that do not use comments can disable their capture and emission. Comments are still
-recognized and validated as YAML syntax. This must be set both in [options](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html) and by disabling default `comments` feature.
+Applications that do not use comments can disable their capture and emission by setting
+[`Options::emit_comments`](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html#structfield.emit_comments)
+to `false` or disabling the default `comments` Cargo feature. The field is always available and
+defaults to `true` with the feature enabled and `false` without it. Setting it to `true` has no
+effect without the feature. Comments are still recognized and validated as YAML syntax.
 
 Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
@@ -228,9 +231,10 @@ This parser supports explicit handling for JSON-style Unicode surrogate pairs in
   Uses `Cow<'input, str>` to avoid unnecessary allocations when parsing from in-memory strings.
 
 * Comment handling
-  If your application does not use comment parsing, it is possible to improve performance by disabling comment
-  emission. This can be done the best way by both setting `Options::emit_comments` to `false` and disabling the 
-  `comments` Cargo feature. Comments can still be present in YAML, they are not emitted.
+  If your application does not use comment parsing, set `Options::emit_comments = false` and disable the
+  `comments` Cargo feature. The option suppresses capture and emission even if another dependency enables
+  the feature through Cargo feature unification. Disabling the feature compiles out comment handling
+  state when no dependency enables it. Comments can still be present in YAML, they are not emitted.
 
 ### Internal extensions
 

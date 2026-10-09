@@ -202,7 +202,7 @@ where
     /// With the `comments` Cargo feature, disabling comment emission also suppresses comment
     /// events from parsers and replay streams supplied by the caller. Construct caller-supplied
     /// parsers with emission disabled as well to avoid capturing comments before filtering them.
-    /// Without the feature, comment options and events are absent.
+    /// Without the feature, comment events are absent and [`Options::emit_comments`] has no effect.
     #[must_use]
     pub fn with_options(options: Options) -> Self {
         Self {

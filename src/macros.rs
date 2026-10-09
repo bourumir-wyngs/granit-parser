@@ -9,11 +9,11 @@
 ///
 /// ```rust
 /// let options = granit_parser::options! {
-///     #[cfg(feature = "comments")]
 ///     emit_comments: false,
 ///     simple_key_max_lookahead: 2048,
 /// };
 ///
+/// assert!(!options.emit_comments);
 /// assert_eq!(options.simple_key_max_lookahead, 2048);
 /// assert_eq!(options.flow_nesting_limit, 255);
 /// assert_eq!(options.block_nesting_limit, 255);

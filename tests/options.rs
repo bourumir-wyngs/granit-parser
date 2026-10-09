@@ -14,8 +14,7 @@ fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
     assert!(!defaults.strict_indentation);
-    #[cfg(feature = "comments")]
-    assert!(defaults.emit_comments);
+    assert_eq!(defaults.emit_comments, cfg!(feature = "comments"));
     #[cfg(feature = "comments")]
     assert_eq!(defaults.max_buffered_comment_events, 96);
     assert_eq!(defaults.simple_key_max_lookahead, 1024);
@@ -27,7 +26,6 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
 
     let options = granit_parser::options! {
         strict_indentation: true,
-        #[cfg(feature = "comments")]
         emit_comments: false,
         #[cfg(feature = "comments")]
         max_buffered_comment_events: 7,
@@ -39,7 +37,6 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     };
 
     assert!(options.strict_indentation);
-    #[cfg(feature = "comments")]
     assert!(!options.emit_comments);
     #[cfg(feature = "comments")]
     assert_eq!(options.max_buffered_comment_events, 7);
@@ -63,6 +60,42 @@ fn options_macro_configures_parser() {
 }
 
 #[test]
+fn comment_emission_option_is_available_with_and_without_comments() {
+    let yaml = "# before\nvalue # after\n";
+    let mut setter_options = Options::default();
+
+    for emit_comments in [false, true, false] {
+        let options = granit_parser::options! { emit_comments: emit_comments };
+        setter_options.set_emit_comments(emit_comments);
+        assert_eq!(options, setter_options);
+        let expect_comments = cfg!(feature = "comments") && emit_comments;
+
+        let events = Parser::with_options(StrInput::new(yaml), options.clone())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("comment emission must not affect parsing");
+        assert_eq!(
+            events
+                .iter()
+                .any(|(event, _)| support::is_comment_event(event)),
+            expect_comments
+        );
+        assert!(events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+
+        let tokens = Scanner::with_options(StrInput::new(yaml), options.clone())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("comment emission must not affect scanning");
+        assert_eq!(
+            tokens
+                .iter()
+                .any(|token| support::is_comment_token(token.token_type())),
+            expect_comments
+        );
+    }
+}
+
+#[test]
 fn new_uses_default_options() {
     let yaml = "root: [a, {b: c}]\n";
     let from_new: Vec<_> = Parser::new(StrInput::new(yaml)).collect();
@@ -76,7 +109,6 @@ fn new_uses_default_options() {
 fn common_input_constructors_accept_options() {
     let yaml = String::from("# ignored\nvalue\n");
     let options = granit_parser::options! {
-        #[cfg(feature = "comments")]
         emit_comments: false,
     };
 
