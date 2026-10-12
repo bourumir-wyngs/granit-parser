@@ -31,8 +31,14 @@
   (`|\n  a\n  `) no longer gains an extra line break (`"a\n\n"`, now `"a\n"`).
 - The `SequenceEnd` span of an indentless sequence (`key:\n- a`) is empty at the next token,
   instead of covering that token (`? ` of the next key).
-- Accept tabs after an explicit key indicator `?` inside flow collections (`{?\ta: b}`); the
-  tab check only applies in block context, where a tab there would indent the key.
+- Accept tabs as separation after an explicit key indicator `?` in flow collections
+  (`{?\ta: b}`) and before block mapping scalar keys (`?\tkey\n: value\n` and
+  `? \tkey\n: value\n`), as permitted by YAML 1.2.2. Tabs used as required indentation,
+  including before compact block collections (`?\t-` and `?\tkey:`), remain invalid.
+- Preserve the physical end-of-input line and column for stream-end and block-end spans when
+  the last line has no line break, instead of moving them to column zero of a nonexistent next line.
+- Report the physical source-error position when fallible input fails during a suppressed trailing
+  comment without a final line break. Comment emission no longer changes these error coordinates.
 - `strict_indentation` also checks the line after an escaped line break (`\` at the end of a
   line) in a double-quoted scalar in block context (`key: "a\` then `b"` at column 0).
 

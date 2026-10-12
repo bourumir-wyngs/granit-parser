@@ -87,7 +87,7 @@ fn excluded_comments_preserve_syntax_validation() {
             "key: value # control \u{1}\n",
             ErrorKind::UnexpectedCharacter { character: '\u{1}' },
         ),
-        ("?\tkey\n", ErrorKind::ExpectedWhitespace),
+        ("?\n\tkey\n", ErrorKind::TabNotAllowed),
     ] {
         let string = Parser::new_from_str(yaml).find_map(Result::err).unwrap();
         let buffered = Parser::new_from_iter(yaml.chars())

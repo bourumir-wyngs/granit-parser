@@ -121,21 +121,20 @@ fn indentless_sequence_end_span_is_empty_before_the_next_key() {
 
 #[test]
 fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
-    for (yaml, next_token, line) in [
-        ("clé:\r\n- é\r\n? suite\r\n", "? suite", 3),
-        ("clé:\n- # empty\n? suite\n", "? suite", 3),
-        ("outer:\n  clé:\n  - é\nsuite: 1\n", "suite", 4),
-        ("clé:\n- é\n...\n", "...", 3),
-        ("clé:\n- é\n---\nsuivant\n", "---", 3),
-        // EOF synthesizes a block-end token at column zero of the following line.
-        ("clé:\n- é", "", 3),
+    for (yaml, next_token, line, col) in [
+        ("clé:\r\n- é\r\n? suite\r\n", "? suite", 3, 0),
+        ("clé:\n- # empty\n? suite\n", "? suite", 3, 0),
+        ("outer:\n  clé:\n  - é\nsuite: 1\n", "suite", 4, 0),
+        ("clé:\n- é\n...\n", "...", 3, 0),
+        ("clé:\n- é\n---\nsuivant\n", "---", 3, 0),
+        ("clé:\n- é", "", 2, 3),
     ] {
         let offset = if next_token.is_empty() {
             yaml.len()
         } else {
             yaml.find(next_token).unwrap()
         };
-        let marker = Marker::new(yaml[..offset].chars().count(), line, 0);
+        let marker = Marker::new(yaml[..offset].chars().count(), line, col);
         let from_str = event_spans(yaml);
         for other in [
             Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
@@ -156,6 +155,55 @@ fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
         assert_eq!(span.slice(yaml), Some(""));
         assert_eq!(span.indent, None);
         assert_eq!(span.tag_start(), None);
+    }
+}
+
+#[test]
+fn stream_and_block_collection_end_spans_use_physical_eof() {
+    for (yaml, line, col, block_end_count) in [
+        ("", 1, 0, 0),
+        ("😀", 1, 1, 0),
+        ("😀\n", 2, 0, 0),
+        ("😀\r\n", 2, 0, 0),
+        ("😀\r", 2, 0, 0),
+        ("\r\n😀", 2, 1, 0),
+        ("[]", 1, 2, 0),
+        ("{}", 1, 2, 0),
+        ("clé:", 1, 4, 1),
+        ("-", 1, 1, 1),
+        ("?", 1, 1, 1),
+        ("outer:\n  - é", 2, 5, 2),
+        ("outer:\r\n  - é\r\n", 3, 0, 2),
+        ("clé:\n- é", 2, 3, 2),
+    ] {
+        let from_str = event_spans(yaml);
+        for other in [
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
+                .collect::<Result<Vec<_>, _>>(),
+        ] {
+            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
+        }
+        let marker = Marker::new(yaml.chars().count(), line, col);
+        let (last, stream_end) = from_str.last().expect("stream must have an end event");
+        assert_eq!(last, &Event::StreamEnd);
+
+        // Flow endings cover their closing delimiter; block endings and StreamEnd
+        // are empty spans at the actual end of the input, including its last line.
+        let block_ends: Vec<_> = from_str
+            .iter()
+            .filter_map(|(event, span)| {
+                (matches!(event, Event::SequenceEnd | Event::MappingEnd) && span.is_empty())
+                    .then_some(span)
+            })
+            .collect();
+        assert_eq!(block_ends.len(), block_end_count, "{yaml:?}");
+        for span in block_ends.into_iter().chain([stream_end]) {
+            assert_eq!(span.start, marker, "{yaml:?}");
+            assert_eq!(span.end, marker, "{yaml:?}");
+            assert_eq!(span.byte_range(), Some(yaml.len()..yaml.len()), "{yaml:?}");
+            assert_eq!(span.slice(yaml), Some(""));
+        }
     }
 }
 

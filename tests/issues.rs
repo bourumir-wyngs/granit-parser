@@ -631,10 +631,11 @@ fn test_issue37() {
 
             (Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),    Span::new(Marker::new(222, 11, 6).with_byte_offset(Some(222)), Marker::new(223, 11, 7).with_byte_offset(Some(223)))),
             (Event::Scalar("null".into(), ScalarStyle::Plain, 0, None), Span::new(Marker::new(230, 12, 6).with_byte_offset(Some(230)), Marker::new(234, 12, 10).with_byte_offset(Some(234)))),
-            (Event::SequenceEnd,                                        Span::new(Marker::new(239, 14, 0).with_byte_offset(Some(239)), Marker::new(239, 14, 0).with_byte_offset(Some(239)))),
-            (Event::MappingEnd,                                         Span::new(Marker::new(239, 14, 0).with_byte_offset(Some(239)), Marker::new(239, 14, 0).with_byte_offset(Some(239)))),
-            (Event::DocumentEnd,                                        Span::new(Marker::new(239, 14, 0).with_byte_offset(Some(239)), Marker::new(239, 14, 0).with_byte_offset(Some(239)))),
-            (Event::StreamEnd,                                          Span::new(Marker::new(239, 14, 0).with_byte_offset(Some(239)), Marker::new(239, 14, 0).with_byte_offset(Some(239))))
+            // The input ends after four spaces on line 13, without a final line break.
+            (Event::SequenceEnd,                                        Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
+            (Event::MappingEnd,                                         Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
+            (Event::DocumentEnd,                                        Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
+            (Event::StreamEnd,                                          Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239))))
         ]
     );
 }
