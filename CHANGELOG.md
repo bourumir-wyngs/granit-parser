@@ -2,8 +2,9 @@
 
 ## 2.0.0 (breaking changes)
 
-- Disabling the new feature `comments` now compiles out scanner comment capture, parser and stack
-  comment state, and the public comment types, variants, and `Options::max_buffered_comment_events`.
+- Added the default-enabled `comments` feature. Disabling it compiles out scanner comment capture,
+  parser and stack comment state, and the public comment types, variants, and
+  `Options::max_buffered_comment_events`, improving parsing performance by about 13%.
   YAML comments are still skipped and validated. Applications using `default-features = false`
   must enable `comments` to access
   `Comment`, `Placement`, comment token/event variants, or `Options::max_buffered_comment_events`.
@@ -19,6 +20,9 @@
   Replace `SkipTabs::Result(found_tabs, has_valid_yaml_ws)` with
   `WhitespaceResult::new(found_tabs, has_valid_yaml_ws)`; its result accessors are unchanged.
   Consumed-character counts, comment separation errors, and tab behavior are preserved.
+- Added `Options::strict_indentation` (default `false`) to require strict YAML-compliant indentation
+  for flow entries, delimiters, and scalar continuations (compliant with case 9C9N). Default behavior
+  is compatible with `PyYAML` and `ruamel.yaml`.
 - Accept an explicit key indicator `?` as the last character of the input (it was rejected with
   "expected whitespace", while `?` followed by a line break was accepted).
 - Accept quoted scalar continuation lines indented one column past the enclosing block
@@ -31,15 +35,6 @@
   tab check only applies in block context, where a tab there would indent the key.
 - `strict_indentation` also checks the line after an escaped line break (`\` at the end of a
   line) in a double-quoted scalar in block context (`key: "a\` then `b"` at column 0).
-
-## 1.4.0
-
-- Added the default-enabled `parser-comments` feature. Omitting it removes parser comment
-  presentation machinery, improving the performance by about 13 %. Applications using `default-features = false` must
-  explicitly enable `parser-comments` to retain parser comment events.
-- Add `Options::strict_indentation` (default `false`) to require strict YAML-compliant indentation for flow
-  entries, delimiters, and scalar continuations (compliant with case 9C9N). Default behavior
-  is compatible with `PyYAML` and `ruamel.yaml`.
 
 ## 1.3.0
 
