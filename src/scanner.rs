@@ -870,8 +870,9 @@ pub struct Scanner<'input, T> {
     interrupted_plain_by_comment: Option<Marker>,
     /// Whether the scanner is still validating whitespace after an explicit `?` key indicator.
     ///
-    /// This stays set across streamed comments to distinguish tab separation from the space-only
-    /// indentation required by a key node or compact block collection.
+    /// This stays set across streamed comments, and across node properties in strict mode, to
+    /// distinguish tab separation from the space-only indentation required by a key node or
+    /// compact block collection.
     explicit_key_tab_check_pending: bool,
     /// A stack of markers for opening brackets `[` and `{`.
     flow_markers: smallvec::SmallVec<[(Marker, char); 8]>,
@@ -1915,6 +1916,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         continue;
                     }
                     ' ' | '\n' | '\r' | '#' => {}
+                    '&' | '!' if self.options.strict_indentation => {}
                     _ => self.explicit_key_tab_check_pending = false,
                 }
             }
@@ -4234,10 +4236,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.explicit_key_tab_check_pending = false;
         // Block keys permit tab separation for scalar/flow nodes, but require spaces for
         // compact collections and indentation on subsequent lines. Keep that validation active
-        // across comments; flow collections use the ordinary whitespace skipper.
+        // across comments, and across properties in strict mode. Flow collections use the
+        // ordinary whitespace skipper.
         if self.flow_level == 0 {
             let stopped_after_comment = self.skip_yaml_whitespace()?;
-            self.explicit_key_tab_check_pending = stopped_after_comment;
+            self.explicit_key_tab_check_pending = stopped_after_comment
+                || (self.options.strict_indentation && matches!(self.input.peek(), '&' | '!'));
         }
         self.insert_token(
             token_index,

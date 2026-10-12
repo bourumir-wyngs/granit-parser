@@ -19,7 +19,8 @@
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
-    /// Whether to enforce strict YAML indentation rules for flow collections.
+    /// Whether to enforce strict YAML indentation rules for flow collections, scalar
+    /// continuations, and content following explicit-key anchor or tag properties.
     ///
     /// The default parsing is compatible with `PyYAML` and `ruamel.yaml`.
     /// `true` sets stricter indentation rules as required by the YAML specification,

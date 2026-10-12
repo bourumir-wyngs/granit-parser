@@ -27,6 +27,40 @@ fn collect_scalars(input: &str) -> Result<Vec<String>, ScanError> {
         .collect())
 }
 
+fn collect_structural_events_with_options(
+    input: &str,
+    options: Options,
+) -> Result<Vec<Event<'_>>, ScanError> {
+    Ok(collect_events_with_options(input, options)?
+        .into_iter()
+        .filter(|event| {
+            #[cfg(feature = "comments")]
+            if matches!(event, Event::Comment(..)) {
+                return false;
+            }
+            let _ = event;
+            true
+        })
+        .collect())
+}
+
+fn assert_structural_events_in_all_modes(input: &str, expected: &[Event<'_>]) {
+    for emit_comments in [false, true] {
+        for strict_indentation in [false, true] {
+            let options = granit_parser::options! {
+                emit_comments: emit_comments,
+                strict_indentation: strict_indentation,
+            };
+            let events = collect_structural_events_with_options(input, options)
+                .unwrap_or_else(|error| panic!("{input:?}: {error}"));
+            assert_eq!(
+                events, expected,
+                "{input:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}"
+            );
+        }
+    }
+}
+
 #[test]
 fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
     for value in [
@@ -221,6 +255,158 @@ fn explicit_key_tabs_after_comments_require_space_indentation() {
             &ErrorKind::TabNotAllowed,
             "{yaml:?}"
         );
+    }
+}
+
+#[test]
+fn explicit_key_properties_survive_tab_separation_and_comment_lines() {
+    // The key node retains both properties across s-separate(1,FLOW-OUT); the next key
+    // aliases that collection rather than defining a new anchor or losing its tag.
+    let expected = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::SequenceStart(
+            StructureStyle::Flow,
+            1,
+            Some(std::borrow::Cow::Owned(granit_parser::Tag::new(
+                "!", "local",
+            ))),
+        ),
+        Event::Scalar("é".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("item".into(), ScalarStyle::Plain, 0, None),
+        Event::SequenceEnd,
+        Event::Scalar("first".into(), ScalarStyle::Plain, 0, None),
+        Event::Alias(1),
+        Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("next".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("done".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    for properties in [
+        "&a !local # properties\n\t# comment",
+        "&a # anchor\n \t!local # tag",
+    ] {
+        let yaml = format!("?\t{properties}\n \t[é, item]\n: first\n?\t*a\n: second\nnext: done\n");
+        for line_break in ["\n", "\r", "\r\n"] {
+            assert_structural_events_in_all_modes(&yaml.replace('\n', line_break), &expected);
+        }
+    }
+}
+
+#[test]
+fn explicit_key_tab_state_ends_at_a_line_break_and_respects_parent_dedents() {
+    // A tab cannot indent a compact mapping on its own line, but a subsequent line can
+    // introduce a block mapping with space indentation. Dedents close the key and parent.
+    let yaml =
+        "- ?\t# key follows\n\t# comment\n    inner: value\n  : selected\n  next: done\n- tail\n";
+    let expected = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::SequenceStart(StructureStyle::Block, 0, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("inner".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::Scalar("selected".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("next".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("done".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::Scalar("tail".into(), ScalarStyle::Plain, 0, None),
+        Event::SequenceEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    for line_break in ["\n", "\r", "\r\n"] {
+        assert_structural_events_in_all_modes(&yaml.replace('\n', line_break), &expected);
+    }
+}
+
+#[test]
+fn explicit_key_property_indentation_is_strict_only() {
+    // YAML requires n+1 spaces before the key's next content line. Relaxed mode
+    // preserves compatibility with tab indentation after anchor/tag properties.
+    for (yaml, anchor, tagged, in_sequence) in [
+        ("?\t&a\n\tkey\n: value\n", 1, false, false),
+        ("?\t!local # property\n\tkey\n: value\n", 0, true, false),
+        (
+            "?\t&a # property\n\t# comment\n\tkey\n: value\n",
+            1,
+            false,
+            false,
+        ),
+        ("- ?\t&a # property\n  \tkey\n  : value\n", 1, false, true),
+        (
+            "?\t# before property\n &a\n\tkey\n: value\n",
+            1,
+            false,
+            false,
+        ),
+        (
+            "?\t# before property\n !local\n\tkey\n: value\n",
+            0,
+            true,
+            false,
+        ),
+    ] {
+        let mut expected = vec![Event::StreamStart, Event::DocumentStart(false, None)];
+        if in_sequence {
+            expected.push(Event::SequenceStart(StructureStyle::Block, 0, None));
+        }
+        expected.extend([
+            Event::MappingStart(StructureStyle::Block, 0, None),
+            Event::Scalar(
+                "key".into(),
+                ScalarStyle::Plain,
+                anchor,
+                tagged.then(|| std::borrow::Cow::Owned(granit_parser::Tag::new("!", "local"))),
+            ),
+            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+        ]);
+        if in_sequence {
+            expected.push(Event::SequenceEnd);
+        }
+        expected.extend([Event::DocumentEnd, Event::StreamEnd]);
+
+        for emit_comments in [false, true] {
+            let strict = granit_parser::options! {
+                emit_comments: emit_comments,
+                strict_indentation: true,
+            };
+            let error = collect_events_with_options(yaml, strict).unwrap_err();
+            assert_eq!(error.kind(), &ErrorKind::TabNotAllowed, "{yaml:?}");
+
+            let relaxed = granit_parser::options! {
+                emit_comments: emit_comments,
+                strict_indentation: false,
+            };
+            assert_eq!(
+                collect_structural_events_with_options(yaml, relaxed).unwrap(),
+                expected,
+                "{yaml:?}, emit_comments={emit_comments}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tabs_cannot_indent_compact_explicit_key_collections_in_either_mode() {
+    let yaml = "- ?\tkey:\n  : value\n";
+    for emit_comments in [false, true] {
+        for strict_indentation in [false, true] {
+            let options = granit_parser::options! {
+                emit_comments: emit_comments,
+                strict_indentation: strict_indentation,
+            };
+            assert!(
+                collect_events_with_options(yaml, options).is_err(),
+                "tab supplied compact collection indentation: {yaml:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}"
+            );
+        }
     }
 }
 

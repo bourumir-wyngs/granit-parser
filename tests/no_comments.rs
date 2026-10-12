@@ -1,9 +1,9 @@
 mod support;
-use std::{cell::Cell, rc::Rc};
+use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
-    BorrowedInput, BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser,
-    ScalarStyle, ScanError, Scanner, Span, StrInput, Token, TokenType,
+    BorrowedInput, BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser,
+    ScalarStyle, ScanError, Scanner, Span, StrInput, StructureStyle, Tag, Token, TokenType,
 };
 
 fn no_comments() -> Options {
@@ -409,6 +409,229 @@ fn disabled_comments_preserve_non_comment_event_spans() {
             .expect("disabled string parser should accept YAML");
 
         assert_eq!(disabled, enabled, "{yaml:?}");
+    }
+}
+
+fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
+    // YAML 1.2.2 §§6.6, 6.9 and 7.2 permit EOF-terminated comments and empty nodes
+    // whose anchor/tag properties remain significant, including an empty explicit key.
+    let null = |anchor| Event::Scalar("~".into(), ScalarStyle::Plain, anchor, None);
+    let local_empty = Event::Scalar(
+        "".into(),
+        ScalarStyle::Plain,
+        1,
+        Some(Cow::Owned(Tag::new("!", "local"))),
+    );
+    [
+        (
+            "? # café",
+            vec![
+                Event::MappingStart(StructureStyle::Block, 0, None),
+                null(0),
+                null(0),
+                Event::MappingEnd,
+            ],
+        ),
+        (
+            "? &a # café",
+            vec![
+                Event::MappingStart(StructureStyle::Block, 0, None),
+                null(1),
+                null(0),
+                Event::MappingEnd,
+            ],
+        ),
+        (
+            "!!str # café",
+            vec![Event::Scalar(
+                "".into(),
+                ScalarStyle::Plain,
+                0,
+                Some(Cow::Owned(Tag::with_original_handle(
+                    "tag:yaml.org,2002:",
+                    "str",
+                    "!!",
+                ))),
+            )],
+        ),
+        ("!local &a # café", vec![local_empty.clone()]),
+        ("&a # first\n!local # café", vec![local_empty]),
+    ]
+}
+
+#[test]
+fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
+    for (template, body) in empty_node_comment_cases() {
+        let mut expected_events = vec![Event::StreamStart, Event::DocumentStart(false, None)];
+        expected_events.extend(body);
+        expected_events.extend([Event::DocumentEnd, Event::StreamEnd]);
+        for line_break in ["\n", "\r", "\r\n"] {
+            let yaml = format!("# pré{line_break}{}", template.replace('\n', line_break));
+            let eof = Marker::new(
+                yaml.chars().count(),
+                template.matches('\n').count() + 2,
+                template.rsplit('\n').next().unwrap().chars().count(),
+            );
+            let mut reference_trace = None;
+            let mut expected_tokens = None;
+            for strict_indentation in [false, true] {
+                for emit_comments in [false, true] {
+                    let options = granit_parser::options! {
+                        strict_indentation: strict_indentation,
+                        emit_comments: emit_comments,
+                    };
+                    let context =
+                        format!("{yaml:?}, strict={strict_indentation}, comments={emit_comments}");
+                    let expected_comments = if cfg!(feature = "comments") && emit_comments {
+                        yaml.matches('#').count()
+                    } else {
+                        0
+                    };
+                    for events in [
+                        Parser::new_from_str_with_options(&yaml, options.clone())
+                            .collect::<Result<Vec<_>, _>>(),
+                        Parser::new_from_iter_with_options(yaml.chars(), options.clone())
+                            .collect::<Result<Vec<_>, _>>(),
+                        Parser::new_from_fallible_iter_with_options(
+                            yaml.chars().map(Ok),
+                            options.clone(),
+                        )
+                        .collect::<Result<Vec<_>, _>>(),
+                    ] {
+                        let mut events =
+                            events.unwrap_or_else(|error| panic!("{context}: {error}"));
+                        assert_eq!(
+                            events
+                                .iter()
+                                .filter(|(event, _)| support::is_comment_event(event))
+                                .count(),
+                            expected_comments,
+                            "{context}",
+                        );
+                        events.retain(|(event, _)| !support::is_comment_event(event));
+                        assert_eq!(
+                            events
+                                .iter()
+                                .map(|(event, _)| event.clone())
+                                .collect::<Vec<_>>(),
+                            expected_events,
+                            "{context}"
+                        );
+                        assert_eq!(events.last().unwrap().1, Span::empty(eof), "{context}");
+                        if let Some(expected) = &reference_trace {
+                            assert_eq!(&events, expected, "{context}");
+                        } else {
+                            reference_trace = Some(events);
+                        }
+                    }
+                    for tokens in [
+                        Scanner::with_options(StrInput::new(&yaml), options.clone())
+                            .collect::<Result<Vec<_>, _>>(),
+                        Scanner::with_options(BufferedInput::new(yaml.chars()), options.clone())
+                            .collect::<Result<Vec<_>, _>>(),
+                        Scanner::with_options(
+                            FallibleBufferedInput::new(yaml.chars().map(Ok)),
+                            options.clone(),
+                        )
+                        .collect::<Result<Vec<_>, _>>(),
+                    ] {
+                        let mut tokens =
+                            tokens.unwrap_or_else(|error| panic!("{context}: {error}"));
+                        assert_eq!(
+                            tokens
+                                .iter()
+                                .filter(|token| support::is_comment_token(token.token_type()))
+                                .count(),
+                            expected_comments,
+                            "{context}",
+                        );
+                        tokens.retain(|token| !support::is_comment_token(token.token_type()));
+                        let stream_end = tokens.last().unwrap();
+                        assert_eq!(stream_end.token_type(), &TokenType::StreamEnd, "{context}");
+                        assert_eq!(stream_end.span(), Span::empty(eof), "{context}");
+                        if let Some(expected) = &expected_tokens {
+                            assert_eq!(&tokens, expected, "{context}");
+                        } else {
+                            expected_tokens = Some(tokens);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn invalid_controls_in_eof_comments_keep_exact_error_positions() {
+    // YAML 1.2.2 §5.1 excludes these controls from printable comment content.
+    for line_break in ["\n", "\r", "\r\n"] {
+        for prefix in ["", "? ", "&a !local ", "| ", "%YAML 1.2 "] {
+            for character in ['\0', '\u{1}', '\u{7f}', '\u{80}', '\u{9f}'] {
+                let yaml = format!("# pré{line_break}{prefix}# café {character}");
+                let marker = Marker::new(yaml.chars().count() - 1, 2, prefix.chars().count() + 7);
+                for emit_comments in [false, true] {
+                    let options = granit_parser::options! { emit_comments: emit_comments };
+                    let context = format!("{yaml:?}, comments={emit_comments}");
+                    let parser_traces =
+                        [
+                            parse_non_comment_prefix_until_error(
+                                Parser::new_from_str_with_options(&yaml, options.clone()),
+                            ),
+                            parse_non_comment_prefix_until_error(
+                                Parser::new_from_iter_with_options(yaml.chars(), options.clone()),
+                            ),
+                            parse_non_comment_prefix_until_error(
+                                Parser::new_from_fallible_iter_with_options(
+                                    yaml.chars().map(Ok),
+                                    options.clone(),
+                                ),
+                            ),
+                        ];
+                    let scanner_traces = [
+                        scan_non_comment_prefix_until_error(Scanner::with_options(
+                            StrInput::new(&yaml),
+                            options.clone(),
+                        )),
+                        scan_non_comment_prefix_until_error(Scanner::with_options(
+                            BufferedInput::new(yaml.chars()),
+                            options.clone(),
+                        )),
+                        scan_non_comment_prefix_until_error(Scanner::with_options(
+                            FallibleBufferedInput::new(yaml.chars().map(Ok)),
+                            options,
+                        )),
+                    ];
+                    for error in parser_traces
+                        .iter()
+                        .map(|trace| &trace.2)
+                        .chain(scanner_traces.iter().map(|trace| &trace.2))
+                    {
+                        assert_eq!(
+                            error.kind(),
+                            &ErrorKind::UnexpectedCharacter { character },
+                            "{context}"
+                        );
+                        assert_eq!(*error.marker(), marker, "{context}");
+                    }
+                    for trace in &parser_traces[1..] {
+                        assert_eq!(trace, &parser_traces[0], "{context}");
+                    }
+                    for trace in &scanner_traces[1..] {
+                        assert_eq!(trace, &scanner_traces[0], "{context}");
+                    }
+                    assert_eq!(
+                        parser_traces[0].2.marker().byte_offset(),
+                        Some(yaml.len() - character.len_utf8()),
+                        "{context}"
+                    );
+                    assert_eq!(
+                        scanner_traces[0].2.marker().byte_offset(),
+                        Some(yaml.len() - character.len_utf8()),
+                        "{context}"
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -1,7 +1,8 @@
 use granit_parser::{
-    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScanError, Scanner,
-    StrInput,
+    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScalarStyle, ScanError,
+    Scanner, StrInput, StructureStyle, Tag,
 };
+use std::borrow::Cow;
 
 fn events_with_inputs(
     yaml: &str,
@@ -486,5 +487,65 @@ fn strict_flow_indentation_follows_dedents_and_document_boundaries() {
             result.expect("indentation should follow the current block"),
             expected
         );
+    }
+}
+
+#[test]
+fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
+    // YAML 1.2.2 [112] discards the escaped break but retains each l-empty [70].
+    // Empty lines may contain fewer spaces than the required flow prefix [69].
+    let expected = vec![
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("outer".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar(
+            "é\n字".into(),
+            ScalarStyle::DoubleQuoted,
+            1,
+            Some(Cow::Owned(Tag::new("!", "custom"))),
+        ),
+        Event::Scalar("copy".into(), ScalarStyle::Plain, 0, None),
+        Event::Alias(1),
+        Event::MappingEnd,
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    for newline in ["\n", "\r\n"] {
+        for empty_line in ["", " ", "   \t"] {
+            let yaml = format!(
+                "outer:{newline}  key: &a !custom \"é\\{newline}{empty_line}{newline}   字\"{newline}  copy: *a{newline}"
+            );
+            for strict in [false, true] {
+                for result in events_with_inputs(&yaml, strict) {
+                    assert_eq!(
+                        result.unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
+                        expected,
+                        "strict={strict}, {yaml:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strict_escaped_continuations_require_indentation_after_empty_lines_and_properties() {
+    for newline in ["\n", "\r\n"] {
+        for (prefix, suffix, line) in [
+            ("outer:\n  key: &a !custom ", "\n", 4),
+            ("- key: &a !custom ", "\n", 3),
+            ("outer:\n  key: [&a !custom ", "]\n", 4),
+        ] {
+            for continuation in ["字", ""] {
+                let yaml =
+                    format!("{prefix}\"é\\\n \n  {continuation}\"{suffix}").replace('\n', newline);
+                let reference = format!("{prefix}\"é\\n{continuation}\"{suffix}");
+                assert_relaxed_only(&yaml, &reference, line, 2);
+            }
+        }
     }
 }

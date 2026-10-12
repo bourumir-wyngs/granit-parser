@@ -35,6 +35,10 @@
   (`{?\ta: b}`) and before block mapping scalar keys (`?\tkey\n: value\n` and
   `? \tkey\n: value\n`), as permitted by YAML 1.2.2. Tabs used as required indentation,
   including before compact block collections (`?\t-` and `?\tkey:`), remain invalid.
+- With `strict_indentation` enabled, keep explicit-key tab indentation checks active across anchor
+  and tag properties, including intervening comments. A key such as `?\t&a\n\tkey\n: value\n`
+  is rejected in strict mode because its content line lacks the required space indentation after
+  the anchor. The default relaxed mode preserves its acceptance of this input.
 - Preserve the physical end-of-input line and column for stream-end and block-end spans when
   the last line has no line break, instead of moving them to column zero of a nonexistent next line.
 - Report the physical source-error position when fallible input fails during a suppressed trailing

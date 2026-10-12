@@ -1,4 +1,8 @@
-use granit_parser::{ErrorKind, Event, InputIoError, Marker, Parser, ScalarStyle, ScanError, Span};
+use granit_parser::{
+    ErrorKind, Event, InputIoError, Marker, Parser, ScalarStyle, ScanError, Span, StructureStyle,
+    Tag,
+};
+use std::borrow::Cow;
 
 /// Compare scalar values and character-based spans with both streaming backends.
 /// String input additionally exposes byte offsets, checked separately below.
@@ -297,5 +301,77 @@ fn source_failures_during_long_block_lines_remain_terminal() {
             }));
         let error = terminal_error(Parser::new_from_fallible_iter(input));
         assert_eq!(error.kind(), &expected);
+    }
+}
+
+#[test]
+fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof() {
+    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+        for newline in ["\n", "\r\n"] {
+            for (chomp, expected_value) in [("-", "é"), ("", "é\n"), ("+", "é\n")] {
+                let source = format!("- !custom &a {indicator}2{chomp}{newline}  é{newline}  ");
+                let events = parse_all_inputs(&source);
+                assert_eq!(
+                    events
+                        .iter()
+                        .map(|(event, _)| event.clone())
+                        .collect::<Vec<_>>(),
+                    vec![
+                        Event::StreamStart,
+                        Event::DocumentStart(false, None),
+                        Event::SequenceStart(StructureStyle::Block, 0, None),
+                        Event::Scalar(
+                            expected_value.into(),
+                            style,
+                            1,
+                            Some(Cow::Owned(Tag::new("!", "custom"))),
+                        ),
+                        Event::SequenceEnd,
+                        Event::DocumentEnd,
+                        Event::StreamEnd,
+                    ],
+                    "{source:?}"
+                );
+                let (_, _, span) = block_scalar(&events);
+                assert_eq!(span.indent, Some(2));
+                assert_eq!(span.tag_start(), Some(Marker::new(2, 1, 2)));
+                assert_eq!(span.tag_start().unwrap().byte_offset(), Some(2));
+                assert_eq!(span.end, Marker::new(source.chars().count(), 3, 2));
+                assert_eq!(span.end.byte_offset(), Some(source.len()));
+            }
+        }
+    }
+}
+
+#[test]
+fn source_failures_after_indentation_only_tails_are_not_clean_eof() {
+    let long_content = "é".repeat(128);
+    for indicator in ['|', '>'] {
+        for newline in ["\n", "\r\n"] {
+            for content in ["é", long_content.as_str()] {
+                for tail in ["", " ", "  "] {
+                    let source = format!("key: {indicator}2+{newline}  {content}{newline}{tail}");
+                    let kind = ErrorKind::InputIo {
+                        error: InputIoError::from_message("read failed after indentation"),
+                    };
+                    let input = source
+                        .chars()
+                        .map(Ok)
+                        .chain(std::iter::once(Err(kind.clone())))
+                        .chain(std::iter::from_fn(|| panic!("source polled after failure")));
+                    let error = terminal_error(Parser::new_from_fallible_iter(input));
+                    assert_eq!(error.kind(), &kind, "{source:?}");
+                    // A short source can fail during lookahead while scanning the key.
+                    // Longer content reaches block-scalar scanning before the source fails.
+                    if content == long_content {
+                        assert_eq!(
+                            *error.marker(),
+                            Marker::new(source.chars().count(), 3, tail.len()),
+                            "{source:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
