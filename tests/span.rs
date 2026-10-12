@@ -1,6 +1,6 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-use granit_parser::{Event, Marker, Parser, ScanError};
+use granit_parser::{ErrorKind, Event, Marker, Parser, ScanError};
 
 fn char_index_to_byte_index(s: &str, char_index: usize) -> usize {
     if char_index == 0 {
@@ -116,6 +116,46 @@ fn indentless_sequence_end_span_is_empty_before_the_next_key() {
             assert!(start >= last, "{yaml:?}: {event:?} goes backwards");
             last = start;
         }
+    }
+}
+
+#[test]
+fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
+    for (yaml, next_token, line) in [
+        ("clé:\r\n- é\r\n? suite\r\n", "? suite", 3),
+        ("clé:\n- # empty\n? suite\n", "? suite", 3),
+        ("outer:\n  clé:\n  - é\nsuite: 1\n", "suite", 4),
+        ("clé:\n- é\n...\n", "...", 3),
+        ("clé:\n- é\n---\nsuivant\n", "---", 3),
+        // EOF synthesizes a block-end token at column zero of the following line.
+        ("clé:\n- é", "", 3),
+    ] {
+        let offset = if next_token.is_empty() {
+            yaml.len()
+        } else {
+            yaml.find(next_token).unwrap()
+        };
+        let marker = Marker::new(yaml[..offset].chars().count(), line, 0);
+        let from_str = event_spans(yaml);
+        for other in [
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
+                .collect::<Result<Vec<_>, _>>(),
+        ] {
+            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
+        }
+        let ends: Vec<_> = from_str
+            .iter()
+            .filter_map(|(event, span)| matches!(event, Event::SequenceEnd).then_some(span))
+            .collect();
+        assert_eq!(ends.len(), 1, "{yaml:?}");
+        let span = ends[0];
+        assert_eq!(span.start, marker, "{yaml:?}");
+        assert_eq!(span.end, marker, "{yaml:?}");
+        assert_eq!(span.byte_range(), Some(offset..offset), "{yaml:?}");
+        assert_eq!(span.slice(yaml), Some(""));
+        assert_eq!(span.indent, None);
+        assert_eq!(span.tag_start(), None);
     }
 }
 

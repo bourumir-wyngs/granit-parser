@@ -698,34 +698,78 @@ fn disabled_comments_preserve_required_block_scalar_error_prefix() {
 }
 
 #[test]
-fn suppressed_streaming_comment_preserves_source_errors() {
-    let limit = ErrorKind::InputByteLimitExceeded { limit: 13 };
-    let source = "# unfinished\n";
-    let input = source
-        .chars()
-        .map(Ok)
-        .chain(core::iter::once(Err(limit.clone())));
-    let mut parser = Parser::with_options(FallibleBufferedInput::new(input), no_comments());
-    let mut events = Vec::new();
-    let error = loop {
-        match parser.next() {
-            Some(Ok((event, _))) => events.push(event),
-            Some(Err(error)) => break error,
-            None => panic!("source failure after an ignored comment must remain visible"),
-        }
-    };
+fn streaming_comment_failures_preserve_source_errors_in_all_emission_modes() {
+    fn failing_input(source: &str) -> impl Iterator<Item = Result<char, ErrorKind>> + '_ {
+        source
+            .chars()
+            .map(Ok)
+            .chain(core::iter::once(Err(ErrorKind::InputByteLimitExceeded {
+                limit: source.len(),
+            })))
+            .chain(core::iter::from_fn(|| {
+                panic!("comment scanning must not poll the source after its failure")
+            }))
+    }
 
-    assert_no_comment_events(&events);
-    assert!(events
-        .iter()
-        .all(|event| !matches!(event, Event::StreamEnd)));
-    assert_eq!(error.kind(), &limit);
-    assert_eq!(error.marker().index(), source.chars().count());
-    assert_eq!((error.marker().line(), error.marker().col()), (2, 0));
-    assert!(
-        parser.next().is_none(),
-        "the parser must fuse after the error"
-    );
+    for source in [
+        "# unfinished\n",
+        "# unfinished café",
+        "value # unfinished café",
+        "%YAML 1.2 # unfinished café",
+        "%TAG !e! tag:example.com,2026: # unfinished café",
+        "%CUSTOM param # unfinished café",
+        "block: | # unfinished café",
+        "&anchor # unfinished café",
+        "value\n... # unfinished café",
+    ] {
+        // `true` also exercises the always-available option when comment support is absent.
+        for emit_comments in [false, true] {
+            let options = granit_parser::options! { emit_comments: emit_comments };
+            let context = format!("{source:?}, emit_comments={emit_comments}");
+            let (events, event_comments, parser_error) = parse_non_comment_prefix_until_error(
+                Parser::new_from_fallible_iter_with_options(failing_input(source), options.clone()),
+            );
+            let (tokens, token_comments, scanner_error) = scan_non_comment_prefix_until_error(
+                Scanner::with_options(FallibleBufferedInput::new(failing_input(source)), options),
+            );
+
+            assert_eq!(
+                parser_error.kind(),
+                &ErrorKind::InputByteLimitExceeded {
+                    limit: source.len()
+                },
+                "{context}",
+            );
+            assert_eq!(scanner_error, parser_error, "{context}");
+            assert_eq!(
+                parser_error.marker().index(),
+                source.chars().count(),
+                "{context}"
+            );
+            if source.ends_with('\n') {
+                assert_eq!(
+                    (parser_error.marker().line(), parser_error.marker().col()),
+                    (2, 0),
+                    "{context}",
+                );
+            }
+            assert!(
+                events
+                    .iter()
+                    .all(|(event, _)| !matches!(event, Event::StreamEnd)),
+                "{context}"
+            );
+            assert!(
+                tokens
+                    .iter()
+                    .all(|token| !matches!(token.token_type(), TokenType::StreamEnd)),
+                "{context}"
+            );
+            if !cfg!(feature = "comments") || !emit_comments {
+                assert_eq!((event_comments, token_comments), (0, 0), "{context}");
+            }
+        }
+    }
 }
 
 fn assert_literal_hash_scalars(events: &[Event<'_>]) {

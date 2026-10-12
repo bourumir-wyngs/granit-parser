@@ -3,7 +3,10 @@ use granit_parser::{ErrorKind, Event, Parser, ScalarStyle, ScanError, StructureS
 fn collect_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     let str_events = Parser::new_from_str(input).collect::<Result<Vec<_>, _>>();
     let iter_events = Parser::new_from_iter(input.chars()).collect::<Result<Vec<_>, _>>();
+    let fallible_events = Parser::new_from_fallible_iter(input.chars().map(Ok::<_, ErrorKind>))
+        .collect::<Result<Vec<_>, _>>();
     assert_eq!(str_events, iter_events, "input: {input:?}");
+    assert_eq!(str_events, fallible_events, "input: {input:?}");
     Ok(str_events?.into_iter().map(|(event, _)| event).collect())
 }
 
@@ -78,6 +81,52 @@ fn tabs_separate_explicit_keys_in_flow_collections() {
     }
     // Block context is unchanged.
     assert!(collect_events("?\tkey\n: value\n").is_err());
+}
+
+#[test]
+fn tabs_after_flow_explicit_keys_preserve_collection_keys_and_alias_values() {
+    for separator in ["\t", "\t# key\r\n "] {
+        let yaml = format!("{{?{separator}[é, b]: &v value, ?{separator}{{nested: key}}: *v}}");
+        let events: Vec<_> = collect_events(&yaml)
+            .unwrap()
+            .into_iter()
+            .filter(|event| {
+                #[cfg(feature = "comments")]
+                if matches!(event, Event::Comment(..)) {
+                    return false;
+                }
+                let _ = event;
+                true
+            })
+            .collect();
+        assert_eq!(
+            events,
+            [
+                Event::StreamStart,
+                Event::DocumentStart(false, None),
+                Event::MappingStart(StructureStyle::Flow, 0, None),
+                Event::SequenceStart(StructureStyle::Flow, 0, None),
+                Event::Scalar("é".into(), ScalarStyle::Plain, 0, None),
+                Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+                Event::SequenceEnd,
+                Event::Scalar("value".into(), ScalarStyle::Plain, 1, None),
+                Event::MappingStart(StructureStyle::Flow, 0, None),
+                Event::Scalar("nested".into(), ScalarStyle::Plain, 0, None),
+                Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+                Event::MappingEnd,
+                Event::Alias(1),
+                Event::MappingEnd,
+                Event::DocumentEnd,
+                Event::StreamEnd,
+            ],
+            "{yaml:?}"
+        );
+    }
+
+    // Leaving flow context must restore the prohibition on a tab indenting a block key.
+    let error = collect_events("first: {?\tkey: value}\n? \tinvalid\n: value\n").unwrap_err();
+    assert_eq!(error.kind(), &ErrorKind::TabNotAllowed);
+    assert_eq!((error.marker().line(), error.marker().col()), (2, 2));
 }
 
 #[test]

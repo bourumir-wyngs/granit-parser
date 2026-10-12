@@ -362,15 +362,87 @@ fn crlf_and_wide_character_spans() {
 #[test]
 fn explicit_key_indicator_at_end_of_input() {
     // `?` followed by end of input is an empty explicit key, the same as `?\n`.
-    fn events(yaml: &str) -> Vec<Event<'_>> {
-        collect_ok_events(yaml)
+    for input in ["?", "- ?", "clé:\r\n  ?", "key:\n- é\n?"] {
+        let with_newline = format!("{input}\n");
+        let expected: Vec<_> = collect_ok_events(&with_newline)
             .into_iter()
             .map(|(event, _)| event)
-            .collect()
+            .collect();
+        for events in [
+            Parser::new_from_str(input).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter(input.chars()).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_fallible_iter(input.chars().map(Ok::<_, ErrorKind>))
+                .collect::<Result<Vec<_>, _>>(),
+        ] {
+            let events = events.unwrap_or_else(|error| panic!("{input:?}: {error}"));
+            let empty_nodes: Vec<_> = events
+                .iter()
+                .filter(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "~"))
+                .collect();
+            assert_eq!(empty_nodes.len(), 2, "empty key and value: {input:?}");
+            for (_, span) in empty_nodes {
+                assert!(span.is_empty(), "{input:?}: {span:?}");
+                assert_eq!(span.start.index(), input.chars().count());
+            }
+            assert_eq!(
+                events
+                    .into_iter()
+                    .map(|(event, _)| event)
+                    .collect::<Vec<_>>(),
+                expected,
+                "{input:?}"
+            );
+        }
     }
-    for input in ["?", "- ?", "a:\n  ?"] {
-        let with_newline = format!("{input}\n");
-        assert_eq!(events(input), events(&with_newline), "{input:?}");
+}
+
+#[test]
+fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
+    for (quote, style) in [
+        ('\'', ScalarStyle::SingleQuoted),
+        ('"', ScalarStyle::DoubleQuoted),
+    ] {
+        for newline in ["\n", "\r\n"] {
+            for (prefix, indent) in [("clé: ", " "), ("outer:\n  clé: ", "   ")] {
+                for (blank_line, expected) in [("", "un deux"), (newline, "un\ndeux")] {
+                    let quoted = format!("{quote}un{newline}{blank_line}{indent}deux{quote}");
+                    let input = format!("{prefix}{quoted}{newline}after: done{newline}");
+                    let options = granit_parser::options! { strict_indentation: true };
+                    let from_str = Parser::new_from_str_with_options(&input, options.clone())
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap_or_else(|error| panic!("{input:?}: {error}"));
+                    for other in [
+                        Parser::new_from_iter_with_options(input.chars(), options.clone())
+                            .collect::<Result<Vec<_>, _>>(),
+                        Parser::new_from_fallible_iter_with_options(
+                            input.chars().map(Ok::<_, ErrorKind>),
+                            options,
+                        )
+                        .collect::<Result<Vec<_>, _>>(),
+                        Parser::new_from_str(&input).collect::<Result<Vec<_>, _>>(),
+                    ] {
+                        assert_eq!(other.unwrap(), from_str, "{input:?}");
+                    }
+                    let scalars: Vec<_> = from_str
+                        .iter()
+                        .filter_map(|(event, span)| {
+                            if let Event::Scalar(value, actual_style, ..) = event {
+                                Some((value.as_ref(), *actual_style, span))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let (value, _, span) = scalars
+                        .iter()
+                        .find(|(_, actual_style, _)| *actual_style == style)
+                        .expect("quoted value");
+                    assert_eq!(*value, expected, "{input:?}");
+                    assert_eq!(span.slice(&input), Some(quoted.as_str()));
+                    assert_eq!(scalars.last().unwrap().0, "done");
+                }
+            }
+        }
     }
 }
 

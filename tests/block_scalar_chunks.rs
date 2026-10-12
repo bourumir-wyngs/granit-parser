@@ -148,6 +148,33 @@ fn indentation_only_last_line_at_eof_adds_no_line_break() {
 }
 
 #[test]
+fn eof_indentation_preserves_real_blank_lines_and_more_indented_content() {
+    for indicator in ['|', '>'] {
+        for newline in ["\n", "\r\n"] {
+            for (header, expected) in [("2-", "é"), ("2", "é\n"), ("2+", "é\n\n\n")] {
+                for tail in ["", "   ", "    "] {
+                    let source = format!(
+                        "outer:{newline}  key: {indicator}{header}{newline}    é{newline}    {newline}{newline}{tail}"
+                    );
+                    let events = parse_all_inputs(&source);
+                    let (value, _, span) = block_scalar(&events);
+                    assert_eq!(value, expected, "{source:?}");
+                    assert_eq!(span.indent, Some(4));
+                    assert_eq!(span.end, Marker::new(source.chars().count(), 6, tail.len()));
+                    assert_eq!(span.end.byte_offset(), Some(source.len()));
+                }
+            }
+        }
+        // Beyond the required indentation, spaces are content and must not be discarded.
+        for (chomp, expected) in [("-", "é\n "), ("", "é\n \n"), ("+", "é\n \n")] {
+            let source = format!("{indicator}2{chomp}\n  é\n   ");
+            let events = parse_all_inputs(&source);
+            assert_eq!(block_scalar(&events).0, expected, "{source:?}");
+        }
+    }
+}
+
+#[test]
 fn empty_block_scalar_at_eof_preserves_yaml_suite_chomping() {
     // JEF9-02 expects keep chomping to retain one newline for a whitespace-only scalar
     // at EOF, even when the final spaces have no terminating line break.

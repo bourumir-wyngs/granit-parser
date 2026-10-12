@@ -1,4 +1,7 @@
-use granit_parser::{ErrorKind, Event, Parser, ScanError, Scanner, StrInput};
+use granit_parser::{
+    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScanError, Scanner,
+    StrInput,
+};
 
 fn events_with_inputs(
     yaml: &str,
@@ -402,5 +405,86 @@ fn strict_option_preserves_existing_invalid_structure_checks() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn strict_errors_preserve_unicode_positions_and_terminate_iteration() {
+    fn check<T>(
+        mut items: impl Iterator<Item = Result<T, ScanError>>,
+        kind: &ErrorKind,
+        expected: Marker,
+    ) {
+        let error = items
+            .by_ref()
+            .find_map(Result::err)
+            .expect("strict indentation must fail");
+        assert_eq!(error.kind(), kind);
+        assert_eq!(*error.marker(), expected);
+        // Marker equality compares character positions; check optional byte offsets separately.
+        assert_eq!(error.marker().byte_offset(), expected.byte_offset());
+        assert!(items.next().is_none(), "error must terminate iteration");
+        assert!(items.next().is_none(), "iterator must remain fused");
+    }
+
+    for (prefix, suffix, kind) in [
+        ("clé: [😀,\n", "value\n ]\n", ErrorKind::InvalidIndentation),
+        ("clé: \"😀\\\n", "value\"\n", ErrorKind::InvalidIndentation),
+        ("clé: '😀\n", "'\n", ErrorKind::InvalidQuotedScalarIndent),
+    ] {
+        for line_break in ["\n", "\r\n"] {
+            let prefix = prefix.replace('\n', line_break);
+            let yaml = format!("{prefix}{}", suffix.replace('\n', line_break));
+            let marker = Marker::new(prefix.chars().count(), 2, 0);
+            let byte_marker = marker.with_byte_offset(Some(prefix.len()));
+            let options = granit_parser::options! { strict_indentation: true };
+
+            check(
+                Parser::new_from_str_with_options(&yaml, options.clone()),
+                &kind,
+                byte_marker,
+            );
+            check(
+                Parser::new_from_iter_with_options(yaml.chars(), options.clone()),
+                &kind,
+                marker,
+            );
+            check(
+                Parser::new_from_fallible_iter_with_options(yaml.chars().map(Ok), options.clone()),
+                &kind,
+                marker,
+            );
+            check(
+                Scanner::with_options(StrInput::new(&yaml), options.clone()),
+                &kind,
+                byte_marker,
+            );
+            check(
+                Scanner::with_options(BufferedInput::new(yaml.chars()), options.clone()),
+                &kind,
+                marker,
+            );
+            check(
+                Scanner::with_options(FallibleBufferedInput::new(yaml.chars().map(Ok)), options),
+                &kind,
+                marker,
+            );
+        }
+    }
+}
+
+#[test]
+fn strict_flow_indentation_follows_dedents_and_document_boundaries() {
+    let yaml =
+        "---\nouter:\n  inner: [\n   nested\n   ]\nshallow: [\n value\n ]\n...\n---\n[\nroot\n]\n";
+    let reference = "---\nouter:\n  inner: [nested]\nshallow: [value]\n...\n---\n[root]\n";
+    let expected = Parser::new_from_str(reference)
+        .map(|result| result.unwrap().0)
+        .collect::<Vec<_>>();
+    for result in events_with_inputs(yaml, true) {
+        assert_eq!(
+            result.expect("indentation should follow the current block"),
+            expected
+        );
     }
 }

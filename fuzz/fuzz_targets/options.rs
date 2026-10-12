@@ -7,7 +7,7 @@ use crate::common;
 
 use std::str;
 
-use common::{check_comment_suppression, parse_with_options, scan_with_options};
+use common::{check_comment_suppression_with_options, parse_with_options, scan_with_options};
 use granit_parser::{ErrorKind, Options, Parser, Scanner, StrInput};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
@@ -119,12 +119,14 @@ pub fn check_input(data: &[u8]) {
         return;
     };
 
+    // The high flag bit selects strict indentation for every raw oracle, including comment
+    // suppression. Lower flags and the five-byte header keep their existing meanings.
+    let mut options = granit_parser::options! { strict_indentation: flags & 0x80 != 0 };
     if mode % 3 == 2 {
-        check_comment_suppression(input);
+        check_comment_suppression_with_options(input, options);
         return;
     }
 
-    let mut options = Options::default();
     #[cfg(feature = "comments")]
     {
         options.emit_comments = flags & 1 != 0;

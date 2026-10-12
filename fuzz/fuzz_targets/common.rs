@@ -96,20 +96,21 @@ pub fn scan_with_options(input: &str, options: Options) {
 
 /// Disabling comments must only remove comment events and tokens.
 pub fn check_comment_suppression(input: &str) {
+    check_comment_suppression_with_options(input, Options::default());
+}
+
+/// Comment suppression must preserve the trace and errors under the selected parsing options.
+pub fn check_comment_suppression_with_options(input: &str, mut options: Options) {
     // Prevent the enabled parser from failing at the buffered-comment resource limit. That limit
     // intentionally does not apply when comment emission is disabled.
-    let with_comments = granit_parser::options! {
-        #[cfg(feature = "comments")]
-        emit_comments: true,
-        #[cfg(feature = "comments")]
-        max_buffered_comment_events: usize::MAX,
-    };
-    let without_comments = granit_parser::options! {
-        #[cfg(feature = "comments")]
-        emit_comments: false,
-        #[cfg(feature = "comments")]
-        max_buffered_comment_events: usize::MAX,
-    };
+    #[cfg(feature = "comments")]
+    {
+        options.max_buffered_comment_events = usize::MAX;
+    }
+    options.emit_comments = true;
+    let with_comments = options.clone();
+    options.emit_comments = false;
+    let without_comments = options;
 
     let parser_with = trace(Parser::new_from_str_with_options(
         input,

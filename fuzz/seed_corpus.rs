@@ -28,6 +28,21 @@ pub const RAW_INPUTS: &[&str] = &[
     "a:\n-\nb",
     "\0",
     "[\"\\0\", '\u{7f}']",
+    "?",
+    "{?\t[é]: value}",
+    "outer:\n  key: \"one\n   two\"\n",
+    "|+\n  a\n  ",
+    "clé:\r\n- é\r\n? suivant\r\n",
+];
+
+// Conforming and under-indented inputs exercise strict-mode errors as well as successful traces.
+const STRICT_INPUTS: &[&str] = &[
+    "key: [ # opening\n# unindented comment\n value\n ]\n",
+    "key: [ # opening\n# unindented comment\nvalue\n ]\n",
+    "key: [first,\n\tsecond\n ]\n",
+    "key: \"é\\\r\n\" # closing\r\n",
+    "key: \"é\\\r\n \" # closing\r\n",
+    "key: ['é\n'] # closing\n",
 ];
 
 /// Build reproducible raw inputs or generator control bytes for a fuzz target.
@@ -83,6 +98,18 @@ pub fn seeds(target: &str) -> Vec<Vec<u8>> {
     }
     for header in &mut headers {
         header.extend_from_slice("é🪨 # ---\tvalue\n".as_bytes());
+    }
+    if target == "options" {
+        for input in STRICT_INPUTS {
+            for mode in 0..3 {
+                for flags in [0, 1, 0x80, 0x81] {
+                    // Keep resource limits high enough to reach indentation checks.
+                    let mut seed = vec![mode, flags, 6, 8, 4];
+                    seed.extend_from_slice(input.as_bytes());
+                    headers.push(seed);
+                }
+            }
+        }
     }
     headers
 }

@@ -10,8 +10,9 @@ type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
 
 fn no_comment_options() -> Options {
     granit_parser::options! {
-        #[cfg(feature = "comments")]
         emit_comments: false,
+        #[cfg(feature = "comments")]
+        max_buffered_comment_events: 0,
     }
 }
 
@@ -147,6 +148,13 @@ fn no_comments_options_reach_borrowed_includes() {
     stack.push_include("borrowed.yaml").unwrap();
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+            .collect::<Vec<_>>(),
+        ["key", "~", "next", "value"],
+    );
 }
 
 #[test]
@@ -158,6 +166,13 @@ fn no_comments_options_reach_owned_includes() {
     stack.push_include("owned.yaml").unwrap();
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+            .collect::<Vec<_>>(),
+        ["key", "~", "next", "value"],
+    );
 }
 
 #[test]

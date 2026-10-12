@@ -1,5 +1,8 @@
 mod support;
-use granit_parser::{ErrorKind, Event, Options, Parser, Scanner, StrInput, TokenType};
+use granit_parser::{
+    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser, Scanner, StrInput,
+    TokenType,
+};
 
 fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
     assert!(events
@@ -70,28 +73,49 @@ fn comment_emission_option_is_available_with_and_without_comments() {
         assert_eq!(options, setter_options);
         let expect_comments = cfg!(feature = "comments") && emit_comments;
 
-        let events = Parser::with_options(StrInput::new(yaml), options.clone())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("comment emission must not affect parsing");
-        assert_eq!(
-            events
+        for events in [
+            Parser::new_from_str_with_options(yaml, options.clone()).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_iter_with_options(yaml.chars(), setter_options.clone())
+                .collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_fallible_iter_with_options(
+                yaml.chars().map(Ok),
+                setter_options.clone(),
+            )
+            .collect::<Result<Vec<_>, _>>(),
+        ] {
+            let events = events.expect("comment emission must not affect parsing");
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|(event, _)| support::is_comment_event(event))
+                    .count(),
+                if expect_comments { 2 } else { 0 },
+            );
+            assert!(events
                 .iter()
-                .any(|(event, _)| support::is_comment_event(event)),
-            expect_comments
-        );
-        assert!(events
-            .iter()
-            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+                .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+        }
 
-        let tokens = Scanner::with_options(StrInput::new(yaml), options.clone())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("comment emission must not affect scanning");
-        assert_eq!(
-            tokens
-                .iter()
-                .any(|token| support::is_comment_token(token.token_type())),
-            expect_comments
-        );
+        for tokens in [
+            Scanner::with_options(StrInput::new(yaml), options.clone())
+                .collect::<Result<Vec<_>, _>>(),
+            Scanner::with_options(BufferedInput::new(yaml.chars()), setter_options.clone())
+                .collect::<Result<Vec<_>, _>>(),
+            Scanner::with_options(
+                FallibleBufferedInput::new(yaml.chars().map(Ok)),
+                setter_options.clone(),
+            )
+            .collect::<Result<Vec<_>, _>>(),
+        ] {
+            let tokens = tokens.expect("comment emission must not affect scanning");
+            assert_eq!(
+                tokens
+                    .iter()
+                    .filter(|token| support::is_comment_token(token.token_type()))
+                    .count(),
+                if expect_comments { 2 } else { 0 },
+            );
+        }
     }
 }
 

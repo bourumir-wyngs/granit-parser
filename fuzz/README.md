@@ -27,7 +27,7 @@ the raw changelog regression inputs directly.
 | Target | Checks |
 | --- | --- |
 | `parse_any`, `scan_any` | Full traces across string, buffered and all-OK fallible inputs; errors, spans, fusion and valid event prefixes even for malformed YAML |
-| `options` | All resource options; exact directive-byte, reserved-parameter and block-nesting limits; comment suppression |
+| `options` | All resource options; exact directive-byte, reserved-parameter and block-nesting limits; strict indentation and comment suppression |
 | `directives_tags` | Tag resolution, primary-handle overrides, non-specific `!`, and reserved-directive comments excluded from limits |
 | `parser_stack` | Seven input/include/replay backends; trailing comments, extra documents, nested error context, repeated peeks and fusion |
 | `flow_collections` | Generated flow syntax, initial versus interior `\|`/`>` characters, and tabs after mapping colons |
@@ -38,6 +38,9 @@ the raw changelog regression inputs directly.
 Most existing selector values retain their constructions. New semantic cases use high selector
 bytes: 240–255 for directives/tags, 252–254 for options and flow collections, and 254 for root
 block scalars. Each target documents its remaining control bytes.
+For raw `options` inputs, bit `0x80` of the second byte selects strict indentation for parser,
+scanner, and comment-suppression checks. The seed corpus includes conforming and under-indented
+inputs in both modes, with comment emission enabled and disabled.
 
 When a run fails, retain the artifact under `fuzz/artifacts/<target>/`, reproduce and minimize it,
 then add a deterministic regression. Establish the expected result from the YAML rules or public
