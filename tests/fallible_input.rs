@@ -1,6 +1,6 @@
 use granit_parser::{
     BorrowedInput, ErrorKind, Event, EventReceiver, FallibleBufferedInput, Input, InputIoError,
-    Parser, ScanError, Scanner,
+    Marker, Parser, ScanError, Scanner,
 };
 
 fn io_error(message: &str) -> ErrorKind {
@@ -39,6 +39,51 @@ fn source_error_cannot_be_mistaken_for_clean_eof() {
     assert_eq!(error.kind(), &io_error("connection reset"));
     assert!(!emitted_stream_end);
     assert!(parser.next().is_none(), "a source error must be terminal");
+}
+
+#[test]
+fn source_error_after_trailing_whitespace_preserves_physical_position() {
+    for (source, line, col) in [
+        ("", 1, 0),
+        ("   ", 1, 3),
+        ("\t  ", 1, 3),
+        ("\n  ", 2, 2),
+        ("\r  ", 2, 2),
+        ("\r\n  ", 2, 2),
+        ("é\r\n  ", 2, 2),
+        ("[\r\n  ", 2, 2),
+    ] {
+        for emit_comments in [false, true] {
+            let options = granit_parser::options! { emit_comments: emit_comments };
+            let context = format!("{source:?}, emit_comments={emit_comments}");
+            let input = || {
+                source
+                    .chars()
+                    .map(Ok)
+                    .chain(core::iter::once(Err(io_error("read failed"))))
+            };
+            let mut parser = Parser::new_from_fallible_iter_with_options(input(), options.clone());
+            let parser_error = parser
+                .by_ref()
+                .collect::<Result<Vec<_>, _>>()
+                .expect_err("a source failure must not become clean EOF or a syntax error");
+            let mut scanner = Scanner::with_options(FallibleBufferedInput::new(input()), options);
+            let scanner_error = scanner
+                .by_ref()
+                .collect::<Result<Vec<_>, _>>()
+                .expect_err("a source failure must not become clean EOF or a syntax error");
+
+            assert_eq!(parser_error.kind(), &io_error("read failed"), "{context}");
+            assert_eq!(scanner_error, parser_error, "{context}");
+            assert_eq!(
+                parser_error.marker(),
+                &Marker::new(source.chars().count(), line, col),
+                "{context}",
+            );
+            assert!(parser.next().is_none(), "{context}");
+            assert!(scanner.next().is_none(), "{context}");
+        }
+    }
 }
 
 #[test]

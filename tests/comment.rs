@@ -658,20 +658,33 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
 }
 
 #[test]
-fn scanner_rejects_tab_immediately_after_explicit_key_indicator() {
-    let mut scanner = Scanner::new(StrInput::new("?\tkey\n"));
+fn scanner_accepts_tab_separated_explicit_key_with_comment() {
+    let yaml = "?\tkey # key comment\n: value\n";
+    let tokens = scanner_tokens(yaml).expect("tabs may separate an explicit scalar key");
+    let scalars: Vec<_> = tokens
+        .iter()
+        .filter_map(|token| match token.token_type() {
+            TokenType::Scalar(_, value) => Some(value.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scalars, ["key", "value"]);
 
-    let error = loop {
-        match scanner.next() {
-            Some(Ok(_)) => {}
-            Some(Err(error)) => break error,
-            None => panic!("expected scanner error"),
-        }
-    };
-
-    assert_eq!(error.kind(), &ErrorKind::ExpectedWhitespace);
-    assert_eq!(error.marker().line(), 1);
-    assert_eq!(error.marker().col(), 1);
+    let comments: Vec<_> = tokens
+        .iter()
+        .filter_map(|token| match token.token_type() {
+            TokenType::Comment(comment) => Some((
+                comment.text(),
+                comment.placement(),
+                token.span().slice(yaml),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        comments,
+        [(" key comment", Placement::Right, Some("# key comment"))]
+    );
 }
 
 #[test]

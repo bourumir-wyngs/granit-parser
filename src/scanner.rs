@@ -870,8 +870,8 @@ pub struct Scanner<'input, T> {
     interrupted_plain_by_comment: Option<Marker>,
     /// Whether the scanner is still validating whitespace after an explicit `?` key indicator.
     ///
-    /// This stays set across streamed comment tokens so a tab after the comment run is rejected the
-    /// same way it was when that whitespace was scanned in one pass.
+    /// This stays set across streamed comments to distinguish tab separation from the space-only
+    /// indentation required by a key node or compact block collection.
     explicit_key_tab_check_pending: bool,
     /// A stack of markers for opening brackets `[` and `{`.
     flow_markers: smallvec::SmallVec<[(Marker, char); 8]>,
@@ -1911,7 +1911,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.explicit_key_tab_check_pending {
                 match ch {
                     '\t' => {
-                        return Err(self.scan_error(ErrorKind::TabNotAllowed));
+                        self.skip_explicit_key_tab()?;
+                        continue;
                     }
                     ' ' | '\n' | '\r' | '#' => {}
                     _ => self.explicit_key_tab_check_pending = false,
@@ -2020,13 +2021,35 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         Ok(outcome)
     }
 
-    /// Skip over YAML whitespace (` `, `\n`, `\r`).
+    /// Consume a tab in the separation following a block explicit-key indicator.
+    fn skip_explicit_key_tab(&mut self) -> ScanResult {
+        if self.leading_whitespace && (self.mark.col as isize) <= self.indent {
+            let tab_mark = self.mark;
+            let (chars_consumed, _) = self.input.skip_ws_to_eol_blanks(SkipTabs::Yes);
+            self.mark.col += chars_consumed;
+            self.mark.offsets.chars += chars_consumed;
+            self.mark.offsets.bytes = self.input.byte_offset();
+            // Blank and comment-only lines do not require key-node indentation.
+            if self.input.look_ch() != '#' && !self.input.next_is_breakz() {
+                return Err(ScanError::from_kind(tab_mark, ErrorKind::TabNotAllowed));
+            }
+        } else {
+            self.skip_blank();
+        }
+        // Inline flow/scalar nodes accept tab separation. Compact block collections require
+        // spaces, so no simple key or block entry may start until the next line.
+        self.disallow_simple_key();
+        Ok(())
+    }
+
+    /// Skip separation whitespace after a block explicit-key indicator.
     ///
     /// The function returns after one separated comment, whether it was queued or ignored, so a
     /// caller can publish completed syntax before validating later input.
     ///
     /// # Errors
-    /// This function returns an error if no whitespace was found.
+    /// This function returns an error if no whitespace was found or a tab supplies required
+    /// indentation for the key node.
     fn skip_yaml_whitespace(&mut self) -> Result<bool, ScanError> {
         let mut need_whitespace = true;
         loop {
@@ -2034,6 +2057,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 ' ' => {
                     self.skip_blank();
 
+                    need_whitespace = false;
+                }
+                '\t' => {
+                    self.skip_explicit_key_tab()?;
                     need_whitespace = false;
                 }
                 '\n' | '\r' => {
@@ -2105,12 +2132,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn fetch_stream_end(&mut self) -> ScanResult {
-        // force new line
-        if self.mark.col != 0 {
-            self.mark.col = 0;
-            self.mark.line += 1;
-        }
-
+        // Close blocks at the physical EOF position. No line break was consumed here;
+        // moving the marker would also corrupt a pending fallible-input error's location.
         if let Some((mark, bracket)) = self.flow_markers.pop() {
             return Err(Self::unclosed_bracket(mark, bracket));
         }
@@ -4209,14 +4232,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let end_mark = self.mark;
         let token_index = self.tokens.len();
         self.explicit_key_tab_check_pending = false;
-        // A tab after a block `?` would be indentation for the key node. In a flow collection
-        // there is no indentation and tabs are ordinary separation white space (s-white), which
-        // the next token fetch skips.
+        // Block keys permit tab separation for scalar/flow nodes, but require spaces for
+        // compact collections and indentation on subsequent lines. Keep that validation active
+        // across comments; flow collections use the ordinary whitespace skipper.
         if self.flow_level == 0 {
             let stopped_after_comment = self.skip_yaml_whitespace()?;
-            if self.input.peek() == '\t' {
-                return Err(self.scan_error(ErrorKind::TabNotAllowed));
-            }
             self.explicit_key_tab_check_pending = stopped_after_comment;
         }
         self.insert_token(
@@ -6237,9 +6257,9 @@ mod test {
     }
 
     #[test]
-    fn explicit_key_rejects_tab_after_indicator() {
+    fn explicit_key_rejects_tab_used_as_indentation() {
         assert_eq!(
-            first_scanner_error_kind("? \tfoo\n"),
+            first_scanner_error_kind("?\n\tfoo\n"),
             ErrorKind::TabNotAllowed
         );
     }

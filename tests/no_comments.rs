@@ -746,13 +746,16 @@ fn streaming_comment_failures_preserve_source_errors_in_all_emission_modes() {
                 source.chars().count(),
                 "{context}"
             );
-            if source.ends_with('\n') {
-                assert_eq!(
-                    (parser_error.marker().line(), parser_error.marker().col()),
-                    (2, 0),
-                    "{context}",
-                );
-            }
+            assert_eq!(
+                parser_error.marker().line(),
+                source.matches('\n').count() + 1,
+                "{context}",
+            );
+            assert_eq!(
+                parser_error.marker().col(),
+                source.rsplit('\n').next().unwrap().chars().count(),
+                "{context}",
+            );
             assert!(
                 events
                     .iter()

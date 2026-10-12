@@ -1,10 +1,17 @@
-use granit_parser::{ErrorKind, Event, Parser, ScalarStyle, ScanError, StructureStyle};
+use granit_parser::{ErrorKind, Event, Options, Parser, ScalarStyle, ScanError, StructureStyle};
 
 fn collect_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
-    let str_events = Parser::new_from_str(input).collect::<Result<Vec<_>, _>>();
-    let iter_events = Parser::new_from_iter(input.chars()).collect::<Result<Vec<_>, _>>();
-    let fallible_events = Parser::new_from_fallible_iter(input.chars().map(Ok::<_, ErrorKind>))
+    collect_events_with_options(input, Options::default())
+}
+
+fn collect_events_with_options(input: &str, options: Options) -> Result<Vec<Event<'_>>, ScanError> {
+    let str_events =
+        Parser::new_from_str_with_options(input, options.clone()).collect::<Result<Vec<_>, _>>();
+    let iter_events = Parser::new_from_iter_with_options(input.chars(), options.clone())
         .collect::<Result<Vec<_>, _>>();
+    let fallible_events =
+        Parser::new_from_fallible_iter_with_options(input.chars().map(Ok::<_, ErrorKind>), options)
+            .collect::<Result<Vec<_>, _>>();
     assert_eq!(str_events, iter_events, "input: {input:?}");
     assert_eq!(str_events, fallible_events, "input: {input:?}");
     Ok(str_events?.into_iter().map(|(event, _)| event).collect())
@@ -64,8 +71,7 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
 
 #[test]
 fn tabs_separate_explicit_keys_in_flow_collections() {
-    // A tab after `?` is only rejected in block context, where it would indent the key node.
-    // Flow collections have no indentation; tabs there are ordinary s-white separation.
+    // Tabs are ordinary s-white separation within flow collections.
     for separator in ["\t", " \t", "\t ", "\n\t"] {
         for (yaml, expected) in [
             (format!("{{?{separator}a: b}}"), vec!["a", "b"]),
@@ -79,8 +85,143 @@ fn tabs_separate_explicit_keys_in_flow_collections() {
             );
         }
     }
-    // Block context is unchanged.
-    assert!(collect_events("?\tkey\n: value\n").is_err());
+}
+
+#[test]
+fn tabs_separate_explicit_block_keys_without_becoming_indentation() {
+    for separator in ["\t", " \t", "\t ", "\t\t"] {
+        for key in [
+            "key",
+            "-item",
+            "'quoted'",
+            "\"quoted\"",
+            "[a, b]",
+            "{a: b}",
+            "&a !local key",
+            "|\n  key",
+        ] {
+            let yaml = format!("?{separator}{key}\n: value\n");
+            let reference = format!("? {key}\n: value\n");
+            for strict_indentation in [false, true] {
+                let options = granit_parser::options! { strict_indentation: strict_indentation };
+                assert_eq!(
+                    collect_events_with_options(&yaml, options.clone())
+                        .unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
+                    collect_events_with_options(&reference, options).unwrap(),
+                    "{yaml:?}"
+                );
+            }
+        }
+    }
+
+    for (yaml, expected) in [
+        ("?\t\n: value\n", ["~", "value"].as_slice()),
+        ("?\tkey\n", ["key", "~"].as_slice()),
+        ("?\t", ["~", "~"].as_slice()),
+        (
+            "outer:\n  ?\tkey\n  : value\n",
+            ["outer", "key", "value"].as_slice(),
+        ),
+        ("- ?\tkey\n  : value\n", ["key", "value"].as_slice()),
+        (
+            "?\t&a key\n: value\n?\t*a\n: other\n",
+            ["key", "value", "other"].as_slice(),
+        ),
+    ] {
+        assert_eq!(collect_scalars(yaml).unwrap(), expected, "{yaml:?}");
+    }
+}
+
+#[test]
+fn explicit_key_tabs_after_comments_require_space_indentation() {
+    let scalar_key_events = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    let mapping_key_events = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("nested".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    for (yaml, expected) in [
+        ("?\t# key\n \tkey\n: value\n", scalar_key_events.as_slice()),
+        (
+            "? # key\n\t# another\n \tkey\n: value\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\r\n\t\r\n \tkey\r\n: value\r\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\n\t# comment\n \tkey\n: value\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\t\n  key: nested\n: value\n",
+            mapping_key_events.as_slice(),
+        ),
+    ] {
+        for emit_comments in [false, true] {
+            for strict_indentation in [false, true] {
+                let options = granit_parser::options! { emit_comments: emit_comments, strict_indentation: strict_indentation };
+                let events: Vec<_> = collect_events_with_options(yaml, options)
+                    .unwrap_or_else(|error| panic!("{yaml:?}: {error}"))
+                    .into_iter()
+                    .filter(|event| {
+                        #[cfg(feature = "comments")]
+                        if matches!(event, Event::Comment(..)) {
+                            return false;
+                        }
+                        let _ = event;
+                        true
+                    })
+                    .collect();
+                assert_eq!(
+                    events, expected,
+                    "{yaml:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}",
+                );
+            }
+        }
+    }
+    for yaml in [
+        "?\t-\n",
+        "? \t-\n",
+        "?\tkey:\n",
+        "? \tkey:\n",
+        "?\t? key\n",
+        "?\n \tkey: value\n",
+    ] {
+        assert!(
+            collect_events(yaml).is_err(),
+            "compact collection accepts tab indentation: {yaml:?}"
+        );
+    }
+    for yaml in [
+        "?\n\tkey\n: value\n",
+        "?\t# key\n\tkey\n: value\n",
+        "outer:\n  ?\n  \tkey\n  : value\n",
+    ] {
+        assert_eq!(
+            collect_events(yaml).unwrap_err().kind(),
+            &ErrorKind::TabNotAllowed,
+            "{yaml:?}"
+        );
+    }
 }
 
 #[test]
@@ -124,9 +265,9 @@ fn tabs_after_flow_explicit_keys_preserve_collection_keys_and_alias_values() {
     }
 
     // Leaving flow context must restore the prohibition on a tab indenting a block key.
-    let error = collect_events("first: {?\tkey: value}\n? \tinvalid\n: value\n").unwrap_err();
+    let error = collect_events("first: {?\tkey: value}\n?\n\tinvalid\n: value\n").unwrap_err();
     assert_eq!(error.kind(), &ErrorKind::TabNotAllowed);
-    assert_eq!((error.marker().line(), error.marker().col()), (2, 2));
+    assert_eq!((error.marker().line(), error.marker().col()), (3, 0));
 }
 
 #[test]
@@ -291,6 +432,8 @@ fn tab_at_start_of_block_scalar_is_rejected() {
     let err =
         got_err.expect("expected a ScanError due to leading tab at start of block scalar content");
     // The scanner has a specific error for this case.
+    assert_eq!(err.kind(), &ErrorKind::TabAtBlockScalarStart);
+    #[cfg(feature = "error_messages")]
     assert!(
         err.info()
             .contains("a block scalar content cannot start with a tab"),
