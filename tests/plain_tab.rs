@@ -134,24 +134,67 @@ fn tabs_separate_explicit_block_keys_without_becoming_indentation() {
 
 #[test]
 fn explicit_key_tabs_after_comments_require_space_indentation() {
-    for yaml in [
-        "?\t# key\n \tkey\n: value\n",
-        "? # key\n\t# another\n \tkey\n: value\n",
-        "?\r\n\t\r\n \tkey\r\n: value\r\n",
-        "?\n\t# comment\n \tkey\n: value\n",
-        "?\t\n  key: nested\n: value\n",
+    let scalar_key_events = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    let mapping_key_events = [
+        Event::StreamStart,
+        Event::DocumentStart(false, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::MappingStart(StructureStyle::Block, 0, None),
+        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
+        Event::Scalar("nested".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
+        Event::MappingEnd,
+        Event::DocumentEnd,
+        Event::StreamEnd,
+    ];
+    for (yaml, expected) in [
+        ("?\t# key\n \tkey\n: value\n", scalar_key_events.as_slice()),
+        (
+            "? # key\n\t# another\n \tkey\n: value\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\r\n\t\r\n \tkey\r\n: value\r\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\n\t# comment\n \tkey\n: value\n",
+            scalar_key_events.as_slice(),
+        ),
+        (
+            "?\t\n  key: nested\n: value\n",
+            mapping_key_events.as_slice(),
+        ),
     ] {
         for emit_comments in [false, true] {
             for strict_indentation in [false, true] {
                 let options = granit_parser::options! { emit_comments: emit_comments, strict_indentation: strict_indentation };
-                let events = collect_events_with_options(yaml, options)
-                    .unwrap_or_else(|error| panic!("{yaml:?}: {error}"));
-                assert!(events
-                    .iter()
-                    .any(|event| matches!(event, Event::Scalar(value, ..) if value == "key")));
-                assert!(events
-                    .iter()
-                    .any(|event| matches!(event, Event::Scalar(value, ..) if value == "value")));
+                let events: Vec<_> = collect_events_with_options(yaml, options)
+                    .unwrap_or_else(|error| panic!("{yaml:?}: {error}"))
+                    .into_iter()
+                    .filter(|event| {
+                        #[cfg(feature = "comments")]
+                        if matches!(event, Event::Comment(..)) {
+                            return false;
+                        }
+                        let _ = event;
+                        true
+                    })
+                    .collect();
+                assert_eq!(
+                    events, expected,
+                    "{yaml:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}",
+                );
             }
         }
     }
