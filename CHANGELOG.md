@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0
+- Add option `disallow_directives`. Projects like `morphir` disallow all directives and write the
+  code around to enforce this. Directives are allowed by default.
+
 ## 2.0.0 (breaking changes)
 
 - Added the default-enabled `comments` feature. Disabling it compiles out scanner comment capture,
