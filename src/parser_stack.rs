@@ -198,7 +198,8 @@ where
     /// Creates a new, empty parser stack with the supplied parsing options.
     ///
     /// Options are applied to sources parsed internally by [`Self::push_include`]. Caller-supplied
-    /// parsers retain their own scanning options.
+    /// parsers retain their own parsing options, including [`Options::emit_unresolved_aliases`].
+    /// Unresolved alias events from caller-supplied parsers and replay streams are passed through.
     /// With the `comments` Cargo feature, disabling comment emission also suppresses comment
     /// events from parsers and replay streams supplied by the caller. Construct caller-supplied
     /// parsers with emission disabled as well to avoid capturing comments before filtering them.
