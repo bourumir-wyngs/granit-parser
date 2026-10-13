@@ -2160,6 +2160,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn fetch_directive(&mut self) -> ScanResult {
+        if self.options.disallow_directives {
+            return Err(self.scan_error(ErrorKind::DirectiveDisallowed));
+        }
+
         self.unroll_indent(-1);
         self.remove_simple_key()?;
 

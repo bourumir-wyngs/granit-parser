@@ -18,6 +18,7 @@
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // Independent, opt-in parsing policies.
 pub struct Options {
     /// Whether to enforce strict YAML indentation rules for flow collections, scalar
     /// continuations, and content following explicit-key anchor or tag properties.
@@ -27,6 +28,46 @@ pub struct Options {
     /// some non-compliant YAML that passes with the two libraries above will fail.
     /// Default is false.
     pub strict_indentation: bool,
+    /// Reject all YAML directives, including reserved directives.
+    ///
+    /// When enabled, directive syntax recognized by the scanner in any document reports
+    /// [`crate::ErrorKind::DirectiveDisallowed`] at the directive's `%` indicator.
+    /// Percent signs inside scalars and comments are unaffected.
+    /// Defaults to false.
+    pub disallow_directives: bool,
+    /// Emit unresolved alias nodes instead of stopping at an unknown anchor.
+    ///
+    /// Defaults to `false`. When omitted or explicitly set to `false`, an alias without a
+    /// preceding anchor definition in its document reports [`crate::ErrorKind::UnknownAnchor`]
+    /// and stops parsing, preserving the default behavior.
+    ///
+    /// When `true`, the parser emits [`crate::Event::UnresolvedAlias`] with the original name
+    /// (without `*`) and a span covering the complete alias token, then continues structural
+    /// parsing. Consumers must handle this event as a node, including in mapping-key and
+    /// mapping-value positions; silently ignoring it in a wildcard match can lose structure.
+    /// Successful parsing in this mode does not establish full YAML validity: unresolved aliases
+    /// remain invalid references, whose diagnostics the consumer can report separately.
+    ///
+    /// Resolved aliases still emit [`crate::Event::Alias`]. Each alias resolves against the most
+    /// recent preceding definition in the same document. An unresolved occurrence neither
+    /// allocates an anchor ID nor becomes resolved by a later definition. Repeated missing names
+    /// produce separate unresolved events, and anchor names do not carry across documents.
+    /// Scanning, grammar, input, and resource-limit errors still stop parsing normally.
+    /// This option has no effect on a scanner used directly.
+    ///
+    /// ```rust
+    /// use granit_parser::{Event, Parser};
+    ///
+    /// let options = granit_parser::options! { emit_unresolved_aliases: true };
+    /// let events = Parser::new_from_str_with_options("[*missing, value]", options)
+    ///     .collect::<Result<Vec<_>, _>>()?;
+    /// assert!(events.iter().any(|(event, _)| {
+    ///     matches!(event, Event::UnresolvedAlias(name) if name == "missing")
+    /// }));
+    /// assert!(matches!(events.last(), Some((Event::StreamEnd, _))));
+    /// # Ok::<(), granit_parser::ScanError>(())
+    /// ```
+    pub emit_unresolved_aliases: bool,
     /// Whether scanners emit comment tokens and parsers emit comment events.
     ///
     /// The default is `true` with the `comments` Cargo feature and `false` without it.
@@ -95,6 +136,8 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             strict_indentation: false,
+            disallow_directives: false,
+            emit_unresolved_aliases: false,
             emit_comments: cfg!(feature = "comments"),
             #[cfg(feature = "comments")]
             max_buffered_comment_events: 96,
