@@ -27,6 +27,13 @@ pub struct Options {
     /// some non-compliant YAML that passes with the two libraries above will fail.
     /// Default is false.
     pub strict_indentation: bool,
+    /// Reject all YAML directives, including reserved directives.
+    ///
+    /// When enabled, directive syntax recognized by the scanner in any document reports
+    /// [`crate::ErrorKind::DirectiveDisallowed`] at the directive's `%` indicator.
+    /// Percent signs inside scalars and comments are unaffected.
+    /// Defaults to false.
+    pub disallow_directives: bool,
     /// Whether scanners emit comment tokens and parsers emit comment events.
     ///
     /// The default is `true` with the `comments` Cargo feature and `false` without it.
@@ -95,6 +102,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             strict_indentation: false,
+            disallow_directives: false,
             emit_comments: cfg!(feature = "comments"),
             #[cfg(feature = "comments")]
             max_buffered_comment_events: 96,
