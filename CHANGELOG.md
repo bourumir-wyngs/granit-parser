@@ -1,6 +1,13 @@
 # Changelog
 
-## 2.1.0
+## 2.1.0 (unreleased)
+
+- Add boolean option `emit_unresolved_aliases` (default `false`). When enabled, unknown anchors
+  produce `Event::UnresolvedAlias(name)` with the alias token's span and structural parsing
+  continues. Unresolved references remain invalid YAML and are never resolved by later definitions;
+  other errors still stop parsing. Consumers enabling this option must handle unresolved aliases
+  as nodes. Omitting the option or setting it to `false` preserves the existing `UnknownAnchor`
+  error and termination. Add `Event::is_alias()` for recognizing resolved and unresolved aliases.
 - Add option `disallow_directives`. Projects like `morphir` disallow all directives and write the
   code around to enforce this. Directives are allowed by default.
 
