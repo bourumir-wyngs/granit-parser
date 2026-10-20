@@ -110,10 +110,19 @@ pub enum Event<'input> {
     /// This event is emitted for both explicit document end markers (`...`) and implicit document
     /// ends.
     DocumentEnd,
-    /// A YAML alias.
+    /// A resolved YAML alias.
     Alias(
         /// The anchor ID the alias refers to.
         usize,
+    ),
+    /// An alias without a preceding anchor definition in its document.
+    ///
+    /// Emitted only when [`Options::emit_unresolved_aliases`] is `true`. The companion [`Span`]
+    /// covers the complete alias token, including `*`. This event occupies a node position but
+    /// represents an invalid reference; a later anchor definition does not resolve it retroactively.
+    UnresolvedAlias(
+        /// The original alias name, without the leading `*`.
+        Cow<'input, str>,
     ),
     /// A YAML source comment.
     ///
@@ -421,8 +430,9 @@ impl<'input> Event<'input> {
     /// Return the anchor ID defined by this event, if any.
     ///
     /// Returns `Some(id)` when this event defines an anchor on a scalar, sequence, or mapping
-    /// node. Returns `None` for all other events, including `Alias` (which references an anchor
-    /// rather than defining one; use [`Self::alias_id`] to obtain the target anchor ID).
+    /// node. Returns `None` for all other events, including resolved and unresolved aliases
+    /// (which reference anchors rather than defining them; use [`Self::alias_id`] to obtain a
+    /// resolved target anchor ID).
     #[must_use]
     pub fn anchor_id(&self) -> Option<usize> {
         match self {
@@ -437,13 +447,22 @@ impl<'input> Event<'input> {
         }
     }
 
-    /// Return the target anchor ID referenced by this alias event, if this event is an alias.
+    /// Return the target anchor ID if this event is a resolved alias.
+    ///
+    /// Returns `None` for unresolved aliases and non-alias events. Use [`Self::is_alias`] to
+    /// recognize either kind of alias, or match [`Self::UnresolvedAlias`] to obtain its name.
     #[must_use]
     pub fn alias_id(&self) -> Option<usize> {
         match self {
             Self::Alias(anchor_id) => Some(*anchor_id),
             _ => None,
         }
+    }
+
+    /// Return whether this event is a resolved or unresolved alias.
+    #[must_use]
+    pub fn is_alias(&self) -> bool {
+        matches!(self, Self::Alias(_) | Self::UnresolvedAlias(_))
     }
 
     /// Return the resolved tag carried by this node event, if any.
@@ -468,14 +487,18 @@ impl<'input> Event<'input> {
 
     /// Return whether this event represents a YAML node (value).
     ///
-    /// Returns `true` for scalars, collection starts, and aliases — all events that produce a
-    /// value in the document tree. Returns `false` for structural events such as `StreamStart`,
+    /// Returns `true` for scalars, collection starts, and resolved or unresolved aliases, all of
+    /// which occupy a node position. Returns `false` for structural events such as `StreamStart`,
     /// `DocumentStart`, collection ends, etc.
     #[must_use]
     pub fn is_node(&self) -> bool {
         matches!(
             self,
-            Self::Alias(_) | Self::Scalar(..) | Self::SequenceStart(..) | Self::MappingStart(..)
+            Self::Alias(_)
+                | Self::UnresolvedAlias(_)
+                | Self::Scalar(..)
+                | Self::SequenceStart(..)
+                | Self::MappingStart(..)
         )
     }
 
@@ -499,9 +522,12 @@ impl<'input> Event<'input> {
 
 /// A YAML parser.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // Independent parsing policies and state flags.
 pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// The underlying scanner from which we pull tokens.
     scanner: Scanner<'input, T>,
+    /// Whether unknown anchors produce unresolved alias nodes instead of terminal errors.
+    emit_unresolved_aliases: bool,
     /// Maximum number of comments retained while resolving an ambiguous collection entry.
     #[cfg(feature = "comments")]
     max_buffered_comment_events: usize,
@@ -966,10 +992,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         #[cfg(feature = "comments")]
         let max_buffered_comment_events = options.max_buffered_comment_events;
         let block_nesting_limit = options.block_nesting_limit;
+        let emit_unresolved_aliases = options.emit_unresolved_aliases;
         let scanner = Scanner::with_options(src, options);
 
         Parser {
             scanner,
+            emit_unresolved_aliases,
             #[cfg(feature = "comments")]
             max_buffered_comment_events,
             block_nesting_limit,
@@ -1861,6 +1889,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     unreachable!("alias token disappeared after peek")
                 };
                 return match self.anchors.get(&*name) {
+                    None if self.emit_unresolved_aliases => {
+                        Ok((Event::UnresolvedAlias(name), span))
+                    }
                     None => Err(ScanError::from_kind(span.start, ErrorKind::UnknownAnchor)),
                     Some(id) => Ok((Event::Alias(*id), span)),
                 };

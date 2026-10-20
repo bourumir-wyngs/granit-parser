@@ -17,6 +17,8 @@ fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
 fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
     assert!(!defaults.strict_indentation);
+    assert!(!defaults.disallow_directives);
+    assert!(!defaults.emit_unresolved_aliases);
     assert_eq!(defaults.emit_comments, cfg!(feature = "comments"));
     #[cfg(feature = "comments")]
     assert_eq!(defaults.max_buffered_comment_events, 96);
@@ -29,6 +31,8 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
 
     let options = granit_parser::options! {
         strict_indentation: true,
+        disallow_directives: true,
+        emit_unresolved_aliases: true,
         emit_comments: false,
         #[cfg(feature = "comments")]
         max_buffered_comment_events: 7,
@@ -40,6 +44,8 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     };
 
     assert!(options.strict_indentation);
+    assert!(options.disallow_directives);
+    assert!(options.emit_unresolved_aliases);
     assert!(!options.emit_comments);
     #[cfg(feature = "comments")]
     assert_eq!(options.max_buffered_comment_events, 7);

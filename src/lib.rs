@@ -80,6 +80,11 @@
 //! [`Scanner::with_options`], and [`ParserStack::with_options`] accept customized options created
 //! with [`options!`].
 //!
+//! Tooling can set [`Options::emit_unresolved_aliases`] to `true` to receive
+//! [`Event::UnresolvedAlias`] nodes and continue structural parsing when an anchor is missing.
+//! These references remain invalid YAML and must be handled by the consumer. The option defaults
+//! to `false`, preserving the [`ErrorKind::UnknownAnchor`] error and termination.
+//!
 //! # Features
 //! **Note:** This crate's MSRV is `1.81.0`.
 //!

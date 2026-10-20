@@ -240,6 +240,8 @@ pub enum ErrorKind {
     CommentNotSeparated,
     /// A directive did not end with a comment or line break.
     InvalidDirectiveTerminator,
+    /// A directive was encountered while [`crate::Options::disallow_directives`] was enabled.
+    DirectiveDisallowed,
     /// A YAML version directive did not contain the expected digit or dot.
     MissingYamlVersionSeparator,
     /// A directive name was missing.
@@ -466,6 +468,7 @@ impl fmt::Display for ErrorKind {
             Self::InvalidDirectiveTerminator => f.write_str(
                 "while scanning a directive, did not find expected comment or line break",
             ),
+            Self::DirectiveDisallowed => f.write_str("YAML directives are disallowed"),
             Self::MissingYamlVersionSeparator => f.write_str(
                 "while scanning a YAML directive, did not find expected digit or '.' character",
             ),
