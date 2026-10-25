@@ -2772,9 +2772,12 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         #[cfg(feature = "comments")]
         let has_buffered_result =
             has_buffered_result || self.deferred_error.is_some() || !self.queued_events.is_empty();
-        if self.scanner.stream_ended() && !has_buffered_result {
-            // The scanner has already reached EOF before the document loop, so emit the terminal
-            // event and stop.
+        if self.state == State::End && !has_buffered_result {
+            // The parser already completed the stream, so emit the terminal event again and stop.
+            // Only success reaches `State::End`. The scanner's own stream-end flag is not a
+            // substitute: it is also set when an error is raised at the end of the stream, such as
+            // `ExpectedDocumentStart` for a directive-only document, and `StreamEnd` must not be
+            // re-emitted after such an error.
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
             self.stream_end_emitted = true;
             return Ok(());

@@ -33,6 +33,7 @@ pub const RAW_INPUTS: &[&str] = &[
     "outer:\n  key: \"one\n   two\"\n",
     "|+\n  a\n  ",
     "clé:\r\n- é\r\n? suivant\r\n",
+    "%YAML 1.2\n",
 ];
 
 // Conforming and under-indented inputs exercise strict-mode errors as well as successful traces.

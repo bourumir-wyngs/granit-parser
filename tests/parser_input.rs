@@ -260,10 +260,11 @@ impl<'input> EventReceiver<'input> for CountEvents {
 fn assert_load_scan_error_exhausts_parser<'input, T: BorrowedInput<'input>>(
     mut parser: Parser<'input, T>,
     multi: bool,
+    expected: &ErrorKind,
 ) {
     let mut events = CountEvents::default();
     let error = parser.load(&mut events, multi).unwrap_err();
-    assert_eq!(error.kind(), &ErrorKind::InvalidTagEscape);
+    assert_eq!(error.kind(), expected);
     let emitted = events.0;
     assert!(
         emitted > 0,
@@ -285,20 +286,45 @@ fn assert_load_scan_error_exhausts_parser<'input, T: BorrowedInput<'input>>(
 
 #[test]
 fn load_scan_error_exhausts_string_parser() {
-    assert_load_scan_error_exhausts_parser(Parser::new_from_str(SCAN_ERROR_MID_TRANSITION), true);
-    assert_load_scan_error_exhausts_parser(Parser::new_from_str(SCAN_ERROR_MID_TRANSITION), false);
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_str(SCAN_ERROR_MID_TRANSITION),
+            multi,
+            &ErrorKind::InvalidTagEscape,
+        );
+    }
 }
 
 #[test]
 fn load_scan_error_exhausts_streaming_parser() {
-    assert_load_scan_error_exhausts_parser(
-        Parser::new_from_iter(SCAN_ERROR_MID_TRANSITION.chars()),
-        true,
-    );
-    assert_load_scan_error_exhausts_parser(
-        Parser::new_from_iter(SCAN_ERROR_MID_TRANSITION.chars()),
-        false,
-    );
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_iter(SCAN_ERROR_MID_TRANSITION.chars()),
+            multi,
+            &ErrorKind::InvalidTagEscape,
+        );
+    }
+}
+
+/// A directive without the `---` it requires. The scanner's stream end is already consumed when
+/// `ExpectedDocumentStart` is raised, so the end-of-stream shortcut in `load` must not re-emit
+/// `StreamEnd` after the error.
+const DIRECTIVE_WITHOUT_DOCUMENT: &str = "%YAML 1.2\n";
+
+#[test]
+fn load_scan_error_at_end_of_stream_exhausts_parser() {
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_str(DIRECTIVE_WITHOUT_DOCUMENT),
+            multi,
+            &ErrorKind::ExpectedDocumentStart,
+        );
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_iter(DIRECTIVE_WITHOUT_DOCUMENT.chars()),
+            multi,
+            &ErrorKind::ExpectedDocumentStart,
+        );
+    }
 }
 
 #[test]
