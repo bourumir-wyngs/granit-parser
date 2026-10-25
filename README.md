@@ -51,6 +51,14 @@ effect without the feature. Comments are still recognized and validated as YAML 
 
 Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
+For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
+syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
+error, then continue reading events normally: the parser reports the next document or `StreamEnd`
+with original source positions. It also skips the current document during successful parsing.
+Consumers must abandon or mark their unfinished tree nodes; recovery emits no synthetic closing
+events or error nodes. Anchors remain scoped to their document, and source failures remain terminal.
+This recovers later documents, not structure within the broken document.
+
 ```rust
 use granit_parser::Parser;
 

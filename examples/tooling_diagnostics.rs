@@ -87,7 +87,7 @@ fn main() -> Result<(), ScanError> {
         .expect("the sample deliberately references an unknown anchor");
     assert!(matches!(error.kind(), ErrorKind::UnknownAnchor));
     report_error(&error);
-    // An iterator error is terminal: calling next() again cannot resume this strict parse.
+    // An iterator error is terminal until document-boundary recovery is explicitly requested.
     assert!(strict.next().is_none());
 
     // A linter can instead report invalid references and still inspect the remaining structure.
@@ -102,6 +102,30 @@ fn main() -> Result<(), ScanError> {
     let error = inspect_for_lint(malformed).expect_err("the sequence is deliberately unclosed");
     assert!(!matches!(error.kind(), ErrorKind::UnknownAnchor));
     report_error(&error);
+
+    // A document boundary supplies an unambiguous place to resume after malformed structure.
+    // A tree builder would abandon its open nodes before calling proceed_next_document().
+    let documents = "broken: [1, 2\n---\nhealthy:\n  enabled: true\n";
+    println!("\nYAML:\n{documents}\nRecovering the next document:");
+    let mut parser = Parser::new_from_str(documents);
+    let mut diagnostics = 0;
+    let mut found_healthy = false;
+    while let Some(next) = parser.next_event() {
+        match next {
+            Ok((Event::Scalar(value, ..), span)) if value == "healthy" => {
+                found_healthy = true;
+                assert_eq!(span.start.line(), 3); // Position in the original input.
+            }
+            Ok(_) => {}
+            Err(error) => {
+                report_error(&error);
+                diagnostics += 1;
+                parser.proceed_next_document()?;
+            }
+        }
+    }
+    assert_eq!(diagnostics, 1);
+    assert!(found_healthy);
 
     // Some applications prohibit every directive, including unused tag declarations. Looking only
     // at node tags or DocumentStart's version would miss this unused %TAG declaration.
