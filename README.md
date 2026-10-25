@@ -51,6 +51,14 @@ effect without the feature. Comments are still recognized and validated as YAML 
 
 Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
+For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
+syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
+error, then continue reading events normally: the parser reports the next document or `StreamEnd`
+with original source positions. It also skips the current document during successful parsing.
+Consumers must abandon or mark their unfinished tree nodes; recovery emits no synthetic closing
+events or error nodes. Anchors remain scoped to their document, and source failures remain terminal.
+This recovers later documents, not structure within the broken document.
+
 ```rust
 use granit_parser::Parser;
 
@@ -144,6 +152,27 @@ MappingEnd bytes=Some(349..349) source=Some("")
 DocumentEnd bytes=Some(349..349) source=Some("")
 StreamEnd bytes=Some(349..349) source=Some("")
 ```
+
+## Learning examples
+
+These examples include explanatory comments and assertions for their sample inputs. Run them from
+the repository root, then read the source alongside the output:
+
+| Example | What it teaches | Run |
+| --- | --- | --- |
+| [Event walker](examples/event_walker.rs) | Track mapping keys/values, sequence elements, and depth through nested collections, aliases, comments, and document boundaries. Read collection style directly from events. | `cargo run --example event_walker` |
+| [Source positions](examples/source_positions.rs) | Distinguish character indexes, UTF-8 byte offsets, and UTF-16 editor positions; handle Unicode and line endings using the original source. | `cargo run --example source_positions` |
+| [Tooling diagnostics](examples/tooling_diagnostics.rs) | Match structured errors, inspect declared YAML versions, continue past unresolved aliases explicitly, and enforce a no-directives policy. | `cargo run --example tooling_diagnostics` |
+
+All three also run with `--no-default-features`, for example:
+
+```sh
+cargo run --no-default-features --example tooling_diagnostics
+```
+
+The example executables use Rust's standard library; disabling the parser's default features
+demonstrates that their logic does not depend on comment events or built-in error messages.
+
 ## Key differences from saphyr-parser
 
 All changes are intentionally scoped around correctness, compliance, and interoperability. This list summarizes 

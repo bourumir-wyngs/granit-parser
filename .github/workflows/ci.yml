@@ -69,6 +69,17 @@ jobs:
         run: cargo test -v
       - name: Run tests without parser comments
         run: cargo test --no-default-features --features std,error_messages
+      # cargo test compiles examples but does not execute the assertions in main.
+      - name: Run learning examples with default features
+        run: |
+          cargo run --example event_walker
+          cargo run --example source_positions
+          cargo run --example tooling_diagnostics
+      - name: Run learning examples without default features
+        run: |
+          cargo run --no-default-features --example event_walker
+          cargo run --no-default-features --example source_positions
+          cargo run --no-default-features --example tooling_diagnostics
 
   coverage:
     runs-on: ubuntu-latest

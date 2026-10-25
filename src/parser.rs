@@ -610,6 +610,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// in [`Self::current`], [`Self::current_error`], or internal comment buffers, this is set to
     /// `false`.
     stream_end_emitted: bool,
+    /// Whether parsing stopped on an error, including an error observed only through `peek`.
+    failed: bool,
+    /// Whether the current document has ended without starting the next one yet.
+    at_document_end: bool,
     /// Make tags global across all documents.
     keep_tags: bool,
 }
@@ -1043,6 +1047,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             anchor_id_count: 1,
             tags: BTreeMap::new(),
             stream_end_emitted: false,
+            failed: false,
+            at_document_end: false,
             keep_tags: false,
         }
     }
@@ -1078,7 +1084,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Try to load the next event and return it without consuming it from `self`.
     ///
     /// Any subsequent call to [`Parser::peek`] will return the same value, until a call to
-    /// [`Iterator::next`] or [`Parser::load`].
+    /// [`Iterator::next`], [`Parser::load`], or [`Self::proceed_next_document`].
     /// If the buffered value is a [`ScanError`], [`Parser::next_event`] returns that error once
     /// and then the parser is exhausted.
     ///
@@ -1090,12 +1096,150 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
     /// Try to load the next event and return it, consuming it from `self`.
     ///
-    /// After this returns a [`ScanError`], subsequent calls return [`None`].
+    /// After this returns a [`ScanError`], subsequent calls return [`None`] unless
+    /// [`Self::proceed_next_document`] is called to recover at a document boundary.
     ///
     /// # Errors
     /// Returns `ScanError` when loading the next event fails.
     pub fn next_event(&mut self) -> Option<ParseResult<'input>> {
         ParserTrait::next_event(self)
+    }
+
+    /// Abandon the current document and resume at the next document boundary.
+    ///
+    /// This can be called after an error from iteration, [`Self::peek`], or [`Self::load`], or
+    /// during successful parsing to skip the remainder of a document. Before parsing starts it
+    /// skips the first document. Immediately after [`Event::DocumentEnd`] it leaves the next
+    /// document ready to read. Repeated calls skip successive documents.
+    ///
+    /// Read subsequent events using the usual parser methods. They start with the next
+    /// [`Event::DocumentStart`] (possibly preceded by comments), or [`Event::StreamEnd`] if no
+    /// document remains. An already consumed stream end stays exhausted. This method does not
+    /// emit another [`Event::StreamStart`].
+    ///
+    /// After a syntax error, recovery scans forward from the scanner's current position to a
+    /// separated `---` or valid `...` at column zero, or EOF. An explicit end marker also permits
+    /// a following implicit document and its directive prefix. Indented markers, inline markers,
+    /// and scalar text such as `---suffix` are not synchronization points. Input is never rewound;
+    /// event spans retain their original source positions.
+    /// If a directive prefix fails before its opening `---`, that document's body is skipped too.
+    ///
+    /// Open collections, buffered events/comments, and anchor definitions of an abandoned
+    /// document are discarded. No synthetic collection ends, document end, or error node are
+    /// emitted for it: consumers building a tree must abandon or mark their own partial nodes.
+    /// Anchor IDs remain unique across documents. Directives are reset as at a normal document
+    /// boundary, including the [`Self::keep_tags`] policy.
+    ///
+    /// Skipped syntax errors are suppressed. Recovery does not repair content within a document,
+    /// preserve its anchors for another document, or validate the next document in advance.
+    /// Ordinary parsing still stops at the first error unless this method is explicitly called.
+    /// Scanning moves forward with work proportional to the skipped input; no diagnostic list
+    /// is accumulated. Cancellation can be supplied through a fallible input source.
+    ///
+    /// # Example
+    /// ```
+    /// use granit_parser::{Event, Parser};
+    /// # fn main() -> Result<(), granit_parser::ScanError> {
+    /// let mut parser = Parser::new_from_str("broken: [1, 2\n---\nhealthy: true\n");
+    /// let error = parser.by_ref().find_map(Result::err).unwrap();
+    /// assert!(parser.next().is_none());
+    /// // Record the diagnostic and abandon any open nodes in the consumer's partial tree.
+    /// parser.proceed_next_document()?;
+    /// assert!(matches!(parser.next().unwrap()?.0, Event::DocumentStart(true, _)));
+    /// let rest = parser.collect::<Result<Vec<_>, _>>()?;
+    /// assert!(rest.iter().any(|(event, _)| event.scalar().is_some_and(|(v, _)| v == "healthy")));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns a source failure (including I/O, decoding, or cancellation errors supplied by the
+    /// input). Source failures cannot be recovered and leave the parser exhausted.
+    pub fn proceed_next_document(&mut self) -> Result<(), ScanError> {
+        // A consumed StreamEnd stays exhausted. A terminal error still needs recovery below.
+        if self.stream_end_emitted && !self.failed {
+            return Ok(());
+        }
+
+        loop {
+            if !self.failed {
+                if self.at_document_end {
+                    // The boundary was already reached, possibly by peek(). Discard its cached
+                    // end event and let another proceed call skip the following document.
+                    if matches!(self.current, Some((Event::DocumentEnd, _))) {
+                        self.current = None;
+                    }
+                    self.at_document_end = false;
+                    return Ok(());
+                }
+                // While the grammar state is valid, consume events through the current document.
+                // If parsing fails, next_event_impl records the failure and we synchronize below.
+                loop {
+                    match self.next_event_impl() {
+                        Ok((Event::DocumentEnd, _)) => {
+                            self.at_document_end = false;
+                            return Ok(());
+                        }
+                        Ok(event @ (Event::StreamEnd, _)) => {
+                            // Leave EOF available for the caller's next read, just like peek().
+                            self.current = Some(event);
+                            return Ok(());
+                        }
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+            }
+
+            // A directive belongs to the document whose opening marker follows it. Abandon
+            // that body as well, rather than accepting it after silently dropping its header.
+            let failed_header = matches!(
+                self.state,
+                State::ImplicitDocumentStart | State::DocumentStart
+            ) && self.scanner.in_directive_prefix();
+            // Discard the failed grammar state and seek a boundary, retaining any marker that
+            // lookahead already consumed. Source failures propagate instead of becoming EOF.
+            self.recover_document()?;
+            if !failed_header || !matches!(self.peek_token()?.1, QueuedTokenType::DocumentStart) {
+                return Ok(());
+            }
+            // This opening marker belongs to the failed header. Loop to skip its body too.
+        }
+    }
+
+    fn recover_document(&mut self) -> Result<(), ScanError> {
+        let result = self.scanner.proceed_next_document(self.token.take());
+        self.current = None;
+        self.current_error = None;
+        if let Err(error) = result {
+            self.stream_end_emitted = true;
+            return Err(error);
+        }
+
+        self.states.clear();
+        self.state = State::ImplicitDocumentStart;
+        self.block_level = 0;
+        self.pending_key_indent = None;
+        self.pending_empty_scalar_span = None;
+        self.last_non_comment_event_end = None;
+        #[cfg(feature = "comments")]
+        {
+            self.deferred_error = None;
+            self.queued_events.clear();
+            self.pending_node_anchor_id = 0;
+            self.pending_node_tag = None;
+            self.pending_node_tag_start = None;
+            self.pending_node_property_end = None;
+            self.pending_document_version = None;
+            self.pending_document_directives = false;
+            self.pending_document_tag_handles.clear();
+        }
+        self.anchors.clear();
+        self.clear_document_tags();
+        self.failed = false;
+        self.at_document_end = false;
+        self.stream_end_emitted = false;
+        Ok(())
     }
 
     /// Implementation function for [`Self::next_event`] without the `Option`.
@@ -1104,6 +1248,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// option. This burdens the parser code. This function is used internally when an option is
     /// undesirable.
     fn next_event_impl<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let result = self.next_event_inner();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn next_event_inner<'a>(&mut self) -> ParseResult<'a>
     where
         'input: 'a,
     {
@@ -1169,6 +1324,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             return (event, span);
         }
         self.last_non_comment_event_end = Some(span.end);
+        if matches!(event, Event::DocumentStart(..) | Event::DocumentEnd) {
+            self.at_document_end = matches!(event, Event::DocumentEnd);
+        }
         (event, span)
     }
 
@@ -1703,11 +1861,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         continuing: bool,
         mut document_tag_handles: BTreeSet<Cow<'input, str>>,
     ) -> Result<(Option<YamlVersion>, BTreeSet<Cow<'input, str>>), ScanError> {
-        let mut tags = if continuing || self.keep_tags {
-            core::mem::take(&mut self.tags)
-        } else {
-            BTreeMap::new()
-        };
+        // Keep retained handles on the parser so any early error, including scanner errors,
+        // leaves them available for document recovery. Comment pauses continue the same header.
+        if !continuing && !self.keep_tags {
+            self.tags.clear();
+        }
 
         loop {
             let is_directive = matches!(
@@ -1744,7 +1902,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                             ErrorKind::DuplicateTagDirective,
                         ));
                     }
-                    tags.insert(handle, prefix);
+                    self.tags.insert(handle, prefix);
                 }
                 QueuedTokenType::ReservedDirective(_, _) => {
                     // Reserved directives are ignored
@@ -1753,7 +1911,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
         }
 
-        self.tags = tags;
         Ok((version, document_tag_handles))
     }
 
@@ -1836,15 +1993,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 .map_or_else(|| Span::empty(span.start), Span::empty),
         };
 
-        if self.keep_tags {
-            // Never persist default handles across document boundaries. Allowing `%TAG !! ...`
-            // or `%TAG ! ...` to leak into following documents lets earlier documents alter how
-            // explicit tags are interpreted later on.
-            self.tags.remove("!!");
-            self.tags.remove("!");
-        } else {
-            self.tags.clear();
-        }
+        self.clear_document_tags();
         if explicit_end {
             self.state = State::ImplicitDocumentStart;
         } else {
@@ -1864,6 +2013,16 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }
 
         Ok((Event::DocumentEnd, span))
+    }
+
+    fn clear_document_tags(&mut self) {
+        if self.keep_tags {
+            // Default handles never persist, even with the non-standard keep_tags policy.
+            self.tags.remove("!!");
+            self.tags.remove("!");
+        } else {
+            self.tags.clear();
+        }
     }
 
     fn register_anchor(&mut self, name: Cow<'input, str>, mark: &Span) -> Result<usize, ScanError> {

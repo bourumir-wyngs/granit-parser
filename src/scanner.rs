@@ -790,6 +790,8 @@ pub struct Scanner<'input, T> {
     tokens: VecDeque<QueuedToken<'input>>,
     /// Whether a terminal error has been emitted by the iterator.
     failed: bool,
+    /// Terminal source failure retained even after its diagnostic has been returned.
+    source_error: Option<ScanError>,
     /// Error found after one or more already-scanned comment tokens.
     #[cfg(feature = "comments")]
     deferred_error: Option<ScanError>,
@@ -811,6 +813,8 @@ pub struct Scanner<'input, T> {
     /// start marker or any content token is scanned, another BOM is document content and must be
     /// rejected unless it appears inside a quoted scalar.
     document_prefix_allowed: bool,
+    /// Whether scanning has entered directives without reaching their document body.
+    in_directive_prefix: bool,
     /// In some flow contexts, the value of a mapping is allowed to be adjacent to the `:`. When it
     /// is, the index at which the `:` may be must be stored in `adjacent_value_allowed_at`.
     adjacent_value_allowed_at: usize,
@@ -1293,6 +1297,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             mark: Marker::new(0, 1, 0).with_byte_offset(initial_byte_offset),
             tokens: VecDeque::with_capacity(64),
             failed: false,
+            source_error: None,
             #[cfg(feature = "comments")]
             deferred_error: None,
             #[cfg(feature = "comments")]
@@ -1301,6 +1306,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             stream_start_produced: false,
             stream_end_produced: false,
             document_prefix_allowed: true,
+            in_directive_prefix: false,
             adjacent_value_allowed_at: 0,
             simple_key_allowed: true,
             simple_keys: smallvec::SmallVec::new(),
@@ -1543,6 +1549,183 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.mark
     }
 
+    /// Whether a failed scan is still inside a document's directive header.
+    pub(crate) fn in_directive_prefix(&self) -> bool {
+        self.in_directive_prefix
+    }
+
+    /// Abandon scanner state and resume at the next document boundary after a parse error.
+    ///
+    /// The parser may already hold a boundary token, and scanner lookahead may have queued one.
+    /// Preserve either before searching the unread input; the source cannot be rewound.
+    pub(crate) fn proceed_next_document(
+        &mut self,
+        token: Option<QueuedToken<'input>>,
+    ) -> ScanResult {
+        self.check_source_error()?;
+        self.input.lookahead(4);
+        self.check_source_error()?;
+
+        let cursor = self.mark;
+        let at_line_end = self.input.next_is_z() || self.input.next_is_break();
+        let at_real_nul = !self.input.next_is_z() && self.input.peek() == '\0';
+        let boundary = token
+            .into_iter()
+            .chain(self.tokens.drain(..))
+            .find(|token| {
+                match token.1 {
+                    QueuedTokenType::DocumentStart => {
+                        // A real NUL is invalid content, not the EOF delimiter used by input helpers.
+                        cursor != token.0.end || !at_real_nul
+                    }
+                    QueuedTokenType::DocumentEnd => {
+                        // An end marker is queued before its trailing line is validated. A scanner
+                        // error can therefore leave an invalid `... trailing` in the token queue.
+                        cursor.line > token.0.end.line || at_line_end
+                    }
+                    QueuedTokenType::StreamEnd => true,
+                    _ => false,
+                }
+            });
+        self.reset_document_state();
+        if let Some(boundary) = boundary {
+            self.queue_recovery_boundary(boundary);
+            return Ok(());
+        }
+
+        loop {
+            self.input.lookahead(4);
+            self.check_source_error()?;
+            if self.input.next_is_z() {
+                self.queue_recovery_boundary(QueuedToken(
+                    Span::empty(self.mark),
+                    QueuedTokenType::StreamEnd,
+                ));
+                return Ok(());
+            }
+
+            if self.mark.col == 0 {
+                if is_bom(self.input.peek()) {
+                    self.skip_bom();
+                    continue;
+                }
+                let start = self.input.next_is_document_start();
+                if start || self.input.next_is_document_end() {
+                    let mark = self.mark;
+                    self.skip_n_non_blank(3);
+                    let span = Span::new(mark, self.mark);
+                    self.input.lookahead(1);
+                    self.check_source_error()?;
+                    // `next_is_document_*` also accepts NUL padding. Require actual EOF if the
+                    // separator is NUL so invalid source characters never masquerade as padding.
+                    if self.input.next_is_z()
+                        || matches!(self.input.peek(), ' ' | '\t' | '\r' | '\n')
+                    {
+                        if start {
+                            self.queue_recovery_boundary(QueuedToken(
+                                span,
+                                QueuedTokenType::DocumentStart,
+                            ));
+                            return Ok(());
+                        }
+                        if self.skip_recovery_document_end_line()? {
+                            self.queue_recovery_boundary(QueuedToken(
+                                span,
+                                QueuedTokenType::DocumentEnd,
+                            ));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            self.input.lookahead(2);
+            self.check_source_error()?;
+            if self.input.next_is_break() {
+                self.skip_linebreak();
+            } else if !self.input.next_is_z() {
+                self.skip_non_blank();
+            }
+        }
+    }
+
+    /// Consume only a valid end-marker suffix; malformed suffixes remain discarded document text.
+    fn skip_recovery_document_end_line(&mut self) -> Result<bool, ScanError> {
+        let mut comment = false;
+        loop {
+            self.input.lookahead(2);
+            self.check_source_error()?;
+            if self.input.next_is_z() || self.input.next_is_break() {
+                return Ok(true);
+            }
+            let ch = self.input.peek();
+            if !is_printable(ch) {
+                return Ok(false);
+            }
+            if comment || matches!(ch, ' ' | '\t') {
+                self.skip_non_blank();
+            } else if ch == '#' {
+                comment = true;
+                self.skip_non_blank();
+            } else {
+                return Ok(false);
+            }
+        }
+    }
+
+    /// Reset document-scoped syntax without changing the source cursor or parser options.
+    fn reset_document_state(&mut self) {
+        self.tokens.clear();
+        self.failed = false;
+        #[cfg(feature = "comments")]
+        {
+            self.deferred_error = None;
+        }
+        self.stream_start_produced = true;
+        self.stream_end_produced = false;
+        self.document_prefix_allowed = true;
+        self.in_directive_prefix = false;
+        self.adjacent_value_allowed_at = 0;
+        self.simple_key_allowed = true;
+        self.simple_keys.clear();
+        self.simple_keys.push(SimpleKey::new(self.mark));
+        self.first_simple_key = None;
+        self.indent = -1;
+        self.indents.clear();
+        self.flow_level = 0;
+        self.block_level = 0;
+        self.tokens_parsed = 0;
+        self.token_available = false;
+        self.leading_whitespace = self.mark.col == 0;
+        self.flow_mapping_started.clear();
+        self.implicit_flow_mapping_states.clear();
+        self.flow_markers.clear();
+        self.interrupted_plain_by_comment = None;
+        self.explicit_key_tab_check_pending = false;
+        self.buf_leading_break.clear();
+        self.buf_trailing_breaks.clear();
+        self.buf_whitespaces.clear();
+    }
+
+    fn queue_recovery_boundary(&mut self, token: QueuedToken<'input>) {
+        self.document_prefix_allowed = matches!(token.1, QueuedTokenType::DocumentEnd);
+        self.disallow_simple_key();
+        self.tokens.push_back(token);
+        self.token_available = true;
+    }
+
+    /// Source failures cannot be recovered by discarding YAML syntax.
+    fn check_source_error(&mut self) -> ScanResult {
+        if let Some(kind) = self.input.take_source_error() {
+            self.source_error
+                .get_or_insert_with(|| ScanError::from_kind(self.mark, kind));
+        }
+        match &self.source_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
+    }
+
     /// Return whether this scanner may emit comment tokens.
     #[cfg(feature = "comments")]
     #[inline]
@@ -1616,9 +1799,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     /// Returns `ScanError` when the scanner does not find the next expected token.
     fn fetch_next_token(&mut self) -> ScanResult {
         let result = self.fetch_next_token_impl();
-        if let Some(kind) = self.input.take_source_error() {
-            return Err(ScanError::from_kind(self.mark, kind));
-        }
+        self.check_source_error()?;
         result
     }
 
@@ -1667,6 +1848,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         if self.mark.col == 0 {
             if self.input.next_char_is('%') {
+                self.in_directive_prefix = true;
                 return self.fetch_directive();
             } else if self.input.next_is_document_start() {
                 return self.fetch_document_indicator(TokenType::DocumentStart);
@@ -1680,6 +1862,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
+        self.in_directive_prefix = false;
         if self.document_prefix_allowed {
             self.document_prefix_allowed = false;
         }
@@ -3099,6 +3282,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     fn fetch_document_indicator(&mut self, t: TokenType<'input>) -> ScanResult {
+        self.in_directive_prefix = false;
         if let Some((mark, bracket)) = self.flow_markers.pop() {
             return Err(ScanError::from_kind(
                 mark,
@@ -4643,6 +4827,111 @@ mod test {
             Marker, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span, Token, TokenType,
         },
     };
+
+    #[test]
+    fn recovery_ignores_invalid_document_marker_lookalikes() {
+        let input = "@bad\n---# comment\n  ---\n---\0\n... trailing\n--- healthy\n";
+        let mut scanner = Scanner::new(StrInput::new(input));
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::StreamStart
+        ));
+        assert!(scanner.next_token().is_err());
+
+        scanner.proceed_next_document(None).unwrap();
+        let token = scanner.next_token().unwrap().unwrap();
+        assert_eq!(token.1, TokenType::DocumentStart);
+        assert_eq!(token.0.start.line(), 6);
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Scalar(_, ref value) if value == "healthy"
+        ));
+    }
+
+    #[test]
+    fn recovery_rejects_end_marker_queued_before_its_line_failed() {
+        let mut scanner =
+            Scanner::new(StrInput::new("... trailing\nnot_a_document\n--- healthy\n"));
+        scanner.next_token().unwrap();
+        assert_eq!(
+            scanner.next_token().unwrap_err().kind(),
+            &ErrorKind::InvalidDocumentEnd
+        );
+        assert!(scanner
+            .tokens
+            .iter()
+            .any(|token| matches!(token.1, QueuedTokenType::DocumentEnd)));
+
+        scanner.proceed_next_document(None).unwrap();
+        let token = scanner.next_token().unwrap().unwrap();
+        assert_eq!(token.1, TokenType::DocumentStart);
+        assert_eq!(token.0.start.line(), 3);
+    }
+
+    #[test]
+    fn recovery_preserves_boundary_already_held_by_parser() {
+        let mut scanner = Scanner::new(StrInput::new("first\n--- second\n"));
+        let boundary = loop {
+            let token = scanner.next_queued_token().unwrap().unwrap();
+            if matches!(token.1, QueuedTokenType::DocumentStart) {
+                break token;
+            }
+        };
+        let span = boundary.0;
+        scanner.proceed_next_document(Some(boundary)).unwrap();
+        assert_eq!(
+            scanner.next_token().unwrap().unwrap(),
+            Token(span, TokenType::DocumentStart)
+        );
+        assert!(matches!(
+            scanner.next_token().unwrap().unwrap().1,
+            TokenType::Scalar(_, ref value) if value == "second"
+        ));
+    }
+
+    #[test]
+    fn recovery_retains_previously_reported_source_error() {
+        let kind = ErrorKind::InputDecoding {
+            message: "invalid encoding".into(),
+        };
+        let input = crate::FallibleBufferedInput::new(
+            vec![Ok('['), Err(kind.clone()), Ok('\n')].into_iter(),
+        );
+        let mut scanner = Scanner::new(input);
+        scanner.next_token().unwrap();
+        let error = scanner.next_token().unwrap_err();
+        assert_eq!(error.kind(), &kind);
+        assert_eq!(scanner.proceed_next_document(None), Err(error));
+    }
+
+    #[test]
+    fn recovery_distinguishes_directive_header_errors_from_document_content() {
+        for input in ["%YAML bad\n--- body\n", "%TAG invalid\n--- body\n"] {
+            let mut scanner = Scanner::new(StrInput::new(input));
+            scanner.next_token().unwrap();
+            assert!(scanner.next_token().is_err());
+            assert!(scanner.in_directive_prefix());
+            scanner.proceed_next_document(None).unwrap();
+            assert!(!scanner.in_directive_prefix());
+        }
+
+        let mut scanner = Scanner::with_options(
+            StrInput::new("%YAML 1.2\n--- body\n"),
+            crate::options! { disallow_directives: true },
+        );
+        scanner.next_token().unwrap();
+        assert!(scanner.next_token().is_err());
+        assert!(scanner.in_directive_prefix());
+
+        for input in ["%YAML 1.2\n--- body\n", "%YAML 1.2\nbare\n"] {
+            let mut scanner = Scanner::new(StrInput::new(input));
+            scanner.next_token().unwrap();
+            scanner.next_token().unwrap();
+            assert!(scanner.in_directive_prefix());
+            scanner.next_token().unwrap();
+            assert!(!scanner.in_directive_prefix());
+        }
+    }
 
     fn ignoring_comments_options() -> crate::Options {
         #[cfg(feature = "comments")]
