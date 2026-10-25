@@ -93,7 +93,8 @@ impl Walker {
                 Ok(None)
             }
             Event::DocumentStart(..) => {
-                assert!(self.frames.is_empty());
+                // Comparing the stack itself shows any unfinished collections on failure.
+                assert_eq!(self.frames, [] as [Frame; 0]);
                 self.root_seen = false;
                 // Anchors are document-scoped too. If your application stores
                 // an anchor-ID lookup table, clear it here, even if numeric IDs
@@ -101,7 +102,7 @@ impl Walker {
                 Ok(None)
             }
             Event::DocumentEnd => {
-                assert!(self.frames.is_empty());
+                assert_eq!(self.frames, [] as [Frame; 0]);
                 assert!(self.root_seen);
                 Ok(None)
             }
