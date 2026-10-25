@@ -144,6 +144,27 @@ MappingEnd bytes=Some(349..349) source=Some("")
 DocumentEnd bytes=Some(349..349) source=Some("")
 StreamEnd bytes=Some(349..349) source=Some("")
 ```
+
+## Learning examples
+
+These examples include explanatory comments and assertions for their sample inputs. Run them from
+the repository root, then read the source alongside the output:
+
+| Example | What it teaches | Run |
+| --- | --- | --- |
+| [Event walker](examples/event_walker.rs) | Track mapping keys/values, sequence elements, and depth through nested collections, aliases, comments, and document boundaries. Read collection style directly from events. | `cargo run --example event_walker` |
+| [Source positions](examples/source_positions.rs) | Distinguish character indexes, UTF-8 byte offsets, and UTF-16 editor positions; handle Unicode and line endings using the original source. | `cargo run --example source_positions` |
+| [Tooling diagnostics](examples/tooling_diagnostics.rs) | Match structured errors, inspect declared YAML versions, continue past unresolved aliases explicitly, and enforce a no-directives policy. | `cargo run --example tooling_diagnostics` |
+
+All three also run with `--no-default-features`, for example:
+
+```sh
+cargo run --no-default-features --example tooling_diagnostics
+```
+
+The example executables use Rust's standard library; disabling the parser's default features
+demonstrates that their logic does not depend on comment events or built-in error messages.
+
 ## Key differences from saphyr-parser
 
 All changes are intentionally scoped around correctness, compliance, and interoperability. This list summarizes 
