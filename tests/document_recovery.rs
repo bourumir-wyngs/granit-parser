@@ -515,6 +515,88 @@ fn versions_and_tag_directives_follow_normal_document_boundaries() {
 }
 
 #[test]
+fn retained_tags_survive_unsupported_version_headers() {
+    check_retained_tags_after_header_error("%YAML 2.0\n", &ErrorKind::UnsupportedYamlMajorVersion);
+}
+
+#[test]
+fn retained_tags_survive_duplicate_directive_headers() {
+    check_retained_tags_after_header_error(
+        "%YAML 1.2\n%YAML 1.1\n",
+        &ErrorKind::DuplicateVersionDirective,
+    );
+    check_retained_tags_after_header_error(
+        "%TAG !other! tag:first.example,2026:\n%TAG !other! tag:second.example,2026:\n",
+        &ErrorKind::DuplicateTagDirective,
+    );
+}
+
+#[test]
+fn retained_tags_survive_scanner_errors_during_headers() {
+    // A valid directive first enters parser_process_directives before its next scanner read fails.
+    check_retained_tags_after_header_error(
+        "%YAML 1.2\n%YAML bad\n",
+        &ErrorKind::MissingYamlVersion,
+    );
+    check_retained_tags_after_header_error(
+        "%TAG !other! tag:other.example,2026:\n%YAML bad\n",
+        &ErrorKind::MissingYamlVersion,
+    );
+}
+
+fn check_retained_tags_after_header_error(header: &str, expected_error: &ErrorKind) {
+    for separator in ["\n", "\n# between directives\n"] {
+        let header = header.replace('\n', separator);
+        let source = format!(
+            "%TAG !e! tag:example.com,2026:\n---\n!e!thing one\n...\n\
+             {header}---\ndiscard\n---\n!e!thing two\n"
+        );
+        for emit_comments in [false, true] {
+            for keep_tags in [false, true] {
+                let options = options! { emit_comments: emit_comments };
+                assert_header_error_tag_retention(
+                    Parser::new_from_str_with_options(&source, options.clone())
+                        .keep_tags(keep_tags),
+                    expected_error,
+                    keep_tags,
+                );
+                assert_header_error_tag_retention(
+                    Parser::new_from_iter_with_options(source.chars(), options)
+                        .keep_tags(keep_tags),
+                    expected_error,
+                    keep_tags,
+                );
+            }
+        }
+    }
+}
+
+fn assert_header_error_tag_retention<'input, I: BorrowedInput<'input>>(
+    mut parser: Parser<'input, I>,
+    expected_error: &ErrorKind,
+    keep_tags: bool,
+) {
+    assert_eq!(first_error(&mut parser).kind(), expected_error);
+    parser.proceed_next_document().unwrap();
+    if keep_tags {
+        let events = remaining_events(&mut parser);
+        assert!(events.iter().any(|event| matches!(event,
+            Event::Scalar(value, _, _, Some(tag))
+                if value == "two" && tag.handle() == "tag:example.com,2026:" && tag.suffix() == "thing"
+        )));
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "discard")));
+        assert_eq!(events.last(), Some(&Event::StreamEnd));
+    } else {
+        assert_eq!(
+            first_error(&mut parser).kind(),
+            &ErrorKind::UndeclaredTagHandle
+        );
+    }
+}
+
+#[test]
 fn failed_document_headers_and_their_bodies_are_abandoned_together() {
     for header in [
         "%YAML 2.0\n",

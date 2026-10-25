@@ -1829,11 +1829,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         continuing: bool,
         mut document_tag_handles: BTreeSet<Cow<'input, str>>,
     ) -> Result<(Option<YamlVersion>, BTreeSet<Cow<'input, str>>), ScanError> {
-        let mut tags = if continuing || self.keep_tags {
-            core::mem::take(&mut self.tags)
-        } else {
-            BTreeMap::new()
-        };
+        // Keep retained handles on the parser so any early error, including scanner errors,
+        // leaves them available for document recovery. Comment pauses continue the same header.
+        if !continuing && !self.keep_tags {
+            self.tags.clear();
+        }
 
         loop {
             let is_directive = matches!(
@@ -1870,7 +1870,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                             ErrorKind::DuplicateTagDirective,
                         ));
                     }
-                    tags.insert(handle, prefix);
+                    self.tags.insert(handle, prefix);
                 }
                 QueuedTokenType::ReservedDirective(_, _) => {
                     // Reserved directives are ignored
@@ -1879,7 +1879,6 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
         }
 
-        self.tags = tags;
         Ok((version, document_tag_handles))
     }
 
