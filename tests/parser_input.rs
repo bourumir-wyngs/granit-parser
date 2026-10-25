@@ -8,8 +8,8 @@ use granit_parser::Placement;
 
 use granit_parser::{
     input::{SkipTabs, WhitespaceResult},
-    BufferedInput, ErrorKind, Event, Input, Parser, ScanError, StrInput, TryEventReceiver,
-    TryLoadError,
+    BorrowedInput, BufferedInput, ErrorKind, Event, EventReceiver, Input, Parser, ScanError,
+    StrInput, TryEventReceiver, TryLoadError,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -236,6 +236,114 @@ fn try_load_returns_error_buffered_by_peek() {
 
     // The buffered error is consumed; the parser is exhausted afterwards.
     assert!(parser.next_event().is_none());
+}
+
+// --- parser.rs: a scan error returned by `load` or `try_load` exhausts the parser
+
+/// An indentless sequence under an empty key whose first entry carries an invalid tag escape.
+///
+/// The scanner reports the tag error after the parser has emitted the sequence start and while it
+/// is moving into the entry-node state. Resuming that transition used to hit an internal
+/// `unreachable!`, so a parser that returned this error must stay exhausted.
+const SCAN_ERROR_MID_TRANSITION: &str = ":\n- !%";
+
+/// A receiver that counts the events it is given.
+#[derive(Default)]
+struct CountEvents(usize);
+
+impl<'input> EventReceiver<'input> for CountEvents {
+    fn on_event(&mut self, _ev: Event<'input>) {
+        self.0 += 1;
+    }
+}
+
+fn assert_load_scan_error_exhausts_parser<'input, T: BorrowedInput<'input>>(
+    mut parser: Parser<'input, T>,
+    multi: bool,
+    expected: &ErrorKind,
+) {
+    let mut events = CountEvents::default();
+    let error = parser.load(&mut events, multi).unwrap_err();
+    assert_eq!(error.kind(), expected);
+    let emitted = events.0;
+    assert!(
+        emitted > 0,
+        "events preceding the error must still be delivered"
+    );
+
+    // Like `next_event` after an error, every later call finds the parser exhausted.
+    assert!(parser.peek().is_none());
+    assert!(parser.next_event().is_none());
+    parser.load(&mut events, multi).unwrap();
+    assert_eq!(
+        events.0, emitted,
+        "an exhausted parser must not emit further events"
+    );
+    let mut receiver = AcceptAll;
+    parser.try_load(&mut receiver, multi).unwrap();
+    assert!(parser.peek().is_none());
+}
+
+#[test]
+fn load_scan_error_exhausts_string_parser() {
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_str(SCAN_ERROR_MID_TRANSITION),
+            multi,
+            &ErrorKind::InvalidTagEscape,
+        );
+    }
+}
+
+#[test]
+fn load_scan_error_exhausts_streaming_parser() {
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_iter(SCAN_ERROR_MID_TRANSITION.chars()),
+            multi,
+            &ErrorKind::InvalidTagEscape,
+        );
+    }
+}
+
+/// A directive without the `---` it requires. The scanner's stream end is already consumed when
+/// `ExpectedDocumentStart` is raised, so the end-of-stream shortcut in `load` must not re-emit
+/// `StreamEnd` after the error.
+const DIRECTIVE_WITHOUT_DOCUMENT: &str = "%YAML 1.2\n";
+
+#[test]
+fn load_scan_error_at_end_of_stream_exhausts_parser() {
+    for multi in [true, false] {
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_str(DIRECTIVE_WITHOUT_DOCUMENT),
+            multi,
+            &ErrorKind::ExpectedDocumentStart,
+        );
+        assert_load_scan_error_exhausts_parser(
+            Parser::new_from_iter(DIRECTIVE_WITHOUT_DOCUMENT.chars()),
+            multi,
+            &ErrorKind::ExpectedDocumentStart,
+        );
+    }
+}
+
+#[test]
+fn try_load_scan_error_exhausts_parser() {
+    let mut parser = Parser::new_from_str(SCAN_ERROR_MID_TRANSITION);
+    let mut receiver = AcceptAll;
+
+    let error = parser.try_load(&mut receiver, true).unwrap_err();
+    assert!(matches!(
+        error,
+        TryLoadError::Scan(ref error) if error.kind() == &ErrorKind::InvalidTagEscape
+    ));
+
+    assert!(parser.peek().is_none());
+    assert!(parser.next_event().is_none());
+    parser.try_load(&mut receiver, true).unwrap();
+    let mut events = CountEvents::default();
+    parser.load(&mut events, true).unwrap();
+    assert_eq!(events.0, 0);
 }
 
 #[test]

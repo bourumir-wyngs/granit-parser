@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser, ScanError,
-    Scanner, Span, StrInput, Token, TokenType,
+    Scanner, Span, SpannedEventReceiver, StrInput, Token, TokenType,
 };
 
 #[derive(Debug)]
@@ -24,6 +24,7 @@ pub fn parse_with_both_inputs(input: &str) {
 /// emitted before the first error and the error itself instead of discarding either one.
 pub fn parse_with_options(input: &str, options: Options) {
     let string = trace(Parser::new_from_str_with_options(input, options.clone()));
+    check_load_matches_iterator(input, options.clone(), &string);
     let buffered = trace(Parser::new_from_iter_with_options(
         input.chars(),
         options.clone(),
@@ -158,6 +159,63 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         scanner_with.error, scanner_without.error,
         "comment suppression changed the scanner error"
     );
+}
+
+#[derive(Default)]
+struct CollectSpanned<'input> {
+    items: Vec<(Event<'input>, Span)>,
+}
+
+impl<'input> SpannedEventReceiver<'input> for CollectSpanned<'input> {
+    fn on_event(&mut self, event: Event<'input>, span: Span) {
+        self.items.push((event, span));
+    }
+}
+
+/// Drive `load` to its first error or to the end of the stream and compare it with the iterator.
+///
+/// `load` must deliver exactly the iterator's events and error. Afterwards the parser must be
+/// exhausted: `peek` and `next_event` return `None`, and a further `load` neither panics nor emits
+/// anything after an error. After a clean end it only repeats the terminal `StreamEnd`.
+fn check_load_matches_iterator<'input>(
+    input: &'input str,
+    options: Options,
+    expected: &Trace<(Event<'input>, Span)>,
+) {
+    let mut parser = Parser::new_from_str_with_options(input, options);
+    let mut sink = CollectSpanned::default();
+    let error = parser.load(&mut sink, true).err();
+    assert_eq!(
+        sink.items, expected.items,
+        "`load` and the iterator emitted different parser events"
+    );
+    assert_eq!(
+        error, expected.error,
+        "`load` and the iterator returned different parser errors"
+    );
+
+    assert!(parser.peek().is_none(), "parser not exhausted after `load`");
+    assert!(
+        parser.next_event().is_none(),
+        "parser not exhausted after `load`"
+    );
+
+    let emitted = sink.items.len();
+    parser
+        .load(&mut sink, true)
+        .expect("`load` on an exhausted parser must succeed");
+    let repeated = &sink.items[emitted..];
+    if error.is_some() {
+        assert!(
+            repeated.is_empty(),
+            "exhausted parser emitted events after a scan error: {repeated:?}"
+        );
+    } else {
+        assert!(
+            matches!(repeated, [(Event::StreamEnd, _)]),
+            "expected only a repeated StreamEnd after a clean end: {repeated:?}"
+        );
+    }
 }
 
 fn trace<T>(mut iterator: impl Iterator<Item = Result<T, ScanError>>) -> Trace<T> {

@@ -861,6 +861,10 @@ pub trait ParserTrait<'input> {
     /// caller should directly control when the next event is read, use [`ParserTrait::next_event`]
     /// or [`Parser`]'s [`core::iter::Iterator`] implementation.
     ///
+    /// After a scan error, the parser is exhausted: [`ParserTrait::peek`] and
+    /// [`ParserTrait::next_event`] return [`None`], and further calls to `load` or
+    /// [`ParserTrait::try_load`] return `Ok(())` without emitting events.
+    ///
     /// # Errors
     /// Returns `ScanError` when scanning or parsing the stream fails.
     fn load<R: SpannedEventReceiver<'input>>(
@@ -876,6 +880,10 @@ pub trait ParserTrait<'input> {
     ///
     /// If the receiver returns an error, the parser is left positioned immediately after the event
     /// that caused the receiver error. Callers should treat the parser as partially consumed.
+    ///
+    /// After a scan error, the parser is exhausted: [`ParserTrait::peek`] and
+    /// [`ParserTrait::next_event`] return [`None`], and further calls to `try_load` or
+    /// [`ParserTrait::load`] return `Ok(())` without emitting events.
     ///
     /// # Errors
     /// Returns [`TryLoadError::Scan`] when scanning or parsing the stream fails. Returns
@@ -1124,6 +1132,22 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         }?;
 
         Ok(self.remember_non_comment_event_end(event))
+    }
+
+    /// Load the next event for [`ParserTrait::try_load`], exhausting the parser on a scan error.
+    ///
+    /// A scan error can interrupt a state transition, so the state machine must never run again
+    /// afterwards. [`ParserTrait::next_event`] latches this itself; `try_load` bypasses it to
+    /// avoid the `Option` wrapper and needs the same latch.
+    fn next_event_for_load<'a>(&mut self) -> ParseResult<'a>
+    where
+        'input: 'a,
+    {
+        let result = self.next_event_impl();
+        if result.is_err() {
+            self.stream_end_emitted = true;
+        }
+        result
     }
 
     fn apply_pending_key_indent<'a>(&mut self, (ev, span): (Event<'a>, Span)) -> (Event<'a>, Span) {
@@ -1439,6 +1463,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// Note that any [`EventReceiver`] is also a [`SpannedEventReceiver`], so implementing the
     /// former is enough to call this function.
     ///
+    /// After a scan error, the parser is exhausted: [`Parser::peek`] and [`Parser::next_event`]
+    /// return [`None`], and further calls to `load` or [`Parser::try_load`] return `Ok(())`
+    /// without emitting events.
+    ///
     /// # Example
     /// ```
     /// # use granit_parser::{Event, EventReceiver, Parser};
@@ -1486,6 +1514,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     ///
     /// If the receiver returns an error, the parser is left positioned immediately after the event
     /// that caused the receiver error. Callers should treat the parser as partially consumed.
+    ///
+    /// After a scan error, the parser is exhausted: [`Parser::peek`] and [`Parser::next_event`]
+    /// return [`None`], and further calls to `try_load` or [`Parser::load`] return `Ok(())`
+    /// without emitting events.
     ///
     /// # Example
     /// ```
@@ -2185,6 +2217,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        // Peek before taking the span so that a scanner error leaves this state intact.
+        self.peek_token()?;
         let Some(mark) = self.pending_empty_scalar_span.take() else {
             unreachable!(
                 "block mapping value-node state entered without a pending empty-scalar span"
@@ -2340,6 +2374,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        // Peek before taking the span so that a scanner error leaves this state intact.
+        self.peek_token()?;
         let Some(mark) = self.pending_empty_scalar_span.take() else {
             unreachable!(
                 "flow mapping value-node state entered without a pending empty-scalar span"
@@ -2447,6 +2483,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        // Peek before taking the span so that a scanner error leaves this state intact.
+        self.peek_token()?;
         let Some(mark) = self.pending_empty_scalar_span.take() else {
             unreachable!(
                 "indentless sequence entry-node state entered without a pending empty-scalar span"
@@ -2525,6 +2563,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     where
         'input: 'a,
     {
+        // Peek before taking the span so that a scanner error leaves this state intact.
+        self.peek_token()?;
         let Some(mark) = self.pending_empty_scalar_span.take() else {
             unreachable!(
                 "block sequence entry-node state entered without a pending empty-scalar span"
@@ -2717,8 +2757,9 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
     ) -> Result<(), TryLoadError<R::Error>> {
         let stream_start_buffered = matches!(self.current.as_ref(), Some((Event::StreamStart, _)));
         if !self.scanner.stream_started() || stream_start_buffered {
-            let (ev, span) = self.next_event_impl()?;
+            let (ev, span) = self.next_event_for_load()?;
             if ev != Event::StreamStart {
+                self.stream_end_emitted = true;
                 return Err(TryLoadError::scan(ScanError::from_kind(
                     span.start,
                     ErrorKind::ExpectedStreamStart,
@@ -2731,11 +2772,20 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
         #[cfg(feature = "comments")]
         let has_buffered_result =
             has_buffered_result || self.deferred_error.is_some() || !self.queued_events.is_empty();
-        if self.scanner.stream_ended() && !has_buffered_result {
-            // The scanner has already reached EOF before the document loop, so emit the terminal
-            // event and stop.
+        if self.state == State::End && !has_buffered_result {
+            // The parser already completed the stream, so emit the terminal event again and stop.
+            // Only success reaches `State::End`. The scanner's own stream-end flag is not a
+            // substitute: it is also set when an error is raised at the end of the stream, such as
+            // `ExpectedDocumentStart` for a directive-only document, and `StreamEnd` must not be
+            // re-emitted after such an error.
             try_emit(recv, Event::StreamEnd, Span::empty(self.scanner.mark()))?;
             self.stream_end_emitted = true;
+            return Ok(());
+        }
+        if self.stream_end_emitted && self.current_error.is_none() {
+            // Only a scan error reaches this point with the latch set: a clean end of stream was
+            // handled above. The error may have interrupted a state transition, so the state
+            // machine must not run again. Mirror the fused iterator, which returns `None` here.
             return Ok(());
         }
 
@@ -2744,7 +2794,7 @@ impl<'input, T: BorrowedInput<'input>> ParserTrait<'input> for Parser<'input, T>
                 self.stream_end_emitted = true;
                 return Err(TryLoadError::scan(error));
             } else {
-                self.next_event_impl()?
+                self.next_event_for_load()?
             };
             let is_doc_end = matches!(ev, Event::DocumentEnd);
             let is_stream_end = matches!(ev, Event::StreamEnd);
