@@ -253,6 +253,7 @@ impl Span {
     }
 
     /// Attach the start and raw source length of a single-line ASCII tag token.
+    #[must_use]
     pub fn with_tag_span(mut self, tag_span: Option<(Marker, u32)>) -> Span {
         let (start, length) = tag_span.map_or((None, 0), |(start, length)| (Some(start), length));
         self.tag_start = start;
