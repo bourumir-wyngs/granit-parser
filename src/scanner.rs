@@ -138,7 +138,7 @@ impl Marker {
 /// A range of locations in a YAML document.
 ///
 /// Construct spans with [`Self::new`], [`Self::empty`], or [`Self::default`], then use
-/// [`Self::with_indent`] and [`Self::with_tag_start`] to attach optional metadata. Fields remain
+/// [`Self::with_indent`] to attach optional indentation metadata. Public fields remain
 /// readable and writable, but the type is non-exhaustive so future releases can add metadata.
 /// Destructuring patterns must include `..`.
 ///
@@ -147,9 +147,7 @@ impl Marker {
 ///
 /// let start = Marker::new(0, 1, 0);
 /// let end = Marker::new(3, 1, 3);
-/// let span = Span::new(start, end)
-///     .with_indent(Some(0))
-///     .with_tag_start(Some(start));
+/// let span = Span::new(start, end).with_indent(Some(0));
 /// let Span { start: actual_start, end: actual_end, .. } = span;
 /// assert_eq!(actual_start, start);
 /// assert_eq!(actual_end, end);
@@ -195,6 +193,10 @@ pub struct Span {
     /// [`Span::end`] continue to cover the node value or collection; `tag_start` points to the
     /// tag token when that token appears at a different source location.
     pub tag_start: Option<Marker>,
+
+    /// Raw ASCII tag-token length, including its delimiters and URI escapes.
+    /// Zero means the full tag range is unavailable.
+    tag_length: u32,
 }
 
 impl Span {
@@ -206,6 +208,7 @@ impl Span {
             end,
             indent: None,
             tag_start: None,
+            tag_length: 0,
         }
     }
 
@@ -222,6 +225,7 @@ impl Span {
             end: mark,
             indent: None,
             tag_start: None,
+            tag_length: 0,
         }
     }
 
@@ -233,9 +237,26 @@ impl Span {
     }
 
     /// Return a copy of this [`Span`] with the given explicit tag-token start marker.
+    ///
+    /// Clears any stored tag length, so [`Self::tag_span`] returns `None` on the returned span.
+    /// Retained for compatibility. Parser-emitted spans provide complete tag-token ranges through
+    /// [`Self::tag_span`].
+    #[deprecated(
+        since = "2.1.0",
+        note = "Only sets a tag start (.tag_span() then returns None). Use with_tag_span."
+    )]
     #[must_use]
     pub fn with_tag_start(mut self, tag_start: Option<Marker>) -> Span {
         self.tag_start = tag_start;
+        self.tag_length = 0;
+        self
+    }
+
+    /// Attach the start and raw source length of a single-line ASCII tag token.
+    pub fn with_tag_span(mut self, tag_span: Option<(Marker, u32)>) -> Span {
+        let (start, length) = tag_span.map_or((None, 0), |(start, length)| (Some(start), length));
+        self.tag_start = start;
+        self.tag_length = length;
         self
     }
 
@@ -247,6 +268,48 @@ impl Span {
     #[must_use]
     pub fn tag_start(&self) -> Option<Marker> {
         self.tag_start
+    }
+
+    /// Return the complete source span of the explicit tag attached to this node, if available.
+    ///
+    /// Includes the leading `!`, any verbatim-tag delimiters, and URI escapes exactly as written.
+    /// The node's own [`Self::start`] and [`Self::end`] are unchanged. The returned span carries no
+    /// indentation or tag metadata. With byte offsets, use [`Self::slice`] on it to obtain the raw
+    /// tag spelling; streaming inputs retain character positions without requiring byte offsets.
+    ///
+    /// Returns `None` for untagged nodes and tag tokens longer than [`u32::MAX`] source characters,
+    /// or coordinates that would overflow. Oversized tags still parse normally and retain their
+    /// start marker.
+    ///
+    /// ```
+    /// use granit_parser::Parser;
+    ///
+    /// let source = "key: !note%20here value";
+    /// let tag_span = Parser::new_from_str(source)
+    ///     .filter_map(Result::ok)
+    ///     .find_map(|(_, span)| span.tag_span())
+    ///     .unwrap();
+    /// assert_eq!(tag_span.slice(source), Some("!note%20here"));
+    /// ```
+    #[must_use]
+    pub fn tag_span(&self) -> Option<Span> {
+        let start = self.tag_start?;
+        if self.tag_length == 0 {
+            return None;
+        }
+        let length = usize::try_from(self.tag_length).ok()?;
+        // Raw tag tokens contain only ASCII and cannot span lines. Unicode tag values use
+        // percent escapes, whose source length is preserved here rather than their decoded size.
+        let end = Marker::new(
+            start.index().checked_add(length)?,
+            start.line(),
+            start.col().checked_add(length)?,
+        )
+        .with_byte_offset(match start.byte_offset() {
+            Some(byte_offset) => Some(byte_offset.checked_add(length)?),
+            None => None,
+        });
+        Some(Span::new(start, end))
     }
 
     /// Return the length of the span (in characters).
@@ -4827,6 +4890,31 @@ mod test {
             Marker, QueuedToken, QueuedTokenType, ScalarStyle, Scanner, Span, Token, TokenType,
         },
     };
+
+    #[test]
+    fn tag_span_supports_the_full_u32_length_without_allocating() {
+        let start = Marker::new(0, 1, 0).with_byte_offset(Some(0));
+        let span = Span::empty(start).with_tag_span(Some((start, u32::MAX)));
+        let tag_span = span.tag_span().unwrap();
+        let length = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(tag_span.start, start);
+        assert_eq!(tag_span.end.index(), length);
+        assert_eq!(tag_span.end.col(), length);
+        assert_eq!(tag_span.end.line(), 1);
+        assert_eq!(tag_span.end.byte_offset(), Some(length));
+    }
+
+    #[test]
+    fn tag_span_rejects_overflow_in_each_reconstructed_coordinate() {
+        for start in [
+            Marker::new(usize::MAX, 1, 0),
+            Marker::new(0, 1, usize::MAX),
+            Marker::new(0, 1, 0).with_byte_offset(Some(usize::MAX)),
+        ] {
+            let span = Span::empty(start).with_tag_span(Some((start, 1)));
+            assert_eq!(span.tag_span(), None);
+        }
+    }
 
     #[test]
     fn recovery_ignores_invalid_document_marker_lookalikes() {
