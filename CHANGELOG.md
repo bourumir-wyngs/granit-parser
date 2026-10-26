@@ -2,6 +2,10 @@
 
 ## 2.1.0 (unreleased)
 
+- Add `Span::tag_span()` for the complete raw explicit-tag token range on parser node events
+  (we only had tag start but no end).
+- Deprecate `Span::with_tag_start`, retaining it for compatibility. Use `Span::tag_span()` on
+  parser-emitted spans to obtain complete tag-token ranges.
 - Add `Parser::proceed_next_document()` for explicit document-boundary recovery after a syntax
   error or skipping the remainder of a document. Parsing resumes at the next document with original
   source positions, or emits `StreamEnd`. Abandoned collections and document-scoped state are

@@ -1,6 +1,7 @@
 use granit_parser::{Marker, Span};
 
 #[test]
+#[allow(deprecated)] // Verify compatibility of the legacy metadata builder.
 fn constructors_and_metadata_builders_preserve_unicode_source_range() {
     let source = "!tag é中🙂\n";
     let start = Marker::new(5, 1, 5).with_byte_offset(Some(5));
@@ -25,6 +26,7 @@ fn constructors_and_metadata_builders_preserve_unicode_source_range() {
 }
 
 #[test]
+#[allow(deprecated)] // Verify compatibility of spans constructed with the legacy builder.
 fn external_open_patterns_and_public_field_updates_remain_supported() {
     let source = "aé中";
     let start = Marker::new(0, 1, 0).with_byte_offset(Some(0));

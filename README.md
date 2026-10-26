@@ -282,12 +282,14 @@ use granit_parser::{Marker, Span};
 
 let start = Marker::new(0, 1, 0);
 let end = Marker::new(3, 1, 3);
-let span = Span::new(start, end)
-    .with_indent(Some(0))
-    .with_tag_start(Some(start));
+let span = Span::new(start, end).with_indent(Some(0));
 let Span { start: actual_start, .. } = span;
 assert_eq!(actual_start, start);
 ```
+
+`Span::with_tag_start` is deprecated and remains available for compatibility. For exact tag
+locations, use `Span::tag_span()` on parser-emitted spans; a start marker alone cannot provide the
+complete token range.
 
 For custom `Input` implementations, `SkipTabs` now contains only the input policies `Yes` and
 `No`. Whitespace results use `granit_parser::input::WhitespaceResult` instead:
@@ -360,7 +362,8 @@ The following ergonomic helpers are available:
 - `Tag::is_custom`
 - `Tag::is_yaml_core_schema_tag`
 - `Span::slice`
-- `Span::tag_start`
+- `Span::tag_span` for the complete raw tag-token range, including URI escapes
+- `Span::tag_start` (you more likely need `tag_span`)
 - `ParserStack::push_include`
 
 See CHANGELOG.md for details.

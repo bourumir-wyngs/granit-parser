@@ -303,6 +303,188 @@ fn tag_start_uses_tag_token_when_tag_precedes_anchor() {
 }
 
 #[test]
+fn tag_spans_preserve_complete_source_tokens_and_unicode_positions() {
+    for (yaml, expected) in [
+        ("clé: !!str value\n", "!!str"),
+        ("clé: ! value\n", "!"),
+        ("clé: &mémo !note value\n", "!note"),
+        ("clé: !note &mémo value\n", "!note"),
+        ("clé: !snow%E2%98%83 value\n", "!snow%E2%98%83"),
+        (
+            "clé: !<tag:example.com,2026:%E2%98%83> value\n",
+            "!<tag:example.com,2026:%E2%98%83>",
+        ),
+        (
+            "%TAG !e! tag:example.com,2026:\n---\nclé: !e!thing value\n",
+            "!e!thing",
+        ),
+    ] {
+        let events = event_spans(yaml);
+        let tagged: Vec<_> = events
+            .iter()
+            .filter(|(event, _)| event.tag().is_some())
+            .collect();
+        assert_eq!(tagged.len(), 1, "{yaml:?}");
+        let (_, span) = tagged[0];
+        let tag_span = span.tag_span().expect("tagged node must retain its token");
+        let start = yaml.find(expected).unwrap();
+        let line_start = yaml[..start].rfind('\n').map_or(0, |at| at + 1);
+
+        assert_eq!(tag_span.slice(yaml), Some(expected), "{yaml:?}");
+        assert_eq!(tag_span.byte_range(), Some(start..start + expected.len()));
+        assert_eq!(tag_span.start.index(), yaml[..start].chars().count());
+        assert_eq!(
+            tag_span.start.col(),
+            yaml[line_start..start].chars().count()
+        );
+        assert_eq!(
+            tag_span.start.line(),
+            yaml[..start].matches('\n').count() + 1
+        );
+        assert_eq!(
+            tag_span.end.index(),
+            tag_span.start.index() + expected.len()
+        );
+        assert_eq!(tag_span.end.col(), tag_span.start.col() + expected.len());
+        assert_eq!(tag_span.end.line(), tag_span.start.line());
+        assert_eq!(Some(tag_span.start), span.tag_start());
+        assert_eq!(tag_span.tag_span(), None);
+        assert_eq!(tag_span.tag_start(), None);
+        assert_eq!(tag_span.indent, None);
+        assert_eq!(span.slice(yaml), Some("value"));
+
+        for streamed in [
+            Parser::new_from_iter(yaml.chars()).collect::<Result<Vec<_>, _>>(),
+            Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
+                .collect::<Result<Vec<_>, _>>(),
+        ] {
+            let streamed = streamed.unwrap();
+            assert_eq!(streamed, events, "{yaml:?}");
+            let streamed_tag = streamed
+                .iter()
+                .find_map(|(_, span)| span.tag_span())
+                .unwrap();
+            assert_eq!(streamed_tag.start, tag_span.start);
+            assert_eq!(streamed_tag.end, tag_span.end);
+            assert_eq!(streamed_tag.start.byte_offset(), None);
+            assert_eq!(streamed_tag.end.byte_offset(), None);
+            assert_eq!(streamed_tag.slice(yaml), None);
+        }
+    }
+}
+
+#[test]
+fn tag_spans_survive_comments_and_attach_to_empty_nodes_and_collections() {
+    // Exercise these cases with comment emission enabled and disabled by the build feature.
+    for yaml in [
+        "&a # anchor\n!note value\n",
+        "!note # tag\n&a value\n",
+        "!note # tag\nvalue\n",
+        "key: !note # empty value\nnext: value\n",
+        "key: !note &a # empty value after anchor\nnext: value\n",
+        "[!note, next]\n",
+        "!note [value]\n",
+        "!note {key: value}\n",
+        "key: !note # block mapping\n  nested: value\n",
+        "key: !note # block sequence\n  - value\n",
+        "key: !note # indentless sequence\n- value\n",
+    ] {
+        let events = event_spans(yaml);
+        let tagged: Vec<_> = events
+            .iter()
+            .filter(|(event, _)| event.tag().is_some())
+            .collect();
+        assert_eq!(tagged.len(), 1, "{yaml:?}");
+        let (_, span) = tagged[0];
+        let tag_span = span
+            .tag_span()
+            .expect("tag range must survive node parsing");
+        assert_eq!(tag_span.slice(yaml), Some("!note"), "{yaml:?}");
+        assert!(tag_span.end.index() <= span.start.index(), "{yaml:?}");
+        for (event, span) in &events {
+            if event.tag().is_none() {
+                assert_eq!(span.tag_span(), None, "{yaml:?}: {event:?}");
+            }
+        }
+
+        let without_comments = Parser::new_from_str_with_options(
+            yaml,
+            granit_parser::options! { emit_comments: false },
+        )
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+        assert_eq!(
+            without_comments
+                .iter()
+                .find_map(|(_, span)| span.tag_span()),
+            Some(tag_span),
+            "{yaml:?}"
+        );
+    }
+}
+
+#[test]
+fn tag_spans_ignore_property_lookalikes_and_aliases() {
+    let yaml = "message: &msg !note hello\ncopy: *msg\nexample: \"&msg !note *msg\"\n# !note\n";
+    let events = event_spans(yaml);
+    let with_tag: Vec<_> = events
+        .iter()
+        .filter_map(|(event, span)| span.tag_span().map(|tag_span| (event, tag_span)))
+        .collect();
+    assert_eq!(with_tag.len(), 1);
+    assert!(matches!(with_tag[0].0, Event::Scalar(value, ..) if value == "hello"));
+    assert_eq!(with_tag[0].1.slice(yaml), Some("!note"));
+    let (_, alias_span) = events.iter().find(|(event, _)| event.is_alias()).unwrap();
+    assert_eq!(alias_span.slice(yaml), Some("*msg"));
+    assert_eq!(alias_span.tag_span(), None);
+}
+
+#[test]
+#[allow(deprecated)] // The legacy start-only builder must invalidate any complete tag range.
+fn tag_span_is_unavailable_for_start_only_metadata() {
+    use granit_parser::Span;
+
+    let start = Marker::new(0, 1, 0);
+    for span in [
+        Span::default(),
+        Span::new(start, start),
+        Span::empty(start),
+        Span::empty(start).with_tag_start(Some(start)),
+    ] {
+        assert_eq!(span.tag_span(), None);
+    }
+
+    let tagged = event_spans("!note value\n")
+        .into_iter()
+        .find_map(|(event, span)| event.tag().is_some().then_some(span))
+        .unwrap();
+    assert!(tagged.tag_span().is_some());
+    assert_eq!(tagged.with_tag_start(Some(start)).tag_span(), None);
+    assert_eq!(tagged.with_tag_start(None).tag_span(), None);
+}
+
+#[test]
+fn tag_spans_are_preserved_by_peeking_and_replay() {
+    use granit_parser::{ParserTrait, ReplayParser};
+
+    let yaml = "!note [value]\n";
+    let mut parser = Parser::new_from_str(yaml);
+    let mut events = Vec::new();
+    while let Some(peeked) = parser.peek() {
+        let peeked = peeked.unwrap().clone();
+        let next = parser.next().unwrap().unwrap();
+        assert_eq!(next, peeked);
+        events.push(next);
+    }
+    let mut replay = ReplayParser::new(events.clone(), 1);
+    for expected in events {
+        assert_eq!(replay.peek().unwrap().unwrap(), &expected);
+        assert_eq!(replay.next().unwrap().unwrap(), expected);
+    }
+    assert!(replay.next().is_none());
+}
+
+#[test]
 fn span_slice_returns_source_text_for_valid_byte_ranges() {
     let source = "key: value";
     let span = granit_parser::Span::new(
