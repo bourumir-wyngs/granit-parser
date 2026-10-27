@@ -110,7 +110,7 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
     let scalars: Vec<_> = recovered
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Scalar(_, ..) => Some((span.slice(source), span.start.line(), span.start.col())),
+            Event::Scalar(..) => Some((span.slice(source), span.start.line(), span.start.col())),
             _ => None,
         })
         .collect();
