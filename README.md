@@ -162,9 +162,10 @@ the repository root, then read the source alongside the output:
 | --- | --- | --- |
 | [Event walker](examples/event_walker.rs) | Track mapping keys/values, sequence elements, and depth through nested collections, aliases, comments, and document boundaries. Read collection style directly from events. | `cargo run --example event_walker` |
 | [Source positions](examples/source_positions.rs) | Distinguish character indexes, UTF-8 byte offsets, and UTF-16 editor positions; handle Unicode and line endings using the original source. | `cargo run --example source_positions` |
+| [String spans](examples/string_spans.rs) | Convert `Span::byte_range()` into a required consumer range with explicit errors; preserve raw Unicode and escaped text, distinguish empty ranges from missing offsets. | `cargo run --example string_spans` |
 | [Tooling diagnostics](examples/tooling_diagnostics.rs) | Match structured errors, inspect declared YAML versions, continue past unresolved aliases explicitly, and enforce a no-directives policy. | `cargo run --example tooling_diagnostics` |
 
-All three also run with `--no-default-features`, for example:
+All four also run with `--no-default-features`, for example:
 
 ```sh
 cargo run --no-default-features --example tooling_diagnostics
@@ -172,6 +173,13 @@ cargo run --no-default-features --example tooling_diagnostics
 
 The example executables use Rust's standard library; disabling the parser's default features
 demonstrates that their logic does not depend on comment events or built-in error messages.
+
+Spans emitted by `Parser::new_from_str` and `Parser::new_from_str_with_options` always have
+UTF-8 byte ranges into the original input, including empty ranges for implicit events and EOF.
+Use `Span::byte_range()` when storing offsets and `Span::slice(source)` when only raw text is
+needed. Keep the same, unchanged source: decoded scalar text and character indexes are not
+byte offsets. The shared span API returns `Option` because iterator inputs and manually
+constructed spans may lack offsets; missing offsets should not silently become zero.
 
 ## Key differences from saphyr-parser
 

@@ -333,16 +333,27 @@ impl Span {
         self.len() == 0
     }
 
-    /// Return the byte range of the span, if available.
+    /// Return the half-open UTF-8 byte range of the span, if both markers have byte offsets.
+    ///
+    /// Spans emitted by [`Parser::new_from_str`](crate::Parser::new_from_str) and its
+    /// options variant always return `Some`, including empty ranges. Iterator inputs and
+    /// manually constructed markers may lack offsets, so the return type is optional.
+    /// A missing range is not the same as an empty range; do not substitute `0..0` for `None`.
+    ///
+    /// Unlike [`Self::len`] and [`Marker::index`], this range counts bytes, not characters.
+    /// For manually constructed or modified spans, this method does not validate ordering,
+    /// bounds, or UTF-8 boundaries. Use [`Self::slice`] for checked access to source text.
     #[must_use]
     pub fn byte_range(&self) -> Option<core::ops::Range<usize>> {
-        let start = self.start.byte_offset()?;
-        let end = self.end.byte_offset()?;
-        Some(start..end)
+        Some(self.start.byte_offset()?..self.end.byte_offset()?)
     }
 
     /// Return the source text covered by this span, if byte offsets are available
     /// and the range is valid for the provided input.
+    ///
+    /// Pass the same, unchanged source that produced the span. Bounds and UTF-8 boundaries
+    /// are checked, but a span does not record source identity. The returned text is the raw
+    /// event source, which can differ from a decoded scalar value or be empty for implicit events.
     #[must_use]
     pub fn slice<'source>(&self, source: &'source str) -> Option<&'source str> {
         source.get(self.byte_range()?)

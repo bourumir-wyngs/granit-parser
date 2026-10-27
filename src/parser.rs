@@ -918,6 +918,16 @@ pub trait ParserTrait<'input> {
 
 impl<'input> Parser<'input, StrInput<'input>> {
     /// Create a parser over a borrowed string slice.
+    ///
+    /// Every emitted event span has UTF-8 byte offsets into `value`:
+    /// [`Span::byte_range`] returns `Some(start..end)`, with ordered, in-bounds UTF-8
+    /// boundaries. This includes zero-length spans for implicit events and end-of-input.
+    /// [`Span::slice`] returns `Some` when given the same, unchanged source string.
+    ///
+    /// This guarantee applies to spans as emitted, before callers modify their markers.
+    /// Byte offsets remain optional in [`Span`] because other inputs, such as
+    /// [`Self::new_from_iter`], do not provide them. Missing offsets must not be replaced
+    /// with zero or with [`Marker::index`], which counts characters rather than bytes.
     #[must_use]
     pub fn new_from_str(value: &'input str) -> Self {
         Self::new_from_str_with_options(value, Options::default())
@@ -925,6 +935,8 @@ impl<'input> Parser<'input, StrInput<'input>> {
 
     /// Create a parser over a borrowed string slice with configurable behavior and resource
     /// limits.
+    ///
+    /// The byte-offset guarantee of [`Self::new_from_str`] also applies with custom options.
     #[must_use]
     pub fn new_from_str_with_options(value: &'input str, options: Options) -> Self {
         Parser::with_options(StrInput::new(value), options)

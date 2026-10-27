@@ -11,6 +11,7 @@
   source positions, or emits `StreamEnd`. Abandoned collections and document-scoped state are
   discarded without synthetic closing events. Source failures remain terminal; ordinary parsing
   remains fail-fast unless recovery is requested.
+- Clarify in documentation and emphasize in tests that `Parser::new_from_str` supplies byte offsets for every event span.
 - Add boolean option `emit_unresolved_aliases` (default `false`). When enabled, unknown anchors
   produce `Event::UnresolvedAlias(name)` with the alias token's span and structural parsing
   continues. Unresolved references remain invalid YAML and are never resolved by later definitions;
@@ -23,6 +24,7 @@
   scan error. The error could interrupt the transition into an indentless sequence entry, as with
   the input `":\n- !%"`. A later `load` also no longer re-emits `StreamEnd` after an error raised
   at the end of the stream, such as `ExpectedDocumentStart` for a directive-only document.
+ 
 
 ## 2.0.0 (breaking changes)
 

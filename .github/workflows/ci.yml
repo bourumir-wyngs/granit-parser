@@ -74,11 +74,13 @@ jobs:
         run: |
           cargo run --example event_walker
           cargo run --example source_positions
+          cargo run --example string_spans
           cargo run --example tooling_diagnostics
       - name: Run learning examples without default features
         run: |
           cargo run --no-default-features --example event_walker
           cargo run --no-default-features --example source_positions
+          cargo run --no-default-features --example string_spans
           cargo run --no-default-features --example tooling_diagnostics
 
   coverage:
