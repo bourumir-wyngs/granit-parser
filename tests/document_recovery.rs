@@ -1,6 +1,6 @@
 use granit_parser::{
     options, BorrowedInput, ErrorKind, Event, EventReceiver, Parser, ScalarStyle, ScanError, Span,
-    YamlVersion,
+    StructureStyle, YamlVersion,
 };
 
 fn first_error<'input, I: BorrowedInput<'input>>(parser: &mut Parser<'input, I>) -> ScanError {
@@ -62,6 +62,66 @@ fn recovers_broken_flow_and_quoted_scalars_on_all_input_backends() {
         let actual: Vec<_> = borrowed.into_iter().map(|(event, _)| event).collect();
         assert_eq!(actual, expected, "source: {source:?}");
     }
+}
+
+#[test]
+fn recovers_nested_mapping_after_unclosed_flow_sequence() {
+    let source = "broken: [1, 2\n---\nhealthy:\n  enabled: true\n";
+    let mut parser = Parser::new_from_str(source);
+    let mut diagnostics = 0;
+    let mut recovered = Vec::new();
+
+    while let Some(next) = parser.next_event() {
+        match next {
+            Ok(event) if diagnostics > 0 => recovered.push(event),
+            Ok(_) => {}
+            Err(error) => {
+                assert_eq!(diagnostics, 0, "the healthy document must not fail");
+                assert_eq!(
+                    error.kind(),
+                    &ErrorKind::UnclosedFlowCollection { open: '[' }
+                );
+                diagnostics += 1;
+                parser.proceed_next_document().unwrap();
+            }
+        }
+    }
+
+    assert_eq!(diagnostics, 1);
+    assert_eq!(
+        recovered
+            .iter()
+            .map(|(event, _)| event.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            Event::DocumentStart(true, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
+            Event::Scalar("healthy".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingStart(StructureStyle::Block, 0, None),
+            Event::Scalar("enabled".into(), ScalarStyle::Plain, 0, None),
+            Event::Scalar("true".into(), ScalarStyle::Plain, 0, None),
+            Event::MappingEnd,
+            Event::MappingEnd,
+            Event::DocumentEnd,
+            Event::StreamEnd,
+        ],
+    );
+
+    let scalars: Vec<_> = recovered
+        .iter()
+        .filter_map(|(event, span)| match event {
+            Event::Scalar(_, ..) => Some((span.slice(source), span.start.line(), span.start.col())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        scalars,
+        vec![
+            (Some("healthy"), 3, 0),
+            (Some("enabled"), 4, 2),
+            (Some("true"), 4, 11),
+        ],
+    );
 }
 
 #[test]
