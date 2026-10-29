@@ -73,6 +73,27 @@ fn directive_and_option_fuzz_oracles_cover_boundaries() {
 }
 
 #[test]
+fn option_fuzz_oracles_cover_anchor_metadata_and_comment_suppression() {
+    for mode in [0, 1, 2] {
+        for flags in [0x40, 0x41, 0xc0, 0xc1] {
+            for source in [
+                "[&same first, *same, &same [*same], *same]\n",
+                "key: &a # sequence\n- &b []\ncopy: *a\n",
+                "clé: !snow%E2%98%83 &mémo value\ncopy: *mémo\n",
+                "&a # empty scalar\n",
+                "--- &first value\n--- &second next\n",
+                "[&a value, &b !missing!tag value]\n",
+                "key: &a\n- [broken\n",
+            ] {
+                let mut input = vec![mode, flags, 5, 10, 3];
+                input.extend_from_slice(source.as_bytes());
+                options::check_input(&input);
+            }
+        }
+    }
+}
+
+#[test]
 fn flow_fuzz_oracles_cover_indicators_and_tab_separation() {
     for mode in (0..6).chain(252..=254) {
         for shape in [0, 1, 2, 3, 15, 31, 63, 255] {

@@ -4,6 +4,12 @@
 
 **Support user cases**
 
+- Add `Options::emit_anchor_events` (default `false`) to emit `Event::Anchor(id, name)`
+  immediately after the anchored scalar or collection-start event. Its span covers the complete
+  `&name` token, and its ID matches the node and resolved aliases without relying on allocation
+  order. Anchor events are presentation metadata (`is_node()` is `false`); existing node payloads
+  and default event streams are unchanged. Together with alias-token spans and `Span::tag_span()`,
+  this exposes original property spellings without separate anchor and tag scans.
 - Add `Span::tag_span()` for the complete raw explicit-tag token range on parser node events
   (we only had tag start but no end).
 - Deprecate `Span::with_tag_start`, retaining it for compatibility. Use `Span::tag_span()` on

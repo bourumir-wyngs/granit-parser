@@ -59,7 +59,7 @@ impl Walker {
         (role, depth)
     }
 
-    /// A node event gets a context; structural and comment events get `None`.
+    /// A node event gets a context; structural and metadata events get `None`.
     fn observe(&mut self, event: &Event<'_>) -> Result<Option<(Role, usize)>, &'static str> {
         match event {
             Event::Scalar(..) | Event::Alias(_) | Event::UnresolvedAlias(_) => {
@@ -107,6 +107,8 @@ impl Walker {
                 Ok(None)
             }
             Event::StreamStart | Event::StreamEnd => Ok(None),
+            // Anchor metadata describes the preceding node and consumes no slot.
+            Event::Anchor(..) => Ok(None),
             #[cfg(feature = "comments")]
             Event::Comment(..) => {
                 // Comments are presentation metadata, so they never advance a
@@ -234,7 +236,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     walk(
         "Aliases are nodes, including keys and self-references",
         "original: &key name\n*key : value\nloop: &loop [*loop]\n",
-        Options::default(),
+        granit_parser::options! { emit_anchor_events: true },
         &[
             ("block mapping", Root, 0),
             ("original", MappingKey, 1),

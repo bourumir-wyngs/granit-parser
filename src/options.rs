@@ -68,6 +68,18 @@ pub struct Options {
     /// # Ok::<(), granit_parser::ScanError>(())
     /// ```
     pub emit_unresolved_aliases: bool,
+    /// Emit anchor definition metadata immediately after its node event.
+    ///
+    /// Defaults to `false`, preserving the existing event stream. When enabled, each anchored
+    /// scalar or collection start is immediately followed by [`crate::Event::Anchor`] carrying
+    /// the assigned ID and original name (without `&`). Its companion span covers the complete
+    /// `&name` token. Collection anchors are emitted before their children, including aliases
+    /// referring to the collection itself.
+    ///
+    /// Anchor events are presentation metadata, not additional YAML nodes. Their spans refer
+    /// back to properties preceding the node, so event spans need not be in source order.
+    /// This option is independent of comment emission and has no effect on a standalone scanner.
+    pub emit_anchor_events: bool,
     /// Whether scanners emit comment tokens and parsers emit comment events.
     ///
     /// The default is `true` with the `comments` Cargo feature and `false` without it.
@@ -138,6 +150,7 @@ impl Default for Options {
             strict_indentation: false,
             disallow_directives: false,
             emit_unresolved_aliases: false,
+            emit_anchor_events: false,
             emit_comments: cfg!(feature = "comments"),
             #[cfg(feature = "comments")]
             max_buffered_comment_events: 96,

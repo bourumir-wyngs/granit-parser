@@ -119,9 +119,12 @@ pub fn check_input(data: &[u8]) {
         return;
     };
 
-    // The high flag bit selects strict indentation for every raw oracle, including comment
-    // suppression. Lower flags and the five-byte header keep their existing meanings.
-    let mut options = granit_parser::options! { strict_indentation: flags & 0x80 != 0 };
+    // The two high flag bits select strict indentation and anchor metadata for every raw oracle,
+    // including comment suppression. Lower flags and the five-byte header retain their meanings.
+    let mut options = granit_parser::options! {
+        strict_indentation: flags & 0x80 != 0,
+        emit_anchor_events: flags & 0x40 != 0,
+    };
     if mode % 3 == 2 {
         check_comment_suppression_with_options(input, options);
         return;

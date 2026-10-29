@@ -247,8 +247,15 @@ fn trace<T>(mut iterator: impl Iterator<Item = Result<T, ScanError>>) -> Trace<T
 
 fn validate_string_parser_trace(input: &str, trace: &Trace<(Event<'_>, Span)>) {
     let byte_offsets = byte_offsets(input);
-    for (_, span) in &trace.items {
+    for (event, span) in &trace.items {
         validate_string_span(input, &byte_offsets, *span);
+        if let Event::Anchor(_, name) = event {
+            assert_eq!(
+                span.slice(input).and_then(|token| token.strip_prefix('&')),
+                Some(name.as_ref()),
+                "anchor metadata span must cover its complete source token"
+            );
+        }
     }
     if let Some(error) = &trace.error {
         validate_string_marker(input, &byte_offsets, *error.marker());
@@ -407,6 +414,16 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                     anchors.contains(anchor),
                     "alias refers to an anchor not yet defined in this document"
                 );
+            }
+            Event::Anchor(anchor, _) => {
+                assert!(document_open, "anchor metadata outside a document");
+                let (node, _) = &events[index - 1];
+                assert!(
+                    node.is_node(),
+                    "anchor metadata must immediately follow its node"
+                );
+                assert_eq!(node.anchor_id(), Some(*anchor));
+                assert!(anchors.contains(anchor));
             }
             _ => {}
         }

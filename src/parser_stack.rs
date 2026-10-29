@@ -35,14 +35,7 @@ impl<'input> ReplayParser<'input> {
     }
 
     fn advance_anchor_offset(&mut self, event: &Event<'input>) {
-        let anchor_id = match event {
-            Event::Scalar(_, _, anchor_id, _)
-            | Event::SequenceStart(_, anchor_id, _)
-            | Event::MappingStart(_, anchor_id, _) => *anchor_id,
-            _ => 0,
-        };
-
-        if anchor_id > 0 {
+        if let Some(anchor_id) = event.anchor_id() {
             self.anchor_offset = self.anchor_offset.max(anchor_id.saturating_add(1));
         }
     }
@@ -198,8 +191,9 @@ where
     /// Creates a new, empty parser stack with the supplied parsing options.
     ///
     /// Options are applied to sources parsed internally by [`Self::push_include`]. Caller-supplied
-    /// parsers retain their own parsing options, including [`Options::emit_unresolved_aliases`].
-    /// Unresolved alias events from caller-supplied parsers and replay streams are passed through.
+    /// parsers retain their own parsing options, including [`Options::emit_unresolved_aliases`]
+    /// and [`Options::emit_anchor_events`]. Unresolved alias and anchor metadata events from
+    /// caller-supplied parsers and replay streams are passed through.
     /// With the `comments` Cargo feature, disabling comment emission also suppresses comment
     /// events from parsers and replay streams supplied by the caller. Construct caller-supplied
     /// parsers with emission disabled as well to avoid capturing comments before filtering them.
@@ -244,8 +238,9 @@ where
     /// Resolve an include by name and push the resulting parser onto the stack.
     ///
     /// With the `comments` Cargo feature, comment events from the included content follow the
-    /// setting passed to [`Self::with_options`]. All event spans are local to the included content
-    /// returned by the resolver.
+    /// setting passed to [`Self::with_options`]. Anchor metadata events likewise follow
+    /// [`Options::emit_anchor_events`]. All event spans are local to the included content returned
+    /// by the resolver.
     ///
     /// # Errors
     /// Returns `ScanError` if no resolver is configured, include resolution fails, or the
