@@ -194,6 +194,74 @@ fn incomplete_next_header_is_not_reported_as_clean_eof() {
     assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
 }
 
+#[cfg(feature = "comments")]
+fn assert_pending_header_presence<'input, I: BorrowedInput<'input>>(
+    mut parser: Parser<'input, I>,
+    consume_comment: bool,
+) {
+    while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+    assert!(matches!(
+        parser.peek().unwrap().unwrap().0,
+        Event::Comment(..)
+    ));
+    if consume_comment {
+        parser.next().unwrap().unwrap();
+    }
+
+    assert!(parser.proceed_next_document().unwrap());
+    let error = parser.by_ref().find_map(Result::err).unwrap();
+    assert_eq!(error.kind(), &ErrorKind::ExpectedDocumentStart);
+    assert!(parser.next().is_none());
+}
+
+#[cfg(feature = "comments")]
+#[test]
+fn presence_preserves_a_header_paused_at_a_comment() {
+    for header in ["%YAML 1.2", "%TAG !e! tag:example.com,2026:", "%RESERVED"] {
+        for suffix in ["", "...\n---\nsecond\n"] {
+            let source = format!("first\n...\n{header}\n# header\n{suffix}");
+            for consume_comment in [false, true] {
+                assert_pending_header_presence(Parser::new_from_str(&source), consume_comment);
+                assert_pending_header_presence(
+                    Parser::new_from_iter(source.chars()),
+                    consume_comment,
+                );
+                assert_pending_header_presence(
+                    Parser::new_from_fallible_iter(source.chars().map(Ok)),
+                    consume_comment,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "comments")]
+#[test]
+fn pending_header_probe_keeps_source_failures_terminal() {
+    let failure = ErrorKind::UnknownAnchor;
+    let source = format!("first\n...\n%YAML 1.2\n# {}", "comment ".repeat(100));
+    let input = source
+        .chars()
+        .map(Ok)
+        .chain(std::iter::once(Err(failure.clone())))
+        .chain(std::iter::from_fn(|| panic!("source polled after failure")));
+    let mut parser = Parser::new_from_fallible_iter(input);
+    while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+    assert!(matches!(
+        parser.peek().unwrap().unwrap().0,
+        Event::Comment(..)
+    ));
+
+    assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
+    assert!(parser.peek().is_none());
+    assert!(parser.next().is_none());
+    let mut events = Events::default();
+    parser.load(&mut events, true).unwrap();
+    parser.try_load(&mut events, true).unwrap();
+    assert!(events.0.is_empty());
+    assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
+}
+
 #[test]
 fn source_failure_while_probing_past_comments_is_terminal() {
     for failure in [

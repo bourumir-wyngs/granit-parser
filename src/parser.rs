@@ -1309,6 +1309,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             return Ok(false);
         }
 
+        #[cfg(feature = "comments")]
+        if self.has_pending_document_directives() {
+            // A header paused at a comment already establishes document presence. Leave EOF
+            // or an invalid end marker for normal parsing, but retain terminal source failures.
+            self.scanner.check_source_error()?;
+            return Ok(true);
+        }
+
         loop {
             let token = match self.peek_token() {
                 Ok(token) => token,
