@@ -141,7 +141,7 @@ fn node_label<'event>(event: &'event Event<'_>) -> &'event str {
     }
 }
 
-/// Print the input, then each node as it arrives, checking its context against a teaching table.
+/// Print the input, nodes, and anchor metadata, checking node contexts against a teaching table.
 /// The tables are fixtures, not a collected event stream or a document tree.
 fn walk(
     title: &str,
@@ -159,6 +159,9 @@ fn walk(
         // separate makes the same Walker usable with another parser input type.
         let (event, _span) = next?;
         let Some((role, depth)) = walker.observe(&event)? else {
+            if let Event::Anchor(id, name) = &event {
+                println!("    anchor metadata: &{name} (ID {id})");
+            }
             continue;
         };
 

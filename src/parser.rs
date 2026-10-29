@@ -126,6 +126,8 @@ pub enum Event<'input> {
     /// collection children. This is presentation metadata, not an additional YAML node.
     /// The companion [`Span`] covers the complete `&name` token, whose source position precedes
     /// the node content. Comments between properties and content can precede the node event.
+    /// Emitting the node first ensures that a failure before its event is emitted cannot leave
+    /// anchor metadata without an associated node event, even during document recovery.
     ///
     /// Repeated names receive distinct IDs; aliases refer to the most recent preceding
     /// definition in the same document. IDs match those on node and [`Self::Alias`] events,
@@ -455,6 +457,8 @@ impl<'input> Event<'input> {
     /// `None`. Returns `None` for all other events, including resolved and unresolved aliases
     /// (which reference anchors rather than defining them; use [`Self::alias_id`] to obtain a
     /// resolved target anchor ID).
+    /// To count anchored nodes once, also require [`Self::is_node`], since [`Self::Anchor`]
+    /// repeats the node's ID.
     #[must_use]
     pub fn anchor_id(&self) -> Option<usize> {
         match self {
@@ -602,8 +606,9 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// itself).
     pending_key_indent: Option<usize>,
     /// Pending anchor ID to attach to a node after an intervening comment.
+    /// `Some(0)` retains an anchor property when the anchor offset is zero.
     #[cfg(feature = "comments")]
-    pending_node_anchor_id: usize,
+    pending_node_anchor_id: Option<usize>,
     /// Pending tag to attach to a node after an intervening comment.
     #[cfg(feature = "comments")]
     pending_node_tag: Option<Cow<'input, Tag>>,
@@ -1080,7 +1085,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
             pending_key_indent: None,
             #[cfg(feature = "comments")]
-            pending_node_anchor_id: 0,
+            pending_node_anchor_id: None,
             #[cfg(feature = "comments")]
             pending_node_tag: None,
             #[cfg(feature = "comments")]
@@ -1281,7 +1286,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         {
             self.deferred_error = None;
             self.queued_events.clear();
-            self.pending_node_anchor_id = 0;
+            self.pending_node_anchor_id = None;
             self.pending_node_tag = None;
             self.pending_node_tag_span = None;
             self.pending_node_property_end = None;
@@ -2129,7 +2134,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     #[cfg(feature = "comments")]
     fn save_pending_node_properties(
         &mut self,
-        anchor_id: usize,
+        anchor_id: Option<usize>,
         tag: Option<Cow<'input, Tag>>,
         tag_span: Option<(Marker, u32)>,
         property_end: Option<Marker>,
@@ -2160,15 +2165,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         #[cfg(feature = "comments")]
         let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (
-            core::mem::take(&mut self.pending_node_anchor_id),
+            self.pending_node_anchor_id.take(),
             self.pending_node_tag.take(),
             self.pending_node_tag_span.take(),
             self.pending_node_property_end.take(),
         );
         #[cfg(not(feature = "comments"))]
-        let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (0, None, None, None);
+        let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (None, None, None, None);
         match *self.peek_token()? {
-            QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id == 0 && tag.is_none() => {
+            QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id.is_none() && tag.is_none() => {
                 self.pop_state();
                 let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() else {
                     unreachable!("alias token disappeared after peek")
@@ -2181,11 +2186,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Some(id) => Ok((Event::Alias(*id), span)),
                 };
             }
-            QueuedToken(_, QueuedTokenType::Anchor(_)) if anchor_id == 0 => {
+            QueuedToken(_, QueuedTokenType::Anchor(_)) if anchor_id.is_none() => {
                 let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() else {
                     unreachable!("anchor token disappeared after peek")
                 };
-                anchor_id = self.register_anchor(name, &span)?;
+                anchor_id = Some(self.register_anchor(name, &span)?);
                 property_end = Some(span.end);
                 if tag.is_none() && matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
                     let QueuedToken(tag_mark, QueuedTokenType::Tag(handle, suffix)) =
@@ -2210,13 +2215,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 tag_span = Some((mark.start, u32::try_from(mark.len()).unwrap_or(0)));
                 property_end = Some(mark.end);
                 tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                if anchor_id == 0 {
+                if anchor_id.is_none() {
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
                         else {
                             unreachable!("anchor token disappeared after peek")
                         };
-                        anchor_id = self.register_anchor(name, &mark)?;
+                        anchor_id = Some(self.register_anchor(name, &mark)?);
                         property_end = Some(mark.end);
                     }
                 }
@@ -2228,6 +2233,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             _ => {}
         }
+        let has_anchor = anchor_id.is_some();
+        let anchor_id = anchor_id.unwrap_or(0);
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEntry) if indentless_sequence => {
                 self.start_block_collection(mark.start)?;
@@ -2335,7 +2342,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
-            QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
+            QueuedToken(mark, _) if tag.is_some() || has_anchor => {
                 self.pop_state();
                 let span = property_end.map_or_else(|| Span::empty(mark.start), Span::empty);
                 Ok(Self::attach_tag_span(

@@ -76,6 +76,9 @@ pub struct Options {
     /// `&name` token. Collection anchors are emitted before their children, including aliases
     /// referring to the collection itself.
     ///
+    /// The node event comes first so the parser never emits anchor metadata for a node that
+    /// failed before its event could be emitted, including when recovering to the next document.
+    ///
     /// Anchor events are presentation metadata, not additional YAML nodes. Their spans refer
     /// back to properties preceding the node, so event spans need not be in source order.
     /// This option is independent of comment emission and has no effect on a standalone scanner.

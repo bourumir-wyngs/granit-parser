@@ -1,4 +1,6 @@
-use granit_parser::{options, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, Span};
+use granit_parser::{
+    options, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, Span, StructureStyle,
+};
 use std::borrow::Cow;
 
 #[test]
@@ -106,5 +108,42 @@ fn included_anchor_events_follow_options_with_local_ranges_and_inherited_ids() {
                 .iter()
                 .any(|(event, _)| matches!(event, Event::Scalar(_, _, 3, _))));
         }
+    }
+}
+
+#[test]
+fn included_anchor_events_preserve_a_zero_offset_from_an_empty_replay() {
+    const INCLUDED: &str = "&inc [*inc]\n";
+
+    for borrowed in [false, true] {
+        let mut stack: ParserStack<'_> =
+            ParserStack::with_options(options! { emit_anchor_events: true });
+        if borrowed {
+            stack.set_borrowed_resolver(|_| Ok(INCLUDED));
+        } else {
+            stack.set_resolver(|_| Ok(INCLUDED.to_owned()));
+        }
+        stack.push_replay_parser(ReplayParser::new(Vec::new(), 0), "bottom".into());
+        assert_eq!(stack.current_anchor_offset(), 0);
+        stack.push_include("included.yaml").unwrap();
+        assert_eq!(stack.current_anchor_offset(), 1);
+
+        let events = stack.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(
+            events.iter().map(|(event, _)| event).collect::<Vec<_>>(),
+            [
+                &Event::SequenceStart(StructureStyle::Flow, 0, None),
+                &Event::Anchor(0, "inc".into()),
+                &Event::Alias(0),
+                &Event::SequenceEnd,
+                &Event::StreamEnd,
+            ]
+        );
+        assert_eq!((events[1].1.start.index(), events[1].1.end.index()), (0, 4));
+        if borrowed {
+            assert_eq!(events[1].1.slice(INCLUDED), Some("&inc"));
+            assert_eq!(events[2].1.slice(INCLUDED), Some("*inc"));
+        }
+        assert!(stack.next().is_none());
     }
 }
