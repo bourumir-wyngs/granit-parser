@@ -387,7 +387,7 @@ and continuing with the next document after a document error using
 ### Anchor events
 Anchors were traditionally seen as opaque numeric IDs. 
 The new opt-in [`Event::Anchor`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Anchor) event 
-provides the anchor name and tag if required for advanced processing.
+provides the anchor name if required for advanced processing. The companion `Span` of this event provides anchor location.
 
 ### Unsupported features
 YAML 1.1 line breaks. YAML 1.1 defines NEL (U+0085), LS (U+2028) and PS (U+2029) as line breaks, this parser
