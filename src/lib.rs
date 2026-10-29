@@ -58,6 +58,50 @@
 //! excluding the line break. With [`Parser::new_from_str`], [`Span::slice`] returns that source
 //! comment text.
 //!
+//! # Anchor and tag source metadata
+//!
+//! Set [`Options::emit_anchor_events`] to receive [`Event::Anchor`] with the assigned ID and
+//! original name, without `&`. Its companion span covers the complete `&name` token. This event
+//! immediately follows the anchored scalar or collection start, before any collection children.
+//! It is presentation metadata, so [`Event::is_node`] returns `false`. Its source range precedes
+//! the node content even though the event follows the node. Emission defaults to `false`, leaving
+//! existing event streams unchanged.
+//!
+//! Resolved [`Event::Alias`] events carry the target ID and a complete `*name` token span. An
+//! unresolved alias can instead be exposed through [`Options::emit_unresolved_aliases`]. Explicit
+//! tags remain on node events; [`Span::tag_span`] preserves their complete raw token, including
+//! verbatim notation and percent escapes that normalized tag helpers may not reproduce.
+//!
+//! ```rust
+//! use std::collections::BTreeMap;
+//! use granit_parser::{Event, Parser};
+//!
+//! let yaml = "message: &msg !note hello\ncopy: *msg\nexample: \"&msg is just text\"\n";
+//! let options = granit_parser::options! { emit_anchor_events: true };
+//! let mut anchors = BTreeMap::new();
+//! for result in Parser::new_from_str_with_options(yaml, options) {
+//!     let (event, span) = result?;
+//!     if let Some(tag_span) = span.tag_span() {
+//!         assert_eq!(tag_span.slice(yaml), Some("!note"));
+//!     }
+//!     match event {
+//!         Event::Anchor(id, name) => {
+//!             assert_eq!(span.slice(yaml), Some("&msg"));
+//!             anchors.insert(id, (name, span));
+//!         }
+//!         Event::Alias(id) => {
+//!             let (name, definition_span) = &anchors[&id];
+//!             assert_eq!(name, "msg");
+//!             assert_eq!(definition_span.slice(yaml), Some("&msg"));
+//!             assert_eq!(span.slice(yaml), Some("*msg"));
+//!         }
+//!         _ => {}
+//!     }
+//! }
+//! assert_eq!(anchors.len(), 1); // The quoted text does not define an anchor.
+//! # Ok::<(), granit_parser::ScanError>(())
+//! ```
+//!
 //! # Limits
 //!
 //! [`Options::strict_indentation`] enables strict YAML indentation for flow collections. It

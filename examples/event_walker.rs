@@ -59,7 +59,7 @@ impl Walker {
         (role, depth)
     }
 
-    /// A node event gets a context; structural and comment events get `None`.
+    /// A node event gets a context; structural and metadata events get `None`.
     fn observe(&mut self, event: &Event<'_>) -> Result<Option<(Role, usize)>, &'static str> {
         match event {
             Event::Scalar(..) | Event::Alias(_) | Event::UnresolvedAlias(_) => {
@@ -107,6 +107,8 @@ impl Walker {
                 Ok(None)
             }
             Event::StreamStart | Event::StreamEnd => Ok(None),
+            // Anchor metadata describes the preceding node and consumes no slot.
+            Event::Anchor(..) => Ok(None),
             #[cfg(feature = "comments")]
             Event::Comment(..) => {
                 // Comments are presentation metadata, so they never advance a
@@ -139,7 +141,7 @@ fn node_label<'event>(event: &'event Event<'_>) -> &'event str {
     }
 }
 
-/// Print the input, then each node as it arrives, checking its context against a teaching table.
+/// Print the input, nodes, and anchor metadata, checking node contexts against a teaching table.
 /// The tables are fixtures, not a collected event stream or a document tree.
 fn walk(
     title: &str,
@@ -157,6 +159,9 @@ fn walk(
         // separate makes the same Walker usable with another parser input type.
         let (event, _span) = next?;
         let Some((role, depth)) = walker.observe(&event)? else {
+            if let Event::Anchor(id, name) = &event {
+                println!("    anchor metadata: &{name} (ID {id})");
+            }
             continue;
         };
 
@@ -234,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     walk(
         "Aliases are nodes, including keys and self-references",
         "original: &key name\n*key : value\nloop: &loop [*loop]\n",
-        Options::default(),
+        granit_parser::options! { emit_anchor_events: true },
         &[
             ("block mapping", Root, 0),
             ("original", MappingKey, 1),

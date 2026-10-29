@@ -111,9 +111,32 @@ pub enum Event<'input> {
     /// ends.
     DocumentEnd,
     /// A resolved YAML alias.
+    ///
+    /// The companion [`Span`] covers the complete `*name` token, preserving the original name
+    /// through its source range. With [`Options::emit_anchor_events`], [`Self::Anchor`] connects
+    /// the target ID to its definition's name and source range.
     Alias(
         /// The anchor ID the alias refers to.
         usize,
+    ),
+    /// Metadata for an anchor definition on the immediately preceding node event.
+    ///
+    /// Emitted only when [`Options::emit_anchor_events`] is `true`, immediately after the
+    /// anchored [`Self::Scalar`], [`Self::SequenceStart`], or [`Self::MappingStart`], before any
+    /// collection children. This is presentation metadata, not an additional YAML node.
+    /// The companion [`Span`] covers the complete `&name` token, whose source position precedes
+    /// the node content. Comments between properties and content can precede the node event.
+    /// Emitting the node first ensures that a failure before its event is emitted cannot leave
+    /// anchor metadata without an associated node event, even during document recovery.
+    ///
+    /// Repeated names receive distinct IDs; aliases refer to the most recent preceding
+    /// definition in the same document. IDs match those on node and [`Self::Alias`] events,
+    /// including when [`Parser::set_anchor_offset`] is used.
+    Anchor(
+        /// The assigned internal anchor ID.
+        usize,
+        /// The original anchor name, without the leading `&`.
+        Cow<'input, str>,
     ),
     /// An alias without a preceding anchor definition in its document.
     ///
@@ -430,15 +453,19 @@ impl<'input> Event<'input> {
     /// Return the anchor ID defined by this event, if any.
     ///
     /// Returns `Some(id)` when this event defines an anchor on a scalar, sequence, or mapping
-    /// node. Returns `None` for all other events, including resolved and unresolved aliases
+    /// node, or describes that definition with [`Self::Anchor`]. The reserved ID `0` returns
+    /// `None`. Returns `None` for all other events, including resolved and unresolved aliases
     /// (which reference anchors rather than defining them; use [`Self::alias_id`] to obtain a
     /// resolved target anchor ID).
+    /// To count anchored nodes once, also require [`Self::is_node`], since [`Self::Anchor`]
+    /// repeats the node's ID.
     #[must_use]
     pub fn anchor_id(&self) -> Option<usize> {
         match self {
             Self::Scalar(_, _, anchor_id, _)
             | Self::SequenceStart(_, anchor_id, _)
             | Self::MappingStart(_, anchor_id, _)
+            | Self::Anchor(anchor_id, _)
                 if *anchor_id != 0 =>
             {
                 Some(*anchor_id)
@@ -489,7 +516,7 @@ impl<'input> Event<'input> {
     ///
     /// Returns `true` for scalars, collection starts, and resolved or unresolved aliases, all of
     /// which occupy a node position. Returns `false` for structural events such as `StreamStart`,
-    /// `DocumentStart`, collection ends, etc.
+    /// `DocumentStart`, collection ends, and presentation metadata such as [`Self::Anchor`].
     #[must_use]
     pub fn is_node(&self) -> bool {
         matches!(
@@ -520,6 +547,15 @@ impl<'input> Event<'input> {
     }
 }
 
+/// Anchor metadata retained until its node event has been returned, including through comments.
+#[derive(Debug)]
+struct PendingAnchor<'input> {
+    id: usize,
+    name: Cow<'input, str>,
+    span: Span,
+    node_emitted: bool,
+}
+
 /// A YAML parser.
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)] // Independent parsing policies and state flags.
@@ -528,6 +564,10 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     scanner: Scanner<'input, T>,
     /// Whether unknown anchors produce unresolved alias nodes instead of terminal errors.
     emit_unresolved_aliases: bool,
+    /// Whether anchor definition metadata is emitted after the associated node event.
+    emit_anchor_events: bool,
+    /// The anchor token waiting for its node, or ready to emit immediately after that node.
+    pending_anchor: Option<PendingAnchor<'input>>,
     /// Maximum number of comments retained while resolving an ambiguous collection entry.
     #[cfg(feature = "comments")]
     max_buffered_comment_events: usize,
@@ -566,8 +606,9 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// itself).
     pending_key_indent: Option<usize>,
     /// Pending anchor ID to attach to a node after an intervening comment.
+    /// `Some(0)` retains an anchor property when the anchor offset is zero.
     #[cfg(feature = "comments")]
-    pending_node_anchor_id: usize,
+    pending_node_anchor_id: Option<usize>,
     /// Pending tag to attach to a node after an intervening comment.
     #[cfg(feature = "comments")]
     pending_node_tag: Option<Cow<'input, Tag>>,
@@ -579,9 +620,9 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     pending_node_property_end: Option<Marker>,
     /// Pending empty scalar span captured before an intervening comment.
     pending_empty_scalar_span: Option<Span>,
-    /// End marker of the most recently produced non-comment event.
+    /// End marker of the most recently produced non-metadata event.
     ///
-    /// Synthetic syntax events use this marker, so presentation-only comments must not affect it.
+    /// Synthetic syntax events use this marker, so presentation metadata must not affect it.
     last_non_comment_event_end: Option<Marker>,
     /// Pending YAML version captured before comments preceding an explicit document start.
     #[cfg(feature = "comments")]
@@ -640,8 +681,11 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
 ///
 /// In a mapping, key-values are sent as consecutive data events. Comments can appear in the raw
 /// event stream between a key and its value; they are presentation metadata, not YAML data nodes.
-/// Consumers building YAML data trees should ignore `Event::Comment`. Any key/value alternation
-/// shortcut applies only after filtering out comments and other presentation metadata. After that
+/// Consumers building YAML data trees should ignore `Event::Comment` and [`Event::Anchor`].
+/// With [`Options::emit_anchor_events`], anchor metadata immediately follows its scalar or
+/// collection-start event and carries the same ID plus the original name and anchor-token span.
+/// Any key/value alternation shortcut applies only after filtering out comments and other
+/// presentation metadata. After that
 /// filtering, the first event after an [`Event::MappingStart`] will be the key, and the following
 /// event will be its value. If the mapping contains no sub-mapping or sub-sequence, then even events
 /// (starting from 0) will always be keys and odd ones will always be values. The mapping ends when
@@ -1017,11 +1061,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let max_buffered_comment_events = options.max_buffered_comment_events;
         let block_nesting_limit = options.block_nesting_limit;
         let emit_unresolved_aliases = options.emit_unresolved_aliases;
+        let emit_anchor_events = options.emit_anchor_events;
         let scanner = Scanner::with_options(src, options);
 
         Parser {
             scanner,
             emit_unresolved_aliases,
+            emit_anchor_events,
+            pending_anchor: None,
             #[cfg(feature = "comments")]
             max_buffered_comment_events,
             block_nesting_limit,
@@ -1038,7 +1085,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
             pending_key_indent: None,
             #[cfg(feature = "comments")]
-            pending_node_anchor_id: 0,
+            pending_node_anchor_id: None,
             #[cfg(feature = "comments")]
             pending_node_tag: None,
             #[cfg(feature = "comments")]
@@ -1223,6 +1270,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         let result = self.scanner.proceed_next_document(self.token.take());
         self.current = None;
         self.current_error = None;
+        self.pending_anchor = None;
         if let Err(error) = result {
             self.stream_end_emitted = true;
             return Err(error);
@@ -1238,7 +1286,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         {
             self.deferred_error = None;
             self.queued_events.clear();
-            self.pending_node_anchor_id = 0;
+            self.pending_node_anchor_id = None;
             self.pending_node_tag = None;
             self.pending_node_tag_span = None;
             self.pending_node_property_end = None;
@@ -1275,6 +1323,17 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         'input: 'a,
     {
         let event = match self.current.take() {
+            None if self
+                .pending_anchor
+                .as_ref()
+                .is_some_and(|anchor| anchor.node_emitted) =>
+            {
+                let anchor = self
+                    .pending_anchor
+                    .take()
+                    .expect("anchor metadata is ready");
+                Ok((Event::Anchor(anchor.id, anchor.name), anchor.span))
+            }
             None => {
                 #[cfg(feature = "comments")]
                 {
@@ -1297,6 +1356,18 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             Some(v) => Ok(v),
         }?;
+
+        // A node can be buffered behind comments. Wait until that exact node reaches the public
+        // event stream before emitting its metadata, ahead of any further comments or children.
+        if let Some(anchor) = &mut self.pending_anchor {
+            anchor.node_emitted |= matches!(
+                &event.0,
+                Event::Scalar(_, _, id, _)
+                    | Event::SequenceStart(_, id, _)
+                    | Event::MappingStart(_, id, _)
+                    if *id == anchor.id
+            );
+        }
 
         Ok(self.remember_non_comment_event_end(event))
     }
@@ -1331,6 +1402,9 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         &mut self,
         (event, span): (Event<'a>, Span),
     ) -> (Event<'a>, Span) {
+        if matches!(event, Event::Anchor(..)) {
+            return (event, span);
+        }
         #[cfg(feature = "comments")]
         if matches!(event, Event::Comment(..)) {
             return (event, span);
@@ -2044,6 +2118,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             .anchor_id_count
             .checked_add(1)
             .ok_or_else(|| ScanError::from_kind(mark.start, ErrorKind::AnchorCountOverflow))?;
+        if self.emit_anchor_events {
+            debug_assert!(self.pending_anchor.is_none());
+            self.pending_anchor = Some(PendingAnchor {
+                id: new_id,
+                name: name.clone(),
+                span: *mark,
+                node_emitted: false,
+            });
+        }
         self.anchors.insert(name, new_id);
         Ok(new_id)
     }
@@ -2051,7 +2134,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     #[cfg(feature = "comments")]
     fn save_pending_node_properties(
         &mut self,
-        anchor_id: usize,
+        anchor_id: Option<usize>,
         tag: Option<Cow<'input, Tag>>,
         tag_span: Option<(Marker, u32)>,
         property_end: Option<Marker>,
@@ -2082,15 +2165,15 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         #[cfg(feature = "comments")]
         let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (
-            core::mem::take(&mut self.pending_node_anchor_id),
+            self.pending_node_anchor_id.take(),
             self.pending_node_tag.take(),
             self.pending_node_tag_span.take(),
             self.pending_node_property_end.take(),
         );
         #[cfg(not(feature = "comments"))]
-        let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (0, None, None, None);
+        let (mut anchor_id, mut tag, mut tag_span, mut property_end) = (None, None, None, None);
         match *self.peek_token()? {
-            QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id == 0 && tag.is_none() => {
+            QueuedToken(_, QueuedTokenType::Alias(_)) if anchor_id.is_none() && tag.is_none() => {
                 self.pop_state();
                 let QueuedToken(span, QueuedTokenType::Alias(name)) = self.fetch_token() else {
                     unreachable!("alias token disappeared after peek")
@@ -2103,11 +2186,11 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Some(id) => Ok((Event::Alias(*id), span)),
                 };
             }
-            QueuedToken(_, QueuedTokenType::Anchor(_)) if anchor_id == 0 => {
+            QueuedToken(_, QueuedTokenType::Anchor(_)) if anchor_id.is_none() => {
                 let QueuedToken(span, QueuedTokenType::Anchor(name)) = self.fetch_token() else {
                     unreachable!("anchor token disappeared after peek")
                 };
-                anchor_id = self.register_anchor(name, &span)?;
+                anchor_id = Some(self.register_anchor(name, &span)?);
                 property_end = Some(span.end);
                 if tag.is_none() && matches!(self.peek_token()?.1, QueuedTokenType::Tag(..)) {
                     let QueuedToken(tag_mark, QueuedTokenType::Tag(handle, suffix)) =
@@ -2132,13 +2215,13 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 tag_span = Some((mark.start, u32::try_from(mark.len()).unwrap_or(0)));
                 property_end = Some(mark.end);
                 tag = Some(self.resolve_tag(mark, &handle, suffix)?);
-                if anchor_id == 0 {
+                if anchor_id.is_none() {
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
                         else {
                             unreachable!("anchor token disappeared after peek")
                         };
-                        anchor_id = self.register_anchor(name, &mark)?;
+                        anchor_id = Some(self.register_anchor(name, &mark)?);
                         property_end = Some(mark.end);
                     }
                 }
@@ -2150,6 +2233,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             }
             _ => {}
         }
+        let has_anchor = anchor_id.is_some();
+        let anchor_id = anchor_id.unwrap_or(0);
         match *self.peek_token()? {
             QueuedToken(mark, QueuedTokenType::BlockEntry) if indentless_sequence => {
                 self.start_block_collection(mark.start)?;
@@ -2257,7 +2342,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 ))
             }
             // ex 7.2, an empty scalar can follow a secondary tag
-            QueuedToken(mark, _) if tag.is_some() || anchor_id > 0 => {
+            QueuedToken(mark, _) if tag.is_some() || has_anchor => {
                 self.pop_state();
                 let span = property_end.map_or_else(|| Span::empty(mark.start), Span::empty);
                 Ok(Self::attach_tag_span(
