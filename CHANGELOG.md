@@ -1,6 +1,8 @@
 # Changelog
 
-## 2.1.0 (unreleased)
+## 2.1.0
+
+**Support user cases**
 
 - Add `Span::tag_span()` for the complete raw explicit-tag token range on parser node events
   (we only had tag start but no end).
@@ -20,11 +22,13 @@
   error and termination. Add `Event::is_alias()` for recognizing resolved and unresolved aliases.
 - Add option `disallow_directives`. Projects like `morphir` disallow all directives and write the
   code around to enforce this. Directives are allowed by default.
+
+**Fixed**
+
 - Fix a panic when a parser is used again after `Parser::load` or `Parser::try_load` returned a
   scan error. The error could interrupt the transition into an indentless sequence entry, as with
   the input `":\n- !%"`. A later `load` also no longer re-emits `StreamEnd` after an error raised
   at the end of the stream, such as `ExpectedDocumentStart` for a directive-only document.
- 
 
 ## 2.0.0 (breaking changes)
 
