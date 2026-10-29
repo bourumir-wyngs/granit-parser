@@ -28,6 +28,8 @@ exclude = [
   "/tests/fuzz_targets.rs",
   # We don't need the documents either.
   "/documents",
+  # Codspeed is internal tool
+  "/tools/codspeed"
 ]
 
 [features]
