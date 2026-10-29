@@ -29,6 +29,7 @@
   scan error. The error could interrupt the transition into an indentless sequence entry, as with
   the input `":\n- !%"`. A later `load` also no longer re-emits `StreamEnd` after an error raised
   at the end of the stream, such as `ExpectedDocumentStart` for a directive-only document.
+- MSRV check is restricted to library only (tools are no longer included). 
 
 ## 2.0.0 (breaking changes)
 
