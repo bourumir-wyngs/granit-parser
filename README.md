@@ -29,6 +29,7 @@ Its primary goals are:
 * [`Comment`](https://docs.rs/granit-parser/latest/granit_parser/struct.Comment.html) support and [`StructureStyle`](https://docs.rs/granit-parser/latest/granit_parser/enum.StructureStyle.html) information. This is for linting, formatting, and analysis.
 * compliance with the [yaml-test-suite](https://github.com/yaml/yaml-test-suite), including correctness in edge cases
 * compatibility with real-world YAML usage
+* improved support for formatting, linting, syntax highlight and other comparable projects that need additional metadata  
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
 `granit-parser` 1.0 stabilizes the public API after the experimental 0.0.x releases. The 1.0

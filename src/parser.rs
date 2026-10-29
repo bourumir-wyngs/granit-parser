@@ -119,7 +119,7 @@ pub enum Event<'input> {
         /// The anchor ID the alias refers to.
         usize,
     ),
-    /// Metadata for an anchor definition on the immediately preceding node event.
+    /// Metadata for an anchor definition on the immediately preceding node in its parser's stream.
     ///
     /// Emitted only when [`Options::emit_anchor_events`] is `true`, immediately after the
     /// anchored [`Self::Scalar`], [`Self::SequenceStart`], or [`Self::MappingStart`], before any
@@ -128,6 +128,9 @@ pub enum Event<'input> {
     /// the node content. Comments between properties and content can precede the node event.
     /// Emitting the node first ensures that a failure before its event is emitted cannot leave
     /// anchor metadata without an associated node event, even during document recovery.
+    ///
+    /// This adjacency guarantee applies to an individual [`Parser`]. See [`crate::ParserStack`]
+    /// for ordering when sources are interleaved.
     ///
     /// Repeated names receive distinct IDs; aliases refer to the most recent preceding
     /// definition in the same document. IDs match those on node and [`Self::Alias`] events,

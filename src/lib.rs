@@ -67,6 +67,9 @@
 //! the node content even though the event follows the node. Emission defaults to `false`, leaving
 //! existing event streams unchanged.
 //!
+//! The adjacency guarantee applies within each [`Parser`]. With [`ParserStack`], consume pending
+//! anchor metadata before pushing another source if relying on adjacency in the combined stream.
+//!
 //! Resolved [`Event::Alias`] events carry the target ID and a complete `*name` token span. An
 //! unresolved alias can instead be exposed through [`Options::emit_unresolved_aliases`]. Explicit
 //! tags remain on node events; [`Span::tag_span`] preserves their complete raw token, including
