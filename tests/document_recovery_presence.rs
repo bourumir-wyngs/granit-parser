@@ -258,7 +258,7 @@ fn pending_header_probe_keeps_source_failures_terminal() {
     let mut events = Events::default();
     parser.load(&mut events, true).unwrap();
     parser.try_load(&mut events, true).unwrap();
-    assert!(events.0.is_empty());
+    assert_eq!(events.0, []);
     assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
 }
 
