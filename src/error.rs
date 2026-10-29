@@ -139,7 +139,7 @@ impl core::error::Error for InputIoError {
 #[derive(Clone, PartialEq, Debug, Eq, Hash)]
 #[non_exhaustive]
 pub enum ErrorKind {
-    /// Too many consecutive comments were buffered before a collection entry.
+    /// Too many comments were buffered while looking ahead to a collection entry or document.
     #[cfg(feature = "comments")]
     TooManyComments,
     /// Reading from the input source failed.
@@ -363,7 +363,7 @@ impl fmt::Display for ErrorKind {
         match self {
             #[cfg(feature = "comments")]
             Self::TooManyComments => {
-                f.write_str("too many consecutive comments before resolving collection entry")
+                f.write_str("too many buffered comments while looking ahead")
             }
             Self::InputIo { error } => write!(f, "input I/O error: {error}"),
             Self::InputDecoding { message } => {

@@ -120,7 +120,9 @@ fn main() -> Result<(), ScanError> {
             Err(error) => {
                 report_error(&error);
                 diagnostics += 1;
-                parser.proceed_next_document()?;
+                if !parser.proceed_next_document()? {
+                    break;
+                }
             }
         }
     }

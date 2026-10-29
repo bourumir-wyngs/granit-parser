@@ -1174,6 +1174,12 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// skips the first document. Immediately after [`Event::DocumentEnd`] it leaves the next
     /// document ready to read. Repeated calls skip successive documents.
     ///
+    /// Returns `true` when another document remains, including an empty or malformed document,
+    /// and `false` at clean EOF. This looks past inter-document comments and end markers without
+    /// consuming the next document's events. Comments inspected by this lookahead are buffered
+    /// for subsequent reads; with comment emission enabled, the configured comment-buffer limit
+    /// applies. Syntax errors encountered in the next document remain available to normal parsing.
+    ///
     /// Read subsequent events using the usual parser methods. They start with the next
     /// [`Event::DocumentStart`] (possibly preceded by comments), or [`Event::StreamEnd`] if no
     /// document remains. An already consumed stream end stays exhausted. This method does not
@@ -1206,7 +1212,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// let error = parser.by_ref().find_map(Result::err).unwrap();
     /// assert!(parser.next().is_none());
     /// // Record the diagnostic and abandon any open nodes in the consumer's partial tree.
-    /// parser.proceed_next_document()?;
+    /// assert!(parser.proceed_next_document()?);
     /// assert!(matches!(parser.next().unwrap()?.0, Event::DocumentStart(true, _)));
     /// let rest = parser.collect::<Result<Vec<_>, _>>()?;
     /// assert!(rest.iter().any(|(event, _)| event.scalar().is_some_and(|(v, _)| v == "healthy")));
@@ -1217,12 +1223,40 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     /// # Errors
     /// Returns a source failure (including I/O, decoding, or cancellation errors supplied by the
     /// input). Source failures cannot be recovered and leave the parser exhausted.
-    pub fn proceed_next_document(&mut self) -> Result<(), ScanError> {
+    /// With comment emission enabled, also returns `ErrorKind::TooManyComments` if looking ahead
+    /// would exceed the comment-buffer limit; parsing then stays exhausted until recovery is
+    /// requested again.
+    pub fn proceed_next_document(&mut self) -> Result<bool, ScanError> {
         // A consumed StreamEnd stays exhausted. A terminal error still needs recovery below.
         if self.stream_end_emitted && !self.failed {
-            return Ok(());
+            return Ok(false);
         }
 
+        self.skip_document()?;
+        let result = self.next_document_exists();
+        match result {
+            Ok(false) => {
+                // Stay between documents so repeated calls preserve unread trailing comments
+                // as well as StreamEnd instead of consuming them in the skip loop.
+                self.at_document_end = true;
+            }
+            Err(_) => {
+                self.current = None;
+                self.current_error = None;
+                #[cfg(feature = "comments")]
+                {
+                    self.queued_events.clear();
+                    self.deferred_error = None;
+                }
+                self.failed = true;
+                self.stream_end_emitted = true;
+            }
+            Ok(true) => {}
+        }
+        result
+    }
+
+    fn skip_document(&mut self) -> Result<(), ScanError> {
         loop {
             if !self.failed {
                 if self.at_document_end {
@@ -1266,6 +1300,50 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 return Ok(());
             }
             // This opening marker belongs to the failed header. Loop to skip its body too.
+        }
+    }
+
+    /// Probe only the next document's prefix, retaining comments and any syntax error for readers.
+    fn next_document_exists(&mut self) -> Result<bool, ScanError> {
+        if matches!(self.current, Some((Event::StreamEnd, _))) {
+            return Ok(false);
+        }
+
+        loop {
+            let token = match self.peek_token() {
+                Ok(token) => token,
+                Err(error) => {
+                    // Source failures can carry any ErrorKind. Consult the scanner's source
+                    // latch rather than classifying the error by its kind.
+                    self.scanner.check_source_error()?;
+                    #[cfg(feature = "comments")]
+                    {
+                        self.deferred_error = Some(error);
+                    }
+                    #[cfg(not(feature = "comments"))]
+                    {
+                        self.current_error = Some(error);
+                        self.failed = true;
+                    }
+                    return Ok(true);
+                }
+            };
+            match token.1 {
+                QueuedTokenType::StreamEnd => return Ok(false),
+                QueuedTokenType::DocumentEnd => self.skip(),
+                #[cfg(feature = "comments")]
+                QueuedTokenType::Comment(_) => {
+                    let mark = token.0.start;
+                    if self.queued_events.len() >= self.max_buffered_comment_events {
+                        return Err(ScanError::from_kind(mark, ErrorKind::TooManyComments));
+                    }
+                    let comment = self
+                        .next_comment_event()?
+                        .expect("comment token disappeared after peek");
+                    self.queued_events.push_back(comment);
+                }
+                _ => return Ok(true),
+            }
         }
     }
 

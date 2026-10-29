@@ -54,8 +54,12 @@ Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https
 
 For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
 syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
-error, then continue reading events normally: the parser reports the next document or `StreamEnd`
-with original source positions. It also skips the current document during successful parsing.
+error, then continue reading events normally with original source positions. Its
+`Result<bool, ScanError>` is `Ok(true)` when another document remains (including an empty or malformed
+document), and `Ok(false)` at clean EOF. Pending comments and an unread `StreamEnd` remain available
+through normal event reads. Looking ahead past comments respects `Options::max_buffered_comment_events`
+and can return `ErrorKind::TooManyComments` when comment emission is enabled.
+It also skips the current document during successful parsing.
 Consumers must abandon or mark their unfinished tree nodes; recovery emits no synthetic closing
 events or error nodes. Anchors remain scoped to their document, and source failures remain terminal.
 This recovers later documents, not structure within the broken document.

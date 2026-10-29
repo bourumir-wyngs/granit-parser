@@ -97,7 +97,7 @@ pub struct Options {
     )]
     pub emit_comments: bool,
     /// Maximum number of consecutive comment events buffered while resolving an ambiguous
-    /// collection entry.
+    /// collection entry or looking for the next document during recovery.
     ///
     /// The default is 96. A value of zero rejects the first comment that would need buffering.
     /// This option is available only with the `comments` Cargo feature.
