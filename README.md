@@ -61,7 +61,7 @@ events or error nodes. Anchors remain scoped to their document, and source failu
 This recovers later documents, not structure within the broken document.
 
 ```rust
-use granit_parser::Parser;
+use granit_parser::{options, Event, Parser};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = r#"
@@ -80,10 +80,35 @@ locations: # Example with composite keys
 
 # JSON-style \uXXXX surrogate pairs:
 music: "\uD834\uDD1E\uD83C\uDFB5\uD83C\uDFB6"
+
+favorite: &favorite bread
+order: *favorite
+unavailable: *missing
+dessert: cake
 "#;
 
-    for next in Parser::new_from_str(yaml) {
+    let options = options! {
+        // Must be enabled in Options to receive anchor names and token spans (default: false).
+        emit_anchor_events: true,
+        // Must be enabled in Options to report undefined anchors and continue (default: false).
+        emit_unresolved_aliases: true,
+    };
+
+    for next in Parser::new_from_str_with_options(yaml, options) {
         let (event, span) = next?;
+
+        match &event {
+            Event::Anchor(id, name) => {
+                // Metadata for the preceding node, with a span covering the &name token.
+                println!("anchor: id={id} name={name:?}");
+            }
+            Event::Alias(id) => println!("alias: target id={id}"),
+            Event::UnresolvedAlias(name) => {
+                // Still an invalid reference, with a span covering the *name token.
+                println!("undefined anchor: {name:?}");
+            }
+            _ => {}
+        }
 
         if let Some(tag) = event.tag() {
             let tag_start = span
@@ -149,9 +174,21 @@ Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(266..302) sour
 MappingEnd bytes=Some(303..303) source=Some("")
 Scalar("music", Plain, 0, None) bytes=Some(303..308) source=Some("music")
 Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-MappingEnd bytes=Some(349..349) source=Some("")
-DocumentEnd bytes=Some(349..349) source=Some("")
-StreamEnd bytes=Some(349..349) source=Some("")
+Scalar("favorite", Plain, 0, None) bytes=Some(350..358) source=Some("favorite")
+Scalar("bread", Plain, 1, None) bytes=Some(370..375) source=Some("bread")
+anchor: id=1 name="favorite"
+Anchor(1, "favorite") bytes=Some(360..369) source=Some("&favorite")
+Scalar("order", Plain, 0, None) bytes=Some(376..381) source=Some("order")
+alias: target id=1
+Alias(1) bytes=Some(383..392) source=Some("*favorite")
+Scalar("unavailable", Plain, 0, None) bytes=Some(393..404) source=Some("unavailable")
+undefined anchor: "missing"
+UnresolvedAlias("missing") bytes=Some(406..414) source=Some("*missing")
+Scalar("dessert", Plain, 0, None) bytes=Some(415..422) source=Some("dessert")
+Scalar("cake", Plain, 0, None) bytes=Some(424..428) source=Some("cake")
+MappingEnd bytes=Some(429..429) source=Some("")
+DocumentEnd bytes=Some(429..429) source=Some("")
+StreamEnd bytes=Some(429..429) source=Some("")
 ```
 
 ## Learning examples
