@@ -74,7 +74,8 @@ pub struct Options {
     /// scalar or collection start is immediately followed by [`crate::Event::Anchor`] carrying
     /// the assigned ID and original name (without `&`). Its companion span covers the complete
     /// `&name` token. Collection anchors are emitted before their children, including aliases
-    /// referring to the collection itself.
+    /// referring to the collection itself. This adjacency guarantee applies to each
+    /// [`crate::Parser`]; see [`crate::ParserStack`] for ordering across stack pushes.
     ///
     /// The node event comes first so the parser never emits anchor metadata for a node that
     /// failed before its event could be emitted, including when recovering to the next document.

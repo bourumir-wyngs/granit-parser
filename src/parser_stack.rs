@@ -156,6 +156,13 @@ where
 /// `comments` Cargo feature, this includes comment events unless emission is disabled through
 /// [`ParserStack::with_options`]. Without the feature, comment events and their continuation state
 /// are absent.
+///
+/// Anchor metadata is passed through from parsers that enable it. Each [`Parser`] emits
+/// [`Event::Anchor`] immediately after its anchored node. Pushing another parser between
+/// consuming that node and consuming its metadata can insert events between them in the
+/// combined stream. If relying on adjacency, consume any pending anchor metadata before
+/// calling [`Self::push_include`] or another push method.
+///
 /// Included [`Span`] values remain local to the included source, just like every other event span
 /// from an included parser. `ParserStack` does not attach file names, source IDs, or other include
 /// provenance to events or spans. Errors do retain the nested source names through
