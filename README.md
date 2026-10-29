@@ -313,7 +313,8 @@ These are breaking API changes intended for the next major release.
 
 ### Error handling without grepping message text
   
-  Granit-parser uses the [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) enum to encode the error kind, and this enum may carry additional metadata. This is useful when messages need to be translated (built-in messages are English), or when the using code needs to handle some error specifically without greping for message text.
+Granit-parser uses the [`ErrorKind`](https://docs.rs/granit-parser/latest/granit_parser/enum.ErrorKind.html) enum to encode the error kind, and this enum may carry additional metadata. 
+Scanning the English message text for specific substrings is fragile and better to be avoided. See example [tooling_diagnostics.rs](https://github.com/bourumir-wyngs/granit-parser/blob/master/examples/tooling_diagnostics.rs).
 
 ### Fallible streaming input
 
@@ -375,6 +376,13 @@ The following ergonomic helpers are available:
 - `ParserStack::push_include`
 
 See CHANGELOG.md for details.
+
+### Restartable parsing
+
+Some use cases require parsing to continue after an error. `granit-parser` supports continuing past unresolved
+aliases (see [`Event::UnresolvedAlias`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.UnresolvedAlias)), 
+and continuing with the next document after a document error using
+[`Parser::proceed_next_document`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.proceed_next_document).
 
 ### Unsupported features
 YAML 1.1 line breaks. YAML 1.1 defines NEL (U+0085), LS (U+2028) and PS (U+2029) as line breaks, this parser
