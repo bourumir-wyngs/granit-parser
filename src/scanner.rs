@@ -1790,7 +1790,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Source failures cannot be recovered by discarding YAML syntax.
-    fn check_source_error(&mut self) -> ScanResult {
+    pub(crate) fn check_source_error(&mut self) -> ScanResult {
         if let Some(kind) = self.input.take_source_error() {
             self.source_error
                 .get_or_insert_with(|| ScanError::from_kind(self.mark, kind));

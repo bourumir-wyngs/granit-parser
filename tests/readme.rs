@@ -1,4 +1,4 @@
-use granit_parser::{Parser, ScanError};
+use granit_parser::{options, Event, Parser, ScanError};
 
 const README: &str = include_str!("../README.md");
 
@@ -25,9 +25,24 @@ fn extract_expected_output(section: &str) -> &str {
 
 fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
     let mut lines = Vec::new();
+    let options = options! {
+        emit_anchor_events: true,
+        emit_unresolved_aliases: true,
+    };
 
-    for next in Parser::new_from_str(yaml) {
+    for next in Parser::new_from_str_with_options(yaml, options) {
         let (event, span) = next?;
+
+        match &event {
+            Event::Anchor(id, name) => {
+                lines.push(format!("anchor: id={id} name={name:?}"));
+            }
+            Event::Alias(id) => lines.push(format!("alias: target id={id}")),
+            Event::UnresolvedAlias(name) => {
+                lines.push(format!("undefined anchor: {name:?}"));
+            }
+            _ => {}
+        }
 
         if let Some(tag) = event.tag() {
             let tag_start = span

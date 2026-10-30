@@ -17,10 +17,12 @@
 - Deprecate `Span::with_tag_start`, retaining it for compatibility. Use `Span::tag_span()` on
   parser-emitted spans to obtain complete tag-token ranges.
 - Add `Parser::proceed_next_document()` for explicit document-boundary recovery after a syntax
-  error or skipping the remainder of a document. Parsing resumes at the next document with original
-  source positions, or emits `StreamEnd`. Abandoned collections and document-scoped state are
-  discarded without synthetic closing events. Source failures remain terminal; ordinary parsing
-  remains fail-fast unless recovery is requested.
+  error or skipping the remainder of a document. It returns `Result<bool, ScanError>`: `true` when
+  another document remains, without guaranteeing its validity, and `false` at clean EOF. Pending
+  comments and an unread `StreamEnd` remain available with original source positions. Comment
+  lookahead respects the configured buffer limit and can return `TooManyComments`. Abandoned
+  collections and document-scoped state are discarded without synthetic closing events. Source
+  failures remain terminal; ordinary parsing remains fail-fast unless recovery is requested.
 - Clarify in documentation and emphasize in tests that `Parser::new_from_str` supplies byte offsets for every event span.
 - Add boolean option `emit_unresolved_aliases` (default `false`). When enabled, unknown anchors
   produce `Event::UnresolvedAlias(name)` with the alias token's span and structural parsing
