@@ -37,11 +37,12 @@ cargo +stable codspeed run
 The CodSpeed workflow runs these commands on stable Rust. The root CI and release
 checks verify the library with Rust 1.81.
 
-The suite has 25 cases with default features (24 without comments). The original
+The suite has 29 cases with default features (28 without comments). The original
 configuration, collection and nesting benchmarks retain their names and inputs.
 [Scalar and comment cases](codspeed/benches/parser/scalar_and_comment_paths.rs)
 cover inline comments, empty-node ordering, common tags, multiline quotes,
-chomping, long iterator-backed block lines, and literal ASCII/CJK/emoji quotes.
+chomping, long iterator-backed block lines, literal ASCII/CJK/emoji quotes,
+Latin/Cyrillic/mixed-script words, and emoji separated by spaces.
 Input generation happens outside measurement; every parser event is consumed.
 
 Run only those cases with:

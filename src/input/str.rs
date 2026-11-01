@@ -521,18 +521,27 @@ impl Input for StrInput<'_> {
             return (chunk, chunk.len());
         }
 
-        let quote = if single { '\'' } else { '"' };
+        let quote = if single { b'\'' } else { b'"' };
+        let bytes = self.buffer.as_bytes();
         let mut end = 0;
         let mut count = 0;
-        for (offset, character) in self.buffer.char_indices() {
-            if crate::char_traits::is_blank_or_breakz(character)
-                || !crate::char_traits::is_printable(character)
-                || character == quote
-                || (!single && character == '\\')
-            {
-                break;
+        while end < bytes.len() {
+            let byte = bytes[end];
+            if byte.is_ascii() {
+                // ASCII tails use the same byte predicate as the ASCII-led fast path.
+                if !(b'!'..=b'~').contains(&byte) || byte == quote || (!single && byte == b'\\') {
+                    break;
+                }
+                end += 1;
+            } else {
+                // `end` stays on a UTF-8 boundary. YAML blanks, breaks, quotes and
+                // escapes are ASCII, so only printability needs checking here.
+                let character = self.buffer[end..].chars().next().unwrap();
+                if !crate::char_traits::is_printable(character) {
+                    break;
+                }
+                end += character.len_utf8();
             }
-            end = offset + character.len_utf8();
             count += 1;
         }
         let (chunk, remaining) = self.buffer.split_at(end);

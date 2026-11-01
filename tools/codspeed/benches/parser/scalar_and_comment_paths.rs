@@ -125,9 +125,9 @@ fn folded_scalars_from_fallible_iterator(bencher: Bencher, entries: usize) {
     bencher.bench(|| parse_fallible_iter(black_box(&input)));
 }
 
-/// Repeat eight-character text to give every quoted value 1,024 Unicode scalar values.
+/// Repeat text to give every quoted value approximately 1,024 Unicode scalar values.
 fn long_quoted_values(entries: usize, text: &str) -> String {
-    let contents = text.repeat(128);
+    let contents = text.repeat(1024 / text.chars().count());
     let mut input = String::new();
     for i in 0..entries {
         let quote = if i % 2 == 0 { '"' } else { '\'' };
@@ -152,5 +152,31 @@ fn long_quoted_cjk_scalars(bencher: Bencher, entries: usize) {
 #[divan::bench(args = [128])]
 fn long_quoted_emoji_scalars(bencher: Bencher, entries: usize) {
     let input = long_quoted_values(entries, "😀🎉🚀🌍🦀🌈✨🎈");
+    bencher.bench(|| parse_str(black_box(&input)));
+}
+
+// Short words exercise transitions between Unicode, ASCII tails, and whitespace.
+// Long uninterrupted Unicode runs alone do not expose the cost of those boundaries.
+#[divan::bench(args = [128])]
+fn quoted_latin_words(bencher: Bencher, entries: usize) {
+    let input = long_quoted_values(entries, "Zürich café naïve façade mañana ");
+    bencher.bench(|| parse_str(black_box(&input)));
+}
+
+#[divan::bench(args = [128])]
+fn quoted_cyrillic_words(bencher: Bencher, entries: usize) {
+    let input = long_quoted_values(entries, "Москва Санкт-Петербург Привет мир ");
+    bencher.bench(|| parse_str(black_box(&input)));
+}
+
+#[divan::bench(args = [128])]
+fn quoted_mixed_script_words(bencher: Bencher, entries: usize) {
+    let input = long_quoted_values(entries, "Zürich 東京code Москваdata 🦀rust ");
+    bencher.bench(|| parse_str(black_box(&input)));
+}
+
+#[divan::bench(args = [128])]
+fn quoted_spaced_emoji(bencher: Bencher, entries: usize) {
+    let input = long_quoted_values(entries, "🦀 😀 🚀 🌍 ");
     bencher.bench(|| parse_str(black_box(&input)));
 }
