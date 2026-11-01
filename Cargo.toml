@@ -29,8 +29,7 @@ exclude = [
   # We don't need the documents either.
   "/documents",
   # Benchmarks are internal tools
-  "/tools/codspeed",
-  "/tools/optimization-bench"
+  "/tools/codspeed"
 ]
 
 [features]
