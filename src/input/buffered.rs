@@ -2,6 +2,7 @@ use crate::char_traits::is_breakz;
 use crate::error::ErrorKind;
 use crate::input::{BorrowedInput, Input};
 
+use alloc::string::String;
 use arraydeque::ArrayDeque;
 
 /// The size of the [`BufferedInput`] buffer.
@@ -159,6 +160,41 @@ impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
         }
     }
 
+    fn fetch_block_scalar_line(&mut self, out: &mut String) -> usize {
+        let mut consumed = 0;
+
+        // Drain existing lookahead before reading directly from the iterator. Keep both
+        // real delimiters and EOF padding at the front of the logical stream.
+        while let Some(character) = self.buffer.front().copied() {
+            if is_breakz(character) {
+                self.fill_lookahead();
+                return consumed;
+            }
+            self.pop_buffered();
+            out.push(character);
+            consumed += 1;
+        }
+
+        if !self.source_exhausted {
+            for character in self.input.by_ref() {
+                if is_breakz(character) {
+                    self.buffer.push_back(character).unwrap();
+                    self.real_buffered += 1;
+                    self.fill_lookahead();
+                    return consumed;
+                }
+                out.push(character);
+                consumed += 1;
+            }
+            self.source_exhausted = true;
+        }
+
+        // Restore the active window once for the entire line, including at EOF. A
+        // fallible iterator's first error stays latched in its adapter during this refill.
+        self.fill_lookahead();
+        consumed
+    }
+
     #[inline]
     fn skip(&mut self) {
         self.skip_one();
@@ -282,6 +318,11 @@ impl<T: Iterator<Item = Result<char, ErrorKind>>> Input for FallibleBufferedInpu
     #[inline]
     fn raw_read_non_breakz_ch(&mut self) -> Option<char> {
         self.inner.raw_read_non_breakz_ch()
+    }
+
+    #[inline]
+    fn fetch_block_scalar_line(&mut self, out: &mut String) -> usize {
+        self.inner.fetch_block_scalar_line(out)
     }
 
     #[inline]

@@ -512,6 +512,34 @@ impl Input for StrInput<'_> {
         chunk
     }
 
+    #[inline]
+    fn take_quoted_scalar_chunk(&mut self, single: bool) -> (&str, usize) {
+        // Keep the byte-only fast path for ASCII runs. Unicode runs can also include the
+        // following ASCII text, avoiding repeated scanner and marker updates at boundaries.
+        if self.buffer.as_bytes().first().map_or(true, u8::is_ascii) {
+            let chunk = self.take_quoted_scalar_ascii_chunk(single);
+            return (chunk, chunk.len());
+        }
+
+        let quote = if single { '\'' } else { '"' };
+        let mut end = 0;
+        let mut count = 0;
+        for (offset, character) in self.buffer.char_indices() {
+            if crate::char_traits::is_blank_or_breakz(character)
+                || !crate::char_traits::is_printable(character)
+                || character == quote
+                || (!single && character == '\\')
+            {
+                break;
+            }
+            end = offset + character.len_utf8();
+            count += 1;
+        }
+        let (chunk, remaining) = self.buffer.split_at(end);
+        self.buffer = remaining;
+        (chunk, count)
+    }
+
     fn fetch_plain_scalar_chunk(
         &mut self,
         out: &mut String,

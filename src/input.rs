@@ -757,6 +757,26 @@ pub trait Input {
         ""
     }
 
+    /// Consume an ordinary printable run inside a quoted scalar and return its character count.
+    ///
+    /// Like [`Self::take_quoted_scalar_ascii_chunk`], this optional hook leaves matching quotes,
+    /// double-quoted escapes, ASCII whitespace, and invalid control characters for the scanner.
+    /// It may additionally consume printable non-ASCII characters. The returned count must be
+    /// the number of Unicode scalar values, not bytes. A non-empty slice must exactly match the
+    /// consumed source prefix; an empty slice must consume nothing and have a count of zero.
+    /// Source byte offsets advance by the slice's byte length. No prior lookahead is required,
+    /// buffered characters must not be skipped, and callers refresh lookahead before peeking.
+    ///
+    /// YAML printable characters are tab, LF, CR, U+0020–U+007E, U+0085, U+00A0–U+D7FF,
+    /// U+E000–U+FFFD, and U+10000–U+10FFFF. Tab, LF, CR, and space still end this run so the
+    /// scanner can fold whitespace. U+0085, U+2028, and U+2029 remain ordinary content.
+    /// The default preserves existing ASCII hook overrides and otherwise consumes nothing.
+    #[inline]
+    fn take_quoted_scalar_chunk(&mut self, single: bool) -> (&str, usize) {
+        let chunk = self.take_quoted_scalar_ascii_chunk(single);
+        (chunk, chunk.len())
+    }
+
     /// Fetch a chunk of plain scalar characters.
     ///
     /// This optimization method allows the input to batch process characters.

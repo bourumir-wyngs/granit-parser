@@ -3404,9 +3404,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         let mut string = String::new();
-        let mut leading_break = String::new();
-        let mut trailing_breaks = String::new();
-        let mut chomping_break = String::new();
+        let mut leading_break = false;
+        let mut trailing_breaks = 0;
+        let mut chomping_break = false;
 
         // skip '|' or '>'
         self.skip_non_blank();
@@ -3465,7 +3465,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         if self.input.next_is_break() {
             self.input.lookahead(2);
-            self.read_break(&mut chomping_break);
+            self.skip_break();
+            chomping_break = true;
         }
 
         self.ensure_current_char_is_printable()?;
@@ -3507,9 +3508,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 // With no content lines, the header break is not scalar content.
                 Chomping::Clip => String::new(),
                 // An indented whitespace-only line at EOF is an empty content line.
-                Chomping::Keep if trailing_breaks.is_empty() && self.mark.col > 0 => chomping_break,
+                Chomping::Keep if trailing_breaks == 0 && self.mark.col > 0 => {
+                    if chomping_break {
+                        "\n".into()
+                    } else {
+                        String::new()
+                    }
+                }
                 // Keep actual empty content lines, if any, but not the header break.
-                Chomping::Keep => trailing_breaks,
+                Chomping::Keep => "\n".repeat(trailing_breaks),
             };
 
             return Ok(Token(
@@ -3549,18 +3556,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             // We are at the first content character of a content line.
             trailing_blank = self.input.next_is_blank();
-            if !literal && !leading_break.is_empty() && !leading_blank && !trailing_blank {
-                string.push_str(&trailing_breaks);
-                if trailing_breaks.is_empty() {
+            if !literal && leading_break && !leading_blank && !trailing_blank {
+                string.extend(core::iter::repeat('\n').take(trailing_breaks));
+                if trailing_breaks == 0 {
                     string.push(' ');
                 }
             } else {
-                string.push_str(&leading_break);
-                string.push_str(&trailing_breaks);
+                if leading_break {
+                    string.push('\n');
+                }
+                string.extend(core::iter::repeat('\n').take(trailing_breaks));
             }
 
-            leading_break.clear();
-            trailing_breaks.clear();
+            leading_break = false;
+            trailing_breaks = 0;
 
             leading_blank = self.input.next_is_blank();
 
@@ -3574,7 +3583,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             self.ensure_current_char_is_printable()?;
 
-            self.read_break(&mut leading_break);
+            self.skip_break();
+            leading_break = true;
 
             // Eat the following indentation spaces and line breaks.
             self.skip_block_scalar_indent(indent, &mut trailing_breaks);
@@ -3589,15 +3599,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // we need to consider there is a newline. When that line already ended with a break
             // (`leading_break`), the indentation-only remainder at EOF is not a line (it has no
             // break, so it is no `l-empty`) and adds nothing.
-            if leading_break.is_empty() && self.input.next_is_z() && self.mark.col >= indent.max(1)
-            {
+            if !leading_break && self.input.next_is_z() && self.mark.col >= indent.max(1) {
                 string.push('\n');
             }
-            string.push_str(&leading_break);
+            if leading_break {
+                string.push('\n');
+            }
         }
 
         if chomping == Chomping::Keep {
-            string.push_str(&trailing_breaks);
+            string.extend(core::iter::repeat('\n').take(trailing_breaks));
         }
 
         if let Some(character) = find_non_printable(&string) {
@@ -3630,7 +3641,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 
     /// Skip the block scalar indentation and empty lines.
-    fn skip_block_scalar_indent(&mut self, indent: usize, breaks: &mut String) {
+    fn skip_block_scalar_indent(&mut self, indent: usize, breaks: &mut usize) {
         loop {
             // Consume all spaces. Tabs cannot be used as indentation.
             if indent < self.input.bufmaxlen().saturating_sub(2) {
@@ -3661,7 +3672,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             // If our current line is empty, skip over the break and continue looping.
             if self.input.next_is_break() {
-                self.read_break(breaks);
+                self.skip_break();
+                *breaks += 1;
             } else {
                 // Otherwise, we have a content line. Return control.
                 break;
@@ -3673,7 +3685,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     ///
     /// The function skips over whitespace-only lines and sets `indent` to the longest
     /// whitespace line that was encountered.
-    fn skip_block_scalar_first_line_indent(&mut self, indent: &mut usize, breaks: &mut String) {
+    fn skip_block_scalar_first_line_indent(&mut self, indent: &mut usize, breaks: &mut usize) {
         let mut max_indent = 0;
         loop {
             // Consume all spaces. Tabs cannot be used as indentation.
@@ -3688,7 +3700,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.input.next_is_break() {
                 // If our current line is empty, skip over the break and continue looping.
                 self.input.lookahead(2);
-                self.read_break(breaks);
+                self.skip_break();
+                *breaks += 1;
             } else {
                 // Otherwise, we have a content line. Return control.
                 break;
@@ -3734,10 +3747,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             Some(off) => FlowScalarBuf::new_borrowed(off + self.input.peek().len_utf8()),
             None => FlowScalarBuf::new_owned(),
         };
-
-        // Scratch used to consume the *first* line break in a break run without emitting it.
-        // (The first break folds to ' ' or to nothing depending on escaping rules.)
-        let mut break_scratch = String::new();
 
         /* Eat the left quote. */
         self.skip_non_blank();
@@ -3871,9 +3880,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                             buf.commit_pending_ws();
                         }
 
-                        break_scratch.clear();
-                        self.read_break(&mut break_scratch);
-                        // Keep `break_scratch` content (ignored) until next clear; no need to clear twice.
+                        self.skip_break();
 
                         has_leading_break = true;
                         leading_blanks = true;
@@ -4004,10 +4011,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         ))
     }
 
-    /// Consume a printable ASCII run without per-character buffer and marker updates.
-    fn consume_flow_scalar_ascii_chunk(&mut self, single: bool, buf: &mut FlowScalarBuf) -> bool {
-        let chunk = self.input.take_quoted_scalar_ascii_chunk(single);
-        let consumed = chunk.len();
+    /// Consume a printable run without per-character buffer and marker updates.
+    fn consume_flow_scalar_chunk(&mut self, single: bool, buf: &mut FlowScalarBuf) -> bool {
+        let (chunk, consumed) = self.input.take_quoted_scalar_chunk(single);
         if consumed == 0 {
             return false;
         }
@@ -4017,7 +4023,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             FlowScalarBuf::Borrowed { .. } => buf.commit_pending_ws(),
         }
 
-        // The input already consumed the run; all its characters are ASCII.
+        // The input already consumed the run and counted its Unicode scalar values.
         self.mark.offsets.chars += consumed;
         self.mark.col += consumed;
         self.mark.offsets.bytes = self.input.byte_offset();
@@ -4090,7 +4096,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     string.push(self.resolve_flow_scalar_escape_sequence(start_mark)?);
                 }
                 c => {
-                    if c.is_ascii() && self.consume_flow_scalar_ascii_chunk(single, buf) {
+                    if self.consume_flow_scalar_chunk(single, buf) {
                         self.input.lookahead(2);
                         continue;
                     }
@@ -4557,12 +4563,16 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
         // Tabs after ':' are separation whitespace. Queue any following comment after the
         // Value token; indentation on subsequent lines is checked by `skip_to_next_token`.
-        let mut trailing_tokens = VecDeque::new();
+        let mut trailing_comment = None;
         let mut found_tabs = false;
         if matches!(self.input.look_ch(), ' ' | '\t') {
             let trailing_token_index = self.tokens.len();
             found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
-            trailing_tokens = self.tokens.split_off(trailing_token_index);
+            // Scanning to the end of this line can enqueue at most one comment.
+            debug_assert!(self.tokens.len() <= trailing_token_index + 1);
+            if self.tokens.len() > trailing_token_index {
+                trailing_comment = self.tokens.pop_back();
+            }
         }
 
         if sk.possible {
@@ -4641,7 +4651,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
         self.tokens
             .push_back(Token(Span::empty(start_mark), TokenType::Value).into());
-        self.tokens.append(&mut trailing_tokens);
+        if let Some(comment) = trailing_comment {
+            self.tokens.push_back(comment);
+        }
 
         Ok(())
     }
