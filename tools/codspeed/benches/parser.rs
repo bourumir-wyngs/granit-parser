@@ -10,6 +10,9 @@ use divan::{black_box, Bencher};
 use granit_parser::options;
 use granit_parser::{Event, Parser, Span, SpannedEventReceiver};
 
+#[path = "parser/scalar_and_comment_paths.rs"]
+mod scalar_and_comment_paths;
+
 fn main() {
     divan::main();
 }

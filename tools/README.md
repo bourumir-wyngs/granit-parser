@@ -35,7 +35,26 @@ cargo +stable codspeed run
 ```
 
 The CodSpeed workflow runs these commands on stable Rust. The root CI and release
-checks continue to check all root package targets with Rust 1.81.
+checks verify the library with Rust 1.81.
+
+The suite has 29 cases with default features (28 without comments). The original
+configuration, collection and nesting benchmarks retain their names and inputs.
+[Scalar and comment cases](codspeed/benches/parser/scalar_and_comment_paths.rs)
+cover inline comments, empty-node ordering, common tags, multiline quotes,
+chomping, long iterator-backed block lines, literal ASCII/CJK/emoji quotes,
+Latin/Cyrillic/mixed-script words, and emoji separated by spaces.
+Input generation happens outside measurement; every parser event is consumed.
+
+Run only those cases with:
+
+```sh
+cargo +stable bench --manifest-path tools/codspeed/Cargo.toml --bench parser --locked -- scalar_and_comment_paths
+```
+
+Use `-- --test` to execute every case once. Local `cargo bench` measures elapsed
+time; CI uses CPU simulation, so their percentages need not match. New cases
+need the same fixtures measured on the base and candidate parser versions before
+an improvement percentage can be established.
 
 ## `dump_events`
 This is a debugging helper for the parser. It outputs events emitted by the parser for a given file.

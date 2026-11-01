@@ -218,3 +218,63 @@ fn source_failures_after_long_quoted_runs_remain_terminal() {
         assert_eq!(error.kind(), &expected);
     }
 }
+
+#[test]
+fn long_unicode_runs_preserve_borrowing_and_character_and_byte_spans() {
+    for quote in ['\'', '"'] {
+        for text in [
+            "字",
+            "🦀",
+            "字🦀éASCII",
+            "\u{85}\u{a0}\u{2028}\u{2029}\u{feff}",
+        ] {
+            for length in [1, 7, 16, 127, 4096] {
+                let contents = text.repeat(length);
+                let source = format!("[{quote}{contents}{quote}, tail]\n");
+                let events = parse_all_inputs(&source);
+                let (value, span) = scalar(&events);
+                assert_eq!(value, &contents);
+                assert!(matches!(value, Cow::Borrowed(_)));
+                assert_eq!(span.start, Marker::new(1, 1, 1));
+                assert_eq!(
+                    span.end,
+                    Marker::new(
+                        contents.chars().count() + 3,
+                        1,
+                        contents.chars().count() + 3
+                    )
+                );
+                assert_eq!(span.byte_range(), Some(1..contents.len() + 3));
+            }
+        }
+    }
+}
+
+#[test]
+fn unicode_runs_leave_controls_escapes_quotes_and_folding_to_the_scanner() {
+    let run = "字🦀é".repeat(128);
+    for quote in ['\'', '"'] {
+        for character in [
+            '\0', '\u{1}', '\u{7f}', '\u{80}', '\u{9f}', '\u{fffe}', '\u{ffff}',
+        ] {
+            let prefix = format!("[{quote}{run}");
+            let source = format!("{prefix}{character}after{quote}]\n");
+            let error = error_all_inputs(&source);
+            assert_eq!(error.kind(), &ErrorKind::UnexpectedCharacter { character });
+            let index = prefix.chars().count();
+            assert_eq!(*error.marker(), Marker::new(index, 1, index));
+            assert_eq!(error.marker().byte_offset(), Some(prefix.len()));
+        }
+        for (middle, expected) in [(" \t", " \t"), ("\r\n  ", " "), ("\r\n\r\n  ", "\n")] {
+            let source = format!("[{quote}{run}{middle}{run}{quote}, tail]\n");
+            let events = parse_all_inputs(&source);
+            assert_eq!(scalar(&events).0, &format!("{run}{expected}{run}"));
+        }
+    }
+    for (quote, middle, expected) in [('\'', "''", "'"), ('"', "\\n", "\n"), ('"', "\\\r\n  ", "")]
+    {
+        let source = format!("[{quote}{run}{middle}{run}{quote}, tail]\n");
+        let events = parse_all_inputs(&source);
+        assert_eq!(scalar(&events).0, &format!("{run}{expected}{run}"));
+    }
+}

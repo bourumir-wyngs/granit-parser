@@ -2,6 +2,20 @@
 
 ## 2.1.0
 
+**Performance**
+
+- Avoid temporary allocations when moving post-colon comments, folding quoted-scalar
+  newlines, resolving common tag components, and tracking block-scalar line breaks.
+- Reuse parser comment buffers when collecting comments and ordering them around empty nodes.
+- Batch long literal and folded scalar lines for character and fallible iterator inputs.
+- Scan unescaped Unicode quoted-scalar runs in chunks for string input, preserving borrowed
+  values, printable-character validation, and character and byte positions.
+- Add the defaulted `Input::take_quoted_scalar_chunk` hook, returning consumed text and its
+  Unicode character count. Existing custom inputs retain their ASCII chunk behavior without
+  implementing the new method.
+- Extend CodSpeed coverage with scalar and comment workloads, including Unicode, iterator
+  inputs, common tags, multiline quotes, chomping, and comments around empty nodes.
+
 **Support user cases**
 
 - Add `Options::emit_anchor_events` (default `false`) to emit `Event::Anchor(id, name)`

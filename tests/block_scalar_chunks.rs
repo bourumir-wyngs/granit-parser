@@ -375,3 +375,121 @@ fn source_failures_after_indentation_only_tails_are_not_clean_eof() {
         }
     }
 }
+
+mod buffered_line_contract {
+    use granit_parser::{BufferedInput, ErrorKind, FallibleBufferedInput, Input};
+
+    fn check_line_contract(mut input: impl Input, contents: &str, ending: &str, window: usize) {
+        input.lookahead(window);
+        let mut output = String::from("prefix:");
+        assert_eq!(
+            input.fetch_block_scalar_line(&mut output),
+            contents.chars().count()
+        );
+        assert_eq!(output, format!("prefix:{contents}"));
+        assert_eq!(input.buflen(), window);
+        // The entire active lookahead window must be restored without another request.
+        for index in 0..window {
+            assert_eq!(
+                input.peek_nth(index),
+                ending.chars().nth(index).unwrap_or('\0')
+            );
+        }
+        assert_eq!(input.next_is_z(), ending.is_empty());
+        assert_eq!(input.fetch_block_scalar_line(&mut output), 0);
+        assert_eq!(output, format!("prefix:{contents}"));
+        for character in ending.chars() {
+            assert_eq!(input.raw_read_ch(), character);
+        }
+        input.lookahead(1);
+        assert!(input.next_is_z());
+    }
+
+    #[test]
+    fn block_lines_preserve_delimiters_and_restore_every_lookahead_window() {
+        for window in [0, 1, 4, 16] {
+            for length in [0, 1, 3, 4, 15, 16, 17, 4096] {
+                // Tabs, controls other than NUL, and Unicode are copied verbatim for the
+                // scanner to validate; none of these Unicode characters is a line break.
+                let contents = format!("{}é字🦀\t\u{7}\u{85}\u{2028}\u{2029}", "x".repeat(length));
+                for ending in ["", "\nrest", "\rrest", "\r\nrest", "\0rest", "\0"] {
+                    let source = format!("{contents}{ending}");
+                    check_line_contract(
+                        BufferedInput::new(source.chars()),
+                        &contents,
+                        ending,
+                        window,
+                    );
+                    check_line_contract(
+                        FallibleBufferedInput::new(source.chars().map(Ok::<_, ErrorKind>)),
+                        &contents,
+                        ending,
+                        window,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn already_at_delimiter_consumes_nothing_including_literal_nul() {
+        for window in [0, 1, 4, 16] {
+            for source in ["", "\nrest", "\r\nrest", "\0rest", "\0"] {
+                check_line_contract(BufferedInput::new(source.chars()), "", source, window);
+            }
+        }
+    }
+
+    #[test]
+    fn source_errors_remain_latched_after_batched_line_reads() {
+        let error = ErrorKind::InputDecoding {
+            message: "truncated input".to_owned(),
+        };
+        for window in [0, 1, 4, 16] {
+            for length in [0, 1, 15, 16, 17, 4096] {
+                let contents = "字".repeat(length);
+                let source = contents
+                    .chars()
+                    .map(Ok)
+                    .chain(core::iter::once(Err(error.clone())))
+                    .chain(core::iter::from_fn(|| panic!("polled after source error")));
+                let mut input = FallibleBufferedInput::new(source);
+                input.lookahead(window);
+                let mut output = String::new();
+                assert_eq!(input.fetch_block_scalar_line(&mut output), length);
+                assert_eq!(output, contents);
+                assert!(input.next_is_z());
+                assert_eq!(input.take_source_error(), Some(error.clone()));
+                assert_eq!(input.take_source_error(), None);
+                assert_eq!(input.fetch_block_scalar_line(&mut output), 0);
+                input.lookahead(16);
+                assert_eq!(input.raw_read_ch(), '\0');
+                assert!(input.next_is_z());
+            }
+        }
+    }
+
+    #[test]
+    fn clean_eof_never_repolls_an_exhausted_iterator() {
+        for window in [0, 1, 4, 16] {
+            let mut calls = 0;
+            let source = core::iter::from_fn(|| {
+                calls += 1;
+                match calls {
+                    1 => Some('x'),
+                    2 => None,
+                    _ => panic!("polled after EOF"),
+                }
+            });
+            let mut input = BufferedInput::new(source);
+            input.lookahead(window);
+            let mut output = String::new();
+            assert_eq!(input.fetch_block_scalar_line(&mut output), 1);
+            assert_eq!(output, "x");
+            assert!(input.next_is_z());
+            assert_eq!(input.fetch_block_scalar_line(&mut output), 0);
+            input.lookahead(16);
+            assert!(input.next_is_z());
+        }
+    }
+}

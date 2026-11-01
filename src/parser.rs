@@ -18,7 +18,7 @@ use alloc::collections::VecDeque;
 use alloc::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    string::{String, ToString},
+    string::String,
     vec::Vec,
 };
 use core::{
@@ -231,15 +231,15 @@ pub struct Tag {
     /// Resolved tag handle or prefix.
     ///
     /// Examples include `tag:yaml.org,2002:` for core-schema tags and `!` for local tags.
-    handle: String,
+    handle: Cow<'static, str>,
     /// Tag suffix following the resolved handle or prefix.
-    suffix: String,
+    suffix: Cow<'static, str>,
     /// Tag handle as written in the source before `%TAG` directive resolution.
     ///
     /// For example, with `%TAG !e! tag:example.com,2000:`, a source tag `!e!keep` is resolved
     /// as `handle = "tag:example.com,2000:"` and `suffix = "keep"`, while
     /// `original_handle = "!e!"`.
-    original_handle: String,
+    original_handle: Cow<'static, str>,
 }
 
 const YAML_CORE_SCHEMA_PREFIX: &str = "tag:yaml.org,2002:";
@@ -269,6 +269,25 @@ fn known_yaml_core_schema_suffix_from_split(
     })
 }
 
+/// Retain common tag components without allocating, and reuse owned scanner strings otherwise.
+fn own_tag_component(component: Cow<'_, str>) -> Cow<'static, str> {
+    let known = match component.as_ref() {
+        "" => "",
+        "!" => "!",
+        "!!" => "!!",
+        "tag:yaml.org,2002:" => YAML_CORE_SCHEMA_PREFIX,
+        "bool" => "bool",
+        "float" => "float",
+        "int" => "int",
+        "map" => "map",
+        "null" => "null",
+        "seq" => "seq",
+        "str" => "str",
+        _ => return Cow::Owned(component.into_owned()),
+    };
+    Cow::Borrowed(known)
+}
+
 impl Tag {
     /// Create a tag from resolved parts.
     ///
@@ -278,9 +297,9 @@ impl Tag {
     pub fn new(handle: impl Into<String>, suffix: impl Into<String>) -> Self {
         let handle = handle.into();
         Self {
-            original_handle: handle.clone(),
-            handle,
-            suffix: suffix.into(),
+            original_handle: Cow::Owned(handle.clone()),
+            handle: Cow::Owned(handle),
+            suffix: Cow::Owned(suffix.into()),
         }
     }
 
@@ -292,9 +311,9 @@ impl Tag {
         original_handle: impl Into<String>,
     ) -> Self {
         Self {
-            handle: handle.into(),
-            suffix: suffix.into(),
-            original_handle: original_handle.into(),
+            handle: Cow::Owned(handle.into()),
+            suffix: Cow::Owned(suffix.into()),
+            original_handle: Cow::Owned(original_handle.into()),
         }
     }
 
@@ -328,7 +347,7 @@ impl Tag {
     pub fn core_suffix(&self) -> Option<&str> {
         // The handle ends at or before the namespace boundary. The remaining namespace
         // prefix and the complete type name are both contained in `suffix`.
-        if let Some(remaining_prefix) = YAML_CORE_SCHEMA_PREFIX.strip_prefix(self.handle.as_str()) {
+        if let Some(remaining_prefix) = YAML_CORE_SCHEMA_PREFIX.strip_prefix(self.handle.as_ref()) {
             let suffix = self.suffix.strip_prefix(remaining_prefix)?;
             return known_yaml_core_schema_suffix(suffix);
         }
@@ -354,7 +373,7 @@ impl Tag {
             // Handle spans the whole prefix; the name is its tail plus the suffix (the tail
             // is empty unless a `%TAG` split pushed part of the name into the handle).
             return Some(if handle_tail.is_empty() {
-                Cow::Borrowed(self.suffix.as_str())
+                Cow::Borrowed(self.suffix.as_ref())
             } else {
                 let mut name = String::with_capacity(handle_tail.len() + self.suffix.len());
                 name.push_str(handle_tail);
@@ -366,7 +385,7 @@ impl Tag {
         // Handle stops inside the prefix; the suffix supplies the rest of the prefix
         // and then the name.
         prefix
-            .strip_prefix(self.handle.as_str())
+            .strip_prefix(self.handle.as_ref())
             .and_then(|prefix_tail| self.suffix.strip_prefix(prefix_tail))
             .map(Cow::Borrowed)
     }
@@ -601,6 +620,9 @@ pub struct Parser<'input, T: BorrowedInput<'input>> {
     /// YAML events buffered by parser states that need to emit an earlier synthetic node first.
     #[cfg(feature = "comments")]
     queued_events: VecDeque<(Event<'input>, Span)>,
+    /// Retained storage for collecting and ordering comments between syntax events.
+    #[cfg(feature = "comments")]
+    comment_scratch: Vec<(Event<'input>, Span)>,
 
     /// Pending indentation hint to be attached to the next emitted event span.
     ///
@@ -1085,6 +1107,8 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             deferred_error: None,
             #[cfg(feature = "comments")]
             queued_events: VecDeque::new(),
+            #[cfg(feature = "comments")]
+            comment_scratch: Vec::new(),
 
             pending_key_indent: None,
             #[cfg(feature = "comments")]
@@ -1246,6 +1270,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 #[cfg(feature = "comments")]
                 {
                     self.queued_events.clear();
+                    self.comment_scratch.clear();
                     self.deferred_error = None;
                 }
                 self.failed = true;
@@ -1375,6 +1400,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
         {
             self.deferred_error = None;
             self.queued_events.clear();
+            self.comment_scratch.clear();
             self.pending_node_anchor_id = None;
             self.pending_node_tag = None;
             self.pending_node_tag_span = None;
@@ -1575,32 +1601,47 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
             return Ok(Vec::new());
         }
 
-        let mut events = Vec::new();
+        debug_assert_eq!(self.comment_scratch.len(), 0);
         loop {
-            match self.peek_token() {
-                Ok(token) if matches!(token.1, QueuedTokenType::Comment(_)) => {}
-                Err(error) if events.is_empty() => return Err(error),
+            match self
+                .peek_token()
+                .map(|token| matches!(token.1, QueuedTokenType::Comment(_)))
+            {
+                Ok(true) => {}
+                Err(error) if self.comment_scratch.is_empty() => return Err(error),
                 Err(error) => {
                     debug_assert!(self.deferred_error.is_none());
                     self.deferred_error = Some(error);
-                    return Ok(events);
+                    return Ok(core::mem::take(&mut self.comment_scratch));
                 }
-                Ok(_) => return Ok(events),
+                Ok(_) => {
+                    // Keep the allocation when this position has no comments.
+                    return Ok(if self.comment_scratch.is_empty() {
+                        Vec::new()
+                    } else {
+                        core::mem::take(&mut self.comment_scratch)
+                    });
+                }
             }
 
-            if events.len() >= self.max_buffered_comment_events {
+            if self.comment_scratch.len() >= self.max_buffered_comment_events {
+                self.comment_scratch.clear();
                 return Err(ScanError::from_kind(
                     self.peek_token()?.0.start,
                     ErrorKind::TooManyComments,
                 ));
             }
 
-            let comment = self
-                .next_comment_event()?
-                .expect("comment token disappeared after peek");
-            events.push(comment);
+            let comment = match self.next_comment_event() {
+                Ok(comment) => comment.expect("comment token disappeared after peek"),
+                Err(error) => {
+                    self.comment_scratch.clear();
+                    return Err(error);
+                }
+            };
+            self.comment_scratch.push(comment);
             if self.deferred_error.is_some() {
-                return Ok(events);
+                return Ok(core::mem::take(&mut self.comment_scratch));
             }
         }
     }
@@ -1608,20 +1649,24 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     #[cfg(feature = "comments")]
     fn queue_tail_and_return_first(
         &mut self,
-        events: Vec<(Event<'input>, Span)>,
+        mut events: Vec<(Event<'input>, Span)>,
     ) -> (Event<'input>, Span) {
-        let mut events = events.into_iter();
-        let first = events
-            .next()
-            .expect("event queue must contain at least one event");
-        self.queued_events.extend(events);
+        let first = {
+            let mut drained = events.drain(..);
+            let first = drained
+                .next()
+                .expect("event queue must contain at least one event");
+            self.queued_events.extend(drained);
+            first
+        };
+        self.comment_scratch = events;
         first
     }
 
     #[cfg(feature = "comments")]
     fn queue_event_by_span(
         &mut self,
-        comments: Vec<(Event<'input>, Span)>,
+        mut comments: Vec<(Event<'input>, Span)>,
         event: (Event<'input>, Span),
     ) -> (Event<'input>, Span) {
         let insert_at = comments
@@ -1631,26 +1676,14 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     && comment_span.end.index() >= event.1.end.index()
             })
             .unwrap_or(comments.len());
-        let mut ordered = Vec::with_capacity(comments.len() + 1);
-        let mut comments = comments.into_iter();
-
-        for _ in 0..insert_at {
-            ordered.push(
-                comments
-                    .next()
-                    .expect("comment disappeared while ordering queued events"),
-            );
-        }
-        ordered.push(event);
-        ordered.extend(comments);
-
-        self.queue_tail_and_return_first(ordered)
+        comments.insert(insert_at, event);
+        self.queue_tail_and_return_first(comments)
     }
 
     #[cfg(feature = "comments")]
     fn queue_two_events_by_span(
         &mut self,
-        comments: Vec<(Event<'input>, Span)>,
+        mut comments: Vec<(Event<'input>, Span)>,
         first: (Event<'input>, Span),
         second: (Event<'input>, Span),
     ) -> (Event<'input>, Span) {
@@ -1661,21 +1694,10 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     && comment_span.end.index() >= first.1.end.index()
             })
             .unwrap_or(comments.len());
-        let mut ordered = Vec::with_capacity(comments.len() + 2);
-        let mut comments = comments.into_iter();
-
-        for _ in 0..insert_at {
-            ordered.push(
-                comments
-                    .next()
-                    .expect("comment disappeared while ordering queued events"),
-            );
-        }
-        ordered.push(first);
-        ordered.push(second);
-        ordered.extend(comments);
-
-        self.queue_tail_and_return_first(ordered)
+        comments.reserve(2);
+        comments.insert(insert_at, first);
+        comments.insert(insert_at + 1, second);
+        self.queue_tail_and_return_first(comments)
     }
 
     #[cfg(feature = "comments")]
@@ -2288,7 +2310,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                         unreachable!("tag token disappeared after peek")
                     };
                     tag_span = Some((tag_mark.start, u32::try_from(tag_mark.len()).unwrap_or(0)));
-                    tag = Some(self.resolve_tag(tag_mark, &handle, suffix)?);
+                    tag = Some(self.resolve_tag(tag_mark, handle, suffix)?);
                     property_end = Some(tag_mark.end);
                 }
                 #[cfg(feature = "comments")]
@@ -2303,7 +2325,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                 };
                 tag_span = Some((mark.start, u32::try_from(mark.len()).unwrap_or(0)));
                 property_end = Some(mark.end);
-                tag = Some(self.resolve_tag(mark, &handle, suffix)?);
+                tag = Some(self.resolve_tag(mark, handle, suffix)?);
                 if anchor_id.is_none() {
                     if let QueuedTokenType::Anchor(_) = &self.peek_token()?.1 {
                         let QueuedToken(mark, QueuedTokenType::Anchor(name)) = self.fetch_token()
@@ -3011,44 +3033,37 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
     fn resolve_tag(
         &self,
         span: Span,
-        handle: &Cow<'input, str>,
+        handle: Cow<'input, str>,
         suffix: Cow<'input, str>,
     ) -> Result<Cow<'input, Tag>, ScanError> {
-        let original_handle = handle.to_string();
-        let suffix = suffix.into_owned();
-        let tag = if handle == "!!" {
-            // "!!" is a shorthand for "tag:yaml.org,2002:". However, that default can be
-            // overridden.
-            Tag::with_original_handle(
-                self.tags
-                    .get("!!")
-                    .map_or_else(|| "tag:yaml.org,2002:".to_string(), ToString::to_string),
-                suffix,
-                original_handle,
-            )
-        } else if handle.is_empty() && suffix == "!" {
+        let original_handle = own_tag_component(handle);
+        let suffix = own_tag_component(suffix);
+        let handle = if original_handle.is_empty() && suffix == "!" {
             // Bare "!" is a non-specific tag, not a primary handle to expand with %TAG.
-            Tag::with_original_handle(String::new(), suffix, original_handle)
+            Cow::Borrowed("")
+        } else if let Some(prefix) = self.tags.get(original_handle.as_ref()) {
+            // Explicit directives also override the default "!!" prefix.
+            own_tag_component(Cow::Borrowed(prefix.as_ref()))
+        } else if original_handle == "!!" {
+            Cow::Borrowed(YAML_CORE_SCHEMA_PREFIX)
         } else {
-            // Lookup handle in our tag directives.
-            let prefix = self.tags.get(&**handle);
-            if let Some(prefix) = prefix {
-                Tag::with_original_handle(prefix.to_string(), suffix, original_handle)
-            } else {
-                // Otherwise, it may be a local handle. With a local handle, the handle is set to
-                // "!" and the suffix to whatever follows it ("!foo" -> ("!", "foo")).
-                // If the handle is of the form "!foo!", this cannot be a local handle and we need
-                // to error.
-                if handle.len() >= 2 && handle.starts_with('!') && handle.ends_with('!') {
-                    return Err(ScanError::from_kind(
-                        span.start,
-                        ErrorKind::UndeclaredTagHandle,
-                    ));
-                }
-                Tag::with_original_handle(handle.to_string(), suffix, original_handle)
+            // An undeclared named handle cannot be treated as a local tag.
+            if original_handle.len() >= 2
+                && original_handle.starts_with('!')
+                && original_handle.ends_with('!')
+            {
+                return Err(ScanError::from_kind(
+                    span.start,
+                    ErrorKind::UndeclaredTagHandle,
+                ));
             }
+            original_handle.clone()
         };
-        Ok(Cow::Owned(tag))
+        Ok(Cow::Owned(Tag {
+            handle,
+            suffix,
+            original_handle,
+        }))
     }
 }
 
@@ -4454,6 +4469,29 @@ baz: "qux"
     }
 
     #[test]
+    fn common_tag_storage_preserves_comparison_and_hashing() {
+        let parsed = first_tagged_scalar_tag("!!str value");
+        let constructed = Tag::with_original_handle("tag:yaml.org,2002:", "str", "!!");
+        assert!(matches!(parsed.handle, Cow::Borrowed(_)));
+        assert!(matches!(parsed.suffix, Cow::Borrowed(_)));
+        assert!(matches!(parsed.original_handle, Cow::Borrowed(_)));
+        assert_eq!(parsed, constructed);
+        assert_eq!(parsed.cmp(&constructed), core::cmp::Ordering::Equal);
+        #[cfg(feature = "std")]
+        {
+            use core::hash::{Hash, Hasher};
+            use std::collections::hash_map::DefaultHasher;
+
+            let hash = |tag: &Tag| {
+                let mut hasher = DefaultHasher::new();
+                tag.hash(&mut hasher);
+                hasher.finish()
+            };
+            assert_eq!(hash(&parsed), hash(&constructed));
+        }
+    }
+
+    #[test]
     fn test_resolve_tag_distinguishes_non_specific_and_primary_handle_tags() {
         let mut parser = Parser::new_from_str("");
         parser
@@ -4467,7 +4505,7 @@ baz: "qux"
             let tag = parser
                 .resolve_tag(
                     Span::empty(Marker::new(0, 1, 0)),
-                    &Cow::Borrowed(handle),
+                    Cow::Borrowed(handle),
                     Cow::Borrowed(suffix),
                 )
                 .unwrap();
