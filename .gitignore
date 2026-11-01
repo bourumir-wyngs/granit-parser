@@ -2,3 +2,5 @@ target
 *.swp
 /perf.*
 /coverage.sh
+/TEAM.md
+/OPTIMIZE.md
