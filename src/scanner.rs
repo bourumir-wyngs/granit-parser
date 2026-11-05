@@ -3890,41 +3890,19 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.input.lookahead(1);
             }
 
-            // Escaped line breaks also set `leading_blanks`, even without a folded break.
-            // In strict flow context the continuation and closing quote must both be indented.
+            // In strict mode, continuations and closing quotes after a folded or escaped line break
+            // must be indented past the enclosing block (s-flow-line-prefix(n), YAML 1.2.2 [69]),
+            // ignoring the temporary one-column indent after `:` / `-`: `foo: "a\n b"` is valid.
             if leading_blanks
                 && self.options.strict_indentation
-                && self.flow_level > 0
                 && (self.mark.col as isize) <= self.flow_block_indent()
             {
-                return Err(self.scan_error(ErrorKind::InvalidIndentation));
-            }
-
-            // Continuation lines of a quoted scalar in block context must be indented more than
-            // the enclosing block (s-flow-line-prefix(n), YAML 1.2.2 [69]). Compare against that
-            // block's indentation, not the temporary one-column indent added after `:` / `-`:
-            // `foo: "a\n b"` is valid (n = 1). In strict mode this also applies to closing quotes.
-            if leading_blanks && has_leading_break && self.flow_level == 0 {
-                let next_ch = self.input.peek();
-                let is_closing_quote = (single && next_ch == '\'') || (!single && next_ch == '"');
-                if (!is_closing_quote || self.options.strict_indentation)
-                    && (self.mark.col as isize) <= self.flow_block_indent()
-                {
-                    return Err(self.scan_error(ErrorKind::InvalidQuotedScalarIndent));
-                }
-            }
-
-            // An escaped line break (`\` at the end of a line) sets only `leading_blanks`, so the
-            // block-context check above skips it. s-double-escaped [112] still ends in
-            // s-flow-line-prefix(n): in strict mode the continuation must be indented past the
-            // enclosing block, including before a closing quote, as in flow context.
-            if leading_blanks
-                && !has_leading_break
-                && self.options.strict_indentation
-                && self.flow_level == 0
-                && (self.mark.col as isize) <= self.flow_block_indent()
-            {
-                return Err(self.scan_error(ErrorKind::InvalidIndentation));
+                let kind = if has_leading_break && self.flow_level == 0 {
+                    ErrorKind::InvalidQuotedScalarIndent
+                } else {
+                    ErrorKind::InvalidIndentation
+                };
+                return Err(self.scan_error(kind));
             }
 
             // Join the whitespace or fold line breaks.
@@ -6502,15 +6480,16 @@ mod test {
     }
 
     #[test]
-    fn quoted_scalar_rejects_underindented_continuation() {
-        assert_eq!(
-            first_scanner_error_kind("a: \"one\nbad\"\n"),
-            ErrorKind::InvalidQuotedScalarIndent
-        );
-        assert_eq!(
-            first_scanner_error_kind("a:\n  b: 'one\n  bad'\n"),
-            ErrorKind::InvalidQuotedScalarIndent
-        );
+    fn strict_quoted_scalar_rejects_underindented_continuation() {
+        for input in ["a: \"one\nbad\"\n", "a:\n  b: 'one\n  bad'\n"] {
+            let error = Scanner::with_options(
+                StrInput::new(input),
+                crate::options! { strict_indentation: true },
+            )
+            .find_map(Result::err)
+            .expect("strict mode must reject underindented quoted continuations");
+            assert_eq!(error.kind(), &ErrorKind::InvalidQuotedScalarIndent);
+        }
     }
 
     #[test]
