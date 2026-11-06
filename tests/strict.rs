@@ -253,6 +253,36 @@ fn strict_rejects_under_indented_escaped_line_breaks_in_block_context() {
 }
 
 #[test]
+fn strict_rejects_under_indented_quoted_continuations_in_block_context() {
+    for quote in ['\'', '"'] {
+        for (prefix, parent_indent) in [
+            ("key: ", 0),
+            ("- ", 0),
+            ("? key\n: ", 0),
+            ("outer:\n  key: ", 2),
+            ("- key: ", 2),
+        ] {
+            let indented = " ".repeat(parent_indent + 1);
+            for breaks in ["\n", "\r\n", "\n\n"] {
+                let reference = format!("{prefix}{quote}first{breaks}{indented}second{quote}\n");
+                let line = prefix.lines().count() + breaks.lines().count();
+                for indent in 0..=parent_indent {
+                    let spaces = " ".repeat(indent);
+                    let yaml = format!("{prefix}{quote}first{breaks}{spaces}second{quote}\n");
+                    assert_relaxed_only_with_kind(
+                        &yaml,
+                        &reference,
+                        line,
+                        indent,
+                        &ErrorKind::InvalidQuotedScalarIndent,
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn strict_rejects_under_indented_closing_quotes_after_folded_line_breaks() {
     for quote in ['\'', '"'] {
         for (prefix, indent, line) in [("key: ", 0, 2), ("- ", 0, 2), ("outer:\n  key: ", 2, 3)] {
