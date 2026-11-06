@@ -268,9 +268,11 @@ fn strict_rejects_under_indented_quoted_continuations_in_block_context() {
                 [("\n", "\n"), ("\r\n", "\r\n"), ("\n", "\r\n")]
             {
                 let prefix = prefix.replace('\n', document_break);
-                for (blank_lines, expected_value) in
-                    [(0, "first second"), (1, "first\nsecond"), (2, "first\n\nsecond")]
-                {
+                for (blank_lines, expected_value) in [
+                    (0, "first second"),
+                    (1, "first\nsecond"),
+                    (2, "first\n\nsecond"),
+                ] {
                     let breaks = continuation_break.repeat(blank_lines + 1);
                     let reference = if blank_lines == 0 {
                         format!("{prefix}{quote}first second{quote}{document_break}")
