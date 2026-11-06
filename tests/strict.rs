@@ -263,12 +263,69 @@ fn strict_rejects_under_indented_quoted_continuations_in_block_context() {
             ("- key: ", 2),
         ] {
             let indented = " ".repeat(parent_indent + 1);
-            for breaks in ["\n", "\r\n", "\n\n"] {
-                let reference = format!("{prefix}{quote}first{breaks}{indented}second{quote}\n");
-                let line = prefix.lines().count() + breaks.lines().count();
+            // Keep mixed line endings as well as uniformly LF and CRLF documents.
+            for (document_break, continuation_break) in
+                [("\n", "\n"), ("\r\n", "\r\n"), ("\n", "\r\n")]
+            {
+                let prefix = prefix.replace('\n', document_break);
+                for (blank_lines, expected_value) in [
+                    (0, "first second"),
+                    (1, "first\nsecond"),
+                    (2, "first\n\nsecond"),
+                ] {
+                    let breaks = continuation_break.repeat(blank_lines + 1);
+                    let reference = if blank_lines == 0 {
+                        format!("{prefix}{quote}first second{quote}{document_break}")
+                    } else {
+                        format!(
+                            "{prefix}{quote}first{breaks}{indented}second{quote}{document_break}"
+                        )
+                    };
+                    let line = prefix.lines().count() + blank_lines + 1;
+                    for indent in 0..=parent_indent {
+                        let spaces = " ".repeat(indent);
+                        let yaml = format!(
+                            "{prefix}{quote}first{breaks}{spaces}second{quote}{document_break}"
+                        );
+                        assert_relaxed_only_with_kind(
+                            &yaml,
+                            &reference,
+                            line,
+                            indent,
+                            &ErrorKind::InvalidQuotedScalarIndent,
+                        );
+                        let value = Parser::new_from_str(&yaml)
+                            .filter_map(|result| match result.expect("valid relaxed input").0 {
+                                Event::Scalar(value, ..) => Some(value),
+                                _ => None,
+                            })
+                            .last();
+                        assert_eq!(value.as_deref(), Some(expected_value), "input: {yaml:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn relaxed_quoted_continuations_preserve_following_siblings() {
+    for quote in ['\'', '"'] {
+        for (prefix, parent_indent, suffix) in [
+            ("key: ", 0, "\nsibling: kept\n"),
+            ("- ", 0, "\n- next\n"),
+            ("outer:\n  key: ", 2, "\n  sibling: kept\nlast: done\n"),
+            ("- key: ", 2, "\n  sibling: kept\n- next\n"),
+        ] {
+            for line_break in ["\n", "\r\n"] {
+                let prefix = prefix.replace('\n', line_break);
+                let suffix = suffix.replace('\n', line_break);
+                let reference = format!("{prefix}{quote}first second{quote}{suffix}");
+                let line = prefix.lines().count() + 1;
                 for indent in 0..=parent_indent {
                     let spaces = " ".repeat(indent);
-                    let yaml = format!("{prefix}{quote}first{breaks}{spaces}second{quote}\n");
+                    let yaml =
+                        format!("{prefix}{quote}first{line_break}{spaces}second{quote}{suffix}");
                     assert_relaxed_only_with_kind(
                         &yaml,
                         &reference,
