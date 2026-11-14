@@ -42,7 +42,11 @@ pub struct Options {
     /// When `true`, such a BOM instead starts a plain scalar and is kept as part of its text, as
     /// libyaml does. A BOM in a document prefix is still skipped, and a BOM following other
     /// characters of a plain or quoted scalar is content in either mode.
-    /// Defaults to false.
+    /// A BOM at column 0 thus begins a scalar with an invisible prefix: for example,
+    /// `\u{FEFF}---` is no longer a document start and `\u{FEFF}key: value` has a key that
+    /// does not equal `key`. Consumers mapping such keys onto fixed field names should reject
+    /// unknown keys (for example, Serde's `deny_unknown_fields`) so these are not silently
+    /// ignored. Defaults to false.
     pub bom_inside_document_as_content: bool,
     /// Emit unresolved alias nodes instead of stopping at an unknown anchor.
     ///
