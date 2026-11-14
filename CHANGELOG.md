@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+**Support user cases**
+
+- Add `Options::bom_inside_document_as_content` (default `false`) to read a byte-order mark
+  inside a document as the start of a plain scalar, as libyaml does, instead of reporting
+  `ErrorKind::BomInsideDocument`. A BOM in a document prefix is still skipped.
+
 ## 2.1.0
 
 **Performance**
