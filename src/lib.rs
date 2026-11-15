@@ -107,9 +107,10 @@
 //!
 //! # Limits
 //!
-//! [`Options::strict_indentation`] enables strict YAML indentation for flow collections. It
-//! defaults to `false` for compatibility with `PyYAML` and ruamel.yaml, accepting under-indented flow entries
-//! and delimiters. [`Options`] also controls comment emission and limits on buffered comments,
+//! [`Options::strict_indentation`] enables strict YAML indentation for flow collections and
+//! quoted scalars. It defaults to `false` for compatibility with `PyYAML` and ruamel.yaml,
+//! accepting under-indented flow entries, delimiters, and quoted scalar continuations.
+//! [`Options`] also controls comment emission and limits on buffered comments,
 //! simple-key lookahead, directive retention, and flow- and block-collection nesting. With the
 //! `comments` feature, comment tokens and events are emitted by default; setting
 //! `Options::emit_comments` to `false`

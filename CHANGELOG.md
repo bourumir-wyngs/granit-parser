@@ -7,6 +7,8 @@
 - Add `Options::bom_inside_document_as_content` (default `false`) to read a byte-order mark
   inside a document as the start of a plain scalar, as libyaml does, instead of reporting
   `ErrorKind::BomInsideDocument`. A BOM in a document prefix is still skipped.
+- Accept under-indented quoted scalar continuations in block context by default, matching
+  `PyYAML` and `ruamel.yaml`. `strict_indentation: true` still rejects them.
 
 ## 2.1.0
 
