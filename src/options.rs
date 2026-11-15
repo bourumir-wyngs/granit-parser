@@ -35,6 +35,19 @@ pub struct Options {
     /// Percent signs inside scalars and comments are unaffected.
     /// Defaults to false.
     pub disallow_directives: bool,
+    /// Read a byte-order mark (U+FEFF) inside a document as ordinary content.
+    ///
+    /// By default, a BOM is accepted only in a document prefix, before directives, comments, or
+    /// content; another BOM where a token would begin reports [`crate::ErrorKind::BomInsideDocument`].
+    /// When `true`, such a BOM instead starts a plain scalar and is kept as part of its text, as
+    /// libyaml does. A BOM in a document prefix is still skipped, and a BOM following other
+    /// characters of a plain or quoted scalar is content in either mode.
+    /// A BOM at column 0 thus begins a scalar with an invisible prefix: for example,
+    /// `\u{FEFF}---` is no longer a document start and `\u{FEFF}key: value` has a key that
+    /// does not equal `key`. Consumers mapping such keys onto fixed field names should reject
+    /// unknown keys (for example, Serde's `deny_unknown_fields`) so these are not silently
+    /// ignored. Defaults to false.
+    pub bom_inside_document_as_content: bool,
     /// Emit unresolved alias nodes instead of stopping at an unknown anchor.
     ///
     /// Defaults to `false`. When omitted or explicitly set to `false`, an alias without a
@@ -153,6 +166,7 @@ impl Default for Options {
         Self {
             strict_indentation: false,
             disallow_directives: false,
+            bom_inside_document_as_content: false,
             emit_unresolved_aliases: false,
             emit_anchor_events: false,
             emit_comments: cfg!(feature = "comments"),

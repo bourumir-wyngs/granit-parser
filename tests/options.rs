@@ -18,6 +18,7 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     let defaults = Options::default();
     assert!(!defaults.strict_indentation);
     assert!(!defaults.disallow_directives);
+    assert!(!defaults.bom_inside_document_as_content);
     assert!(!defaults.emit_unresolved_aliases);
     assert_eq!(defaults.emit_comments, cfg!(feature = "comments"));
     #[cfg(feature = "comments")]

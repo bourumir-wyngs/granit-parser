@@ -1983,7 +1983,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ':' | '?' if !is_blank_or_breakz(nc) && self.flow_level == 0 => {
                 self.fetch_plain_scalar()
             }
-            c if is_bom(c) => Err(self.scan_error(ErrorKind::BomInsideDocument)),
+            // Opted-in BOMs fall through to `fetch_plain_scalar` as content characters.
+            c if is_bom(c) && !self.options.bom_inside_document_as_content => {
+                Err(self.scan_error(ErrorKind::BomInsideDocument))
+            }
             '|' | '>' | '%' | '@' | '`' => {
                 Err(self.scan_error(ErrorKind::UnexpectedCharacter { character: c }))
             }
