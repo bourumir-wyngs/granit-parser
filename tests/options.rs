@@ -20,6 +20,7 @@ fn options_macro_starts_with_defaults_and_applies_fields() {
     assert!(!defaults.disallow_directives);
     assert!(!defaults.bom_inside_document_as_content);
     assert!(!defaults.block_scalar_eof_without_line_feed);
+    assert!(!defaults.block_scalar_indent_at_least_one);
     assert!(!defaults.emit_unresolved_aliases);
     assert_eq!(defaults.emit_comments, cfg!(feature = "comments"));
     #[cfg(feature = "comments")]

@@ -4007,6 +4007,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // We need to set the indent to 0 and not 1. In all other cases, the indent must be at
         // least 1. When in the above example, `self.indent` will be set to -1.
         *indent = max_indent.max((self.indent + 1) as usize);
+        if self.options.block_scalar_indent_at_least_one {
+            *indent = (*indent).max(1);
+        }
     }
 
     fn fetch_flow_scalar(&mut self, single: bool) -> ScanResult {
