@@ -245,13 +245,13 @@ block header: style=Literal text=Some("|") chars=Some(438..439) bytes=Some(438..
   chomping=Clip indentation_indicator=None content_indent=2
   chomping indicator: chars=None bytes=None
   indentation indicator: chars=None bytes=None
-Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, chomping_offset: None, indentation_offset: None, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
+Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
 Scalar { value: "folded", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
 block header: style=Folded text=Some(">2-") chars=Some(475..478) bytes=Some(475..478)
   chomping=Strip indentation_indicator=Some(2) content_indent=2
   chomping indicator: chars=Some(477..478) bytes=Some(477..478)
   indentation indicator: chars=Some(476..477) bytes=Some(476..477)
-Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), chomping_offset: Some(2), indentation_offset: Some(1), content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
+Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
 Comment { value: " žąsis", placement: Right } bytes=Some(479..488) source=Some("# žąsis")
 Scalar { value: "nested", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(515..515) source=Some("")
@@ -260,7 +260,7 @@ block header: style=Literal text=Some("|+2") chars=Some(519..522) bytes=Some(521
   chomping=Keep indentation_indicator=Some(2) content_indent=4
   chomping indicator: chars=Some(520..521) bytes=Some(522..523)
   indentation indicator: chars=Some(521..522) bytes=Some(523..524)
-Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), chomping_offset: Some(1), indentation_offset: Some(2), content_indent: 4 } }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
+Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 } }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
 MappingEnd bytes=Some(540..540) source=Some("")
 Scalar { value: "omitted", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
 plain scalar: value="~" implicit=true
@@ -297,7 +297,9 @@ explicit text (`key: ~`). Decoded values retain their existing behavior. Documen
 events expose `explicit`, which is true only for a written `...` marker.
 
 Literal and folded styles carry `BlockScalarSyntax`: chomping, an optional explicit
-indentation digit, the positions of those indicators, and effective content indentation.
+indentation digit, their order (`digit_first`), and effective content indentation.
+The `chomping_offset()` and `indentation_offset()` methods compute indicator positions
+from these values; the order flag has no effect when either indicator is absent.
 Header locations are stored as backward distances from the accompanying `Span::start`.
 Keep the original span with the style; changing its start invalidates those distances.
 The existing span still has its original meaning, and a header range excludes the trailing

@@ -7,8 +7,9 @@
 - Expose `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
   `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
   [#42, section 3](https://github.com/bourumir-wyngs/granit-parser/issues/42).
-  Retain chomping, the explicit indentation digit and indicator positions, and effective
-  content indentation. Header positions use compact backward character/byte distances from
+  Retain chomping, the explicit indentation digit, their order, and effective content
+  indentation. Compute indicator offsets from these values instead of storing redundant
+  positions. Header positions use compact backward character/byte distances from
   the accompanying span, rather than an additional `Marker`. Checked range accessors locate
   headers and individual indicators without rescanning; byte ranges are unavailable for
   character-iterator inputs. Existing event spans and decoded scalar values are preserved.

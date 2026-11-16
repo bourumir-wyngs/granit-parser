@@ -3496,7 +3496,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.unroll_non_block_indents();
 
         if self.input.look_ch() == '+' || self.input.peek() == '-' {
-            syntax.chomping_offset = Some(1);
             if self.input.peek() == '+' {
                 chomping = Chomping::Keep;
             } else {
@@ -3512,7 +3511,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     ));
                 }
                 increment = (self.input.peek() as u8) - b'0';
-                syntax.indentation_offset = Some(2);
                 self.skip_non_blank();
             }
         } else if self.input.next_is_digit() {
@@ -3524,11 +3522,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
 
             increment = (self.input.peek() as u8) - b'0';
-            syntax.indentation_offset = Some(1);
             self.skip_non_blank();
             self.input.lookahead(1);
             if self.input.peek() == '+' || self.input.peek() == '-' {
-                syntax.chomping_offset = Some(2);
+                syntax.digit_first = true;
                 if self.input.peek() == '+' {
                     chomping = Chomping::Keep;
                 } else {

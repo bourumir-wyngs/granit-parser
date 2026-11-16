@@ -38,6 +38,7 @@ impl Default for Chomping {
 /// a header comment contains Unicode. Byte distances are an optional coordinate enhancement,
 /// like byte offsets on [`crate::Marker`], and do not participate in equality, ordering, or
 /// hashing. Use [`Self::header_byte_range`] to inspect them when available.
+/// Indicator offsets are computed from the chomping mode, indentation digit, and their order.
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct BlockScalarSyntax {
@@ -51,10 +52,11 @@ pub struct BlockScalarSyntax {
     pub chomping: Chomping,
     /// Explicit indentation digit (`1..=9`), or `None` when indentation was inferred.
     pub indentation_indicator: Option<u8>,
-    /// Offset of `+` or `-` from the header start, either `1` or `2`, if present.
-    pub chomping_offset: Option<u8>,
-    /// Offset of the indentation digit from the header start, either `1` or `2`, if present.
-    pub indentation_offset: Option<u8>,
+    /// Whether the indentation digit precedes the chomping sign when both are present.
+    ///
+    /// Ignored, including for equality, ordering, and hashing, when either indicator is absent.
+    /// Parsed headers set this to `false` in that case.
+    pub digit_first: bool,
     /// Effective number of leading indentation spaces removed from content lines.
     ///
     /// This is an absolute content indentation level, not the explicit indentation digit.
@@ -82,22 +84,12 @@ impl BlockScalarSyntax {
         if matches!(indentation_indicator, Some(0 | 10..=u8::MAX)) {
             return None;
         }
-        let chomping_offset = match chomping {
-            Chomping::Clip => None,
-            Chomping::Strip | Chomping::Keep => Some(1),
-        };
-        let indentation_offset = match (indentation_indicator, chomping_offset) {
-            (None, _) => None,
-            (Some(_), None) => Some(1),
-            (Some(_), Some(_)) => Some(2),
-        };
         Some(Self {
             header_chars_before_span: 0,
             header_bytes_before_span: 0,
             chomping,
             indentation_indicator,
-            chomping_offset,
-            indentation_offset,
+            digit_first: false,
             content_indent,
         })
     }
@@ -107,7 +99,42 @@ impl BlockScalarSyntax {
     /// Parsed headers contain one to three ASCII characters.
     #[must_use]
     pub const fn header_len(&self) -> usize {
-        1 + self.chomping_offset.is_some() as usize + self.indentation_offset.is_some() as usize
+        1 + !matches!(self.chomping, Chomping::Clip) as usize
+            + self.indentation_indicator.is_some() as usize
+    }
+
+    /// Return the chomping sign's offset from the header start, or `None` for clipping.
+    ///
+    /// Offsets are the same in characters and bytes: a block header contains only ASCII.
+    #[must_use]
+    pub const fn chomping_offset(&self) -> Option<u8> {
+        match self.chomping {
+            Chomping::Clip => None,
+            Chomping::Strip | Chomping::Keep => {
+                if self.digit_first && self.indentation_indicator.is_some() {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            }
+        }
+    }
+
+    /// Return the indentation digit's offset from the header start, or `None` if inferred.
+    ///
+    /// Offsets are the same in characters and bytes: a block header contains only ASCII.
+    #[must_use]
+    pub const fn indentation_offset(&self) -> Option<u8> {
+        match self.indentation_indicator {
+            None => None,
+            Some(_) => {
+                if !self.digit_first && !matches!(self.chomping, Chomping::Clip) {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            }
+        }
     }
 
     /// Return the header's character-index range using its accompanying scalar `span`.
@@ -139,25 +166,25 @@ impl BlockScalarSyntax {
     /// Return the explicit chomping sign's character range, or `None` if absent/unavailable.
     #[must_use]
     pub fn chomping_char_range(&self, span: &Span) -> Option<Range<usize>> {
-        Self::indicator_range(self.header_char_range(span)?, self.chomping_offset?)
+        Self::indicator_range(self.header_char_range(span)?, self.chomping_offset()?)
     }
 
     /// Return the explicit chomping sign's byte range, or `None` if absent/unavailable.
     #[must_use]
     pub fn chomping_byte_range(&self, span: &Span) -> Option<Range<usize>> {
-        Self::indicator_range(self.header_byte_range(span)?, self.chomping_offset?)
+        Self::indicator_range(self.header_byte_range(span)?, self.chomping_offset()?)
     }
 
     /// Return the explicit indentation digit's character range, or `None` if absent/unavailable.
     #[must_use]
     pub fn indentation_char_range(&self, span: &Span) -> Option<Range<usize>> {
-        Self::indicator_range(self.header_char_range(span)?, self.indentation_offset?)
+        Self::indicator_range(self.header_char_range(span)?, self.indentation_offset()?)
     }
 
     /// Return the explicit indentation digit's byte range, or `None` if absent/unavailable.
     #[must_use]
     pub fn indentation_byte_range(&self, span: &Span) -> Option<Range<usize>> {
-        Self::indicator_range(self.header_byte_range(span)?, self.indentation_offset?)
+        Self::indicator_range(self.header_byte_range(span)?, self.indentation_offset()?)
     }
 
     /// Return the raw header indicators from the original source.
@@ -180,13 +207,12 @@ impl BlockScalarSyntax {
         (end <= header.end).then_some(start..end)
     }
 
-    fn identity(&self) -> (usize, Chomping, Option<u8>, Option<u8>, Option<u8>, usize) {
+    fn identity(&self) -> (usize, Chomping, Option<u8>, bool, usize) {
         (
             self.header_chars_before_span,
             self.chomping,
             self.indentation_indicator,
-            self.chomping_offset,
-            self.indentation_offset,
+            self.chomping_offset() == Some(2),
             self.content_indent,
         )
     }

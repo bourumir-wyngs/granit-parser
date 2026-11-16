@@ -52,8 +52,9 @@ fn headers_preserve_style_chomping_digits_and_both_indicator_orders() {
             assert_eq!(style.is_folded(), indicator == '>');
             assert_eq!(syntax.chomping, chomping);
             assert_eq!(syntax.indentation_indicator, digit);
-            assert_eq!(syntax.chomping_offset, chomp_offset);
-            assert_eq!(syntax.indentation_offset, indent_offset);
+            assert_eq!(syntax.chomping_offset(), chomp_offset);
+            assert_eq!(syntax.indentation_offset(), indent_offset);
+            assert_eq!(syntax.digit_first, matches!(suffix, "2-" | "2+"));
             assert_eq!(syntax.content_indent, 2);
 
             let start = source.find(&header).unwrap();
@@ -303,14 +304,13 @@ fn checked_ranges_reject_underflow_and_overflow() {
     assert_eq!(syntax.header_char_range(&maximum), None);
     assert_eq!(syntax.header_byte_range(&maximum), None);
 
-    for offset in [0, 3, u8::MAX] {
-        let mut syntax = BlockScalarSyntax::new(Chomping::Strip, None, 0).unwrap();
-        syntax.chomping_offset = Some(offset);
+    for digit_first in [false, true] {
+        let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+        syntax.digit_first = digit_first;
+        syntax.header_chars_before_span = 1;
+        syntax.header_bytes_before_span = 1;
         assert_eq!(syntax.chomping_char_range(&zero), None);
         assert_eq!(syntax.chomping_byte_range(&zero), None);
-
-        let mut syntax = BlockScalarSyntax::new(Chomping::Clip, Some(2), 2).unwrap();
-        syntax.indentation_offset = Some(offset);
         assert_eq!(syntax.indentation_char_range(&zero), None);
         assert_eq!(syntax.indentation_byte_range(&zero), None);
     }
@@ -319,6 +319,63 @@ fn checked_ranges_reject_underflow_and_overflow() {
     let inside_utf8 = Span::empty(Marker::new(0, 1, 0).with_byte_offset(Some(1)));
     assert_eq!(syntax.header_slice(&inside_utf8, "é"), None);
     assert_eq!(syntax.header_slice(&maximum, ""), None);
+}
+
+#[test]
+fn editing_indicators_keeps_derived_offsets_and_ranges_consistent() {
+    let mut syntax = BlockScalarSyntax::new(Chomping::Keep, Some(9), 9).unwrap();
+    let span = Span::empty(Marker::new(3, 1, 3).with_byte_offset(Some(4)));
+    for (chomping, digit, sign_first, digit_first) in [
+        (Chomping::Clip, None, "|", "|"),
+        (Chomping::Clip, Some(2), "|2", "|2"),
+        (Chomping::Strip, None, "|-", "|-"),
+        (Chomping::Strip, Some(2), "|-2", "|2-"),
+        (Chomping::Keep, None, "|+", "|+"),
+        (Chomping::Keep, Some(2), "|+2", "|2+"),
+    ] {
+        syntax.chomping = chomping;
+        syntax.indentation_indicator = digit;
+        for (digit_first, header) in [(false, sign_first), (true, digit_first)] {
+            syntax.digit_first = digit_first;
+            let source = format!("é: {header}");
+            assert_eq!(syntax.header_len(), header.len());
+            assert_eq!(syntax.header_char_range(&span), Some(3..3 + header.len()));
+            assert_eq!(syntax.header_byte_range(&span), Some(4..4 + header.len()));
+            assert_eq!(syntax.header_slice(&span, &source), Some(header));
+            for (expected_offset, actual_offset, character_range, byte_range) in [
+                (
+                    header.find(['-', '+']),
+                    syntax.chomping_offset(),
+                    syntax.chomping_char_range(&span),
+                    syntax.chomping_byte_range(&span),
+                ),
+                (
+                    header.find('2'),
+                    syntax.indentation_offset(),
+                    syntax.indentation_char_range(&span),
+                    syntax.indentation_byte_range(&span),
+                ),
+            ] {
+                assert_eq!(actual_offset.map(usize::from), expected_offset, "{header}");
+                assert_eq!(
+                    character_range,
+                    expected_offset.map(|offset| std::ops::Range {
+                        start: 3 + offset,
+                        end: 4 + offset,
+                    }),
+                    "{header}"
+                );
+                assert_eq!(
+                    byte_range,
+                    expected_offset.map(|offset| std::ops::Range {
+                        start: 4 + offset,
+                        end: 5 + offset,
+                    }),
+                    "{header}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -332,8 +389,9 @@ fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
     for digit in [None, Some(1), Some(9)] {
         let syntax = BlockScalarSyntax::new(Chomping::Keep, digit, 9).unwrap();
         assert_eq!(syntax.indentation_indicator, digit);
-        assert_eq!(syntax.chomping_offset, Some(1));
-        assert_eq!(syntax.indentation_offset, digit.map(|_| 2));
+        assert_eq!(syntax.chomping_offset(), Some(1));
+        assert_eq!(syntax.indentation_offset(), digit.map(|_| 2));
+        assert!(!syntax.digit_first);
         assert_eq!(syntax.header_len(), if digit.is_some() { 3 } else { 2 });
     }
 
@@ -356,6 +414,26 @@ fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
     let second_style = ScalarStyle::literal(other_characters);
     assert_ne!(first_style, second_style);
     assert_eq!(first_style.kind(), second_style.kind());
+}
+
+#[test]
+fn indicator_order_affects_identity_only_when_both_indicators_are_present() {
+    for chomping in [Chomping::Clip, Chomping::Strip, Chomping::Keep] {
+        for digit in [None, Some(2)] {
+            let sign_first = BlockScalarSyntax::new(chomping, digit, 2).unwrap();
+            let mut digit_first = sign_first;
+            digit_first.digit_first = true;
+            let order_matters = chomping != Chomping::Clip && digit.is_some();
+            assert_eq!(sign_first == digit_first, !order_matters);
+            assert_eq!(
+                sign_first.cmp(&digit_first) == std::cmp::Ordering::Equal,
+                !order_matters
+            );
+            let distinct = if order_matters { 2 } else { 1 };
+            assert_eq!(HashSet::from([sign_first, digit_first]).len(), distinct);
+            assert_eq!(BTreeSet::from([sign_first, digit_first]).len(), distinct);
+        }
+    }
 }
 
 #[test]
