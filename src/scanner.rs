@@ -3510,9 +3510,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 _ if self.mark.line == start_mark.line() => String::new(),
                 // With no content lines, the header break is not scalar content.
                 Chomping::Clip => String::new(),
-                // An indented whitespace-only line at EOF is an empty content line.
+                // Preserve the default synthetic break for an indented whitespace-only line
+                // at EOF, unless the caller opted into libyaml's reading.
                 Chomping::Keep if trailing_breaks == 0 && self.mark.col > 0 => {
-                    if chomping_break {
+                    if chomping_break && !self.options.block_scalar_eof_without_line_feed {
                         "\n".into()
                     } else {
                         String::new()

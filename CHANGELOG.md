@@ -13,6 +13,7 @@
   `ruamel.yaml`. `strict_indentation: true` still rejects them (`ErrorKind::TabInIndentation`).
 - Add `Options::block_scalar_eof_without_line_feed` (default `false`) to add no line feed after
   the last line of a block scalar that ends the input without a line break, as libyaml does.
+  This also covers whitespace-only final scalars with keep chomping (`|+` and `>+`).
   By default that line still gets one, as the YAML test suite expects (`L24T`).
 
 ## 2.1.0
