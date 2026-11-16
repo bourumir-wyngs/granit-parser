@@ -1,6 +1,6 @@
 use granit_parser::{
-    BufferedInput, ErrorKind, Event, Options, Parser, ScalarStyle, ScanError, Scanner, Span,
-    StrInput, StructureStyle,
+    BufferedInput, ErrorKind, Event, Options, Parser, ScalarKind, ScalarStyle, ScanError, Scanner,
+    Span, StrInput, StructureStyle,
 };
 use std::collections::BTreeSet;
 
@@ -20,19 +20,21 @@ fn scalar_values(input: &str) -> Vec<String> {
     collect_ok_events(input)
         .into_iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ..) => Some(value.into_owned()),
+            Event::Scalar { value, .. } => Some(value.into_owned()),
             _ => None,
         })
         .collect()
 }
 
-fn scalar_values_with_style(input: &str, style: ScalarStyle) -> Vec<String> {
+fn scalar_values_with_style(input: &str, style: ScalarKind) -> Vec<String> {
     collect_ok_events(input)
         .into_iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, scalar_style, ..) if scalar_style == style => {
-                Some(value.into_owned())
-            }
+            Event::Scalar {
+                value,
+                style: scalar_style,
+                ..
+            } if scalar_style.kind() == style => Some(value.into_owned()),
             _ => None,
         })
         .collect()
@@ -125,13 +127,13 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
         let scalars: Vec<_> = str_events
             .iter()
             .filter_map(|(event, _)| match event {
-                Event::Scalar(value, style, ..) => Some((value.as_ref(), *style)),
+                Event::Scalar { value, style, .. } => Some((value.as_ref(), *style)),
                 _ => None,
             })
             .collect();
         assert_eq!(
             scalars,
-            expected.map(|value| (value, ScalarStyle::Plain)),
+            expected.map(|value| (value, ScalarStyle::plain())),
             "input: {yaml:?}"
         );
     }
@@ -140,11 +142,11 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
 #[test]
 fn block_scalars_remain_valid_outside_flow_collections() {
     assert_eq!(
-        scalar_values_with_style("key: |\n  literal\n", ScalarStyle::Literal),
+        scalar_values_with_style("key: |\n  literal\n", ScalarKind::literal()),
         ["literal\n"],
     );
     assert_eq!(
-        scalar_values_with_style("key: >\n  folded\n", ScalarStyle::Folded),
+        scalar_values_with_style("key: >\n  folded\n", ScalarKind::folded()),
         ["folded\n"],
     );
 }
@@ -161,25 +163,31 @@ fn alias_anchor_edge_cases() {
     );
 
     let self_reference = collect_ok_events("&x [*x]\n");
+    assert!(self_reference.iter().any(|(event, _)| matches!(
+        event,
+        Event::SequenceStart {
+            style: StructureStyle::Flow { .. },
+            anchor_id: 1,
+            tag: None,
+            ..
+        }
+    )));
     assert!(self_reference
         .iter()
-        .any(|(event, _)| matches!(event, Event::SequenceStart(StructureStyle::Flow, 1, None))));
-    assert!(self_reference
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Alias(1))));
+        .any(|(event, _)| matches!(event, Event::Alias { anchor_id: 1, .. })));
 
     let redefinition = collect_ok_events("[&x 1, &x 2, *x]\n");
     assert!(redefinition.iter().any(|(event, _)| matches!(
         event,
-        Event::Scalar(value, _, 1, _) if value.as_ref() == "1"
+        Event::Scalar { value, anchor_id: 1, .. } if value.as_ref() == "1"
     )));
     assert!(redefinition.iter().any(|(event, _)| matches!(
         event,
-        Event::Scalar(value, _, 2, _) if value.as_ref() == "2"
+        Event::Scalar { value, anchor_id: 2, .. } if value.as_ref() == "2"
     )));
     assert!(redefinition
         .iter()
-        .any(|(event, _)| matches!(event, Event::Alias(2))));
+        .any(|(event, _)| matches!(event, Event::Alias { anchor_id: 2, .. })));
 }
 
 fn assert_emitted_aliases_reference_preceding_anchor_nodes(yaml: &str) {
@@ -191,7 +199,7 @@ fn assert_emitted_aliases_reference_preceding_anchor_nodes(yaml: &str) {
             return;
         };
 
-        if matches!(event, Event::DocumentStart(..)) {
+        if matches!(event, Event::DocumentStart { .. }) {
             anchors.clear();
         }
 
@@ -199,7 +207,10 @@ fn assert_emitted_aliases_reference_preceding_anchor_nodes(yaml: &str) {
             anchors.insert(anchor);
         }
 
-        if let Event::Alias(anchor) = event {
+        if let Event::Alias {
+            anchor_id: anchor, ..
+        } = event
+        {
             assert!(
                 anchors.contains(&anchor),
                 "alias {anchor} was emitted before its anchor node for {yaml:?}"
@@ -305,11 +316,11 @@ fn crlf_and_wide_character_spans() {
     assert_eq!(scalar_values("a: 1\r\nb: 2\r\n"), ["a", "1", "b", "2"]);
     assert_eq!(scalar_values("a: 1\rb: 2\r"), ["a", "1", "b", "2"]);
     assert_eq!(
-        scalar_values_with_style("k: |\r\n  line1\r\n  line2\r\n", ScalarStyle::Literal),
+        scalar_values_with_style("k: |\r\n  line1\r\n  line2\r\n", ScalarKind::literal()),
         ["line1\nline2\n"]
     );
     assert_eq!(
-        scalar_values_with_style("k: \"a\r\n  b\"\r\n", ScalarStyle::DoubleQuoted),
+        scalar_values_with_style("k: \"a\r\n  b\"\r\n", ScalarKind::double_quoted()),
         ["a b"]
     );
 
@@ -317,13 +328,13 @@ fn crlf_and_wide_character_spans() {
     let interesting: Vec<_> = collect_ok_events(yaml)
         .into_iter()
         .filter_map(|(event, span)| match event {
-            Event::Scalar(value, ..) => Some((
+            Event::Scalar { value, .. } => Some((
                 value.into_owned(),
                 span.byte_range(),
                 span.slice(yaml).map(ToOwned::to_owned),
             )),
             #[cfg(feature = "comments")]
-            Event::Comment(text, _) => Some((
+            Event::Comment { value: text, .. } => Some((
                 format!("#{text}"),
                 span.byte_range(),
                 span.slice(yaml).map(ToOwned::to_owned),
@@ -377,7 +388,7 @@ fn explicit_key_indicator_at_end_of_input() {
             let events = events.unwrap_or_else(|error| panic!("{input:?}: {error}"));
             let empty_nodes: Vec<_> = events
                 .iter()
-                .filter(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "~"))
+                .filter(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "~"))
                 .collect();
             assert_eq!(empty_nodes.len(), 2, "empty key and value: {input:?}");
             for (_, span) in empty_nodes {
@@ -399,8 +410,8 @@ fn explicit_key_indicator_at_end_of_input() {
 #[test]
 fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
     for (quote, style) in [
-        ('\'', ScalarStyle::SingleQuoted),
-        ('"', ScalarStyle::DoubleQuoted),
+        ('\'', ScalarStyle::single_quoted()),
+        ('"', ScalarStyle::double_quoted()),
     ] {
         for newline in ["\n", "\r\n"] {
             for (prefix, indent) in [("clé: ", " "), ("outer:\n  clé: ", "   ")] {
@@ -426,7 +437,12 @@ fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
                     let scalars: Vec<_> = from_str
                         .iter()
                         .filter_map(|(event, span)| {
-                            if let Event::Scalar(value, actual_style, ..) = event {
+                            if let Event::Scalar {
+                                value,
+                                style: actual_style,
+                                ..
+                            } = event
+                            {
                                 Some((value.as_ref(), *actual_style, span))
                             } else {
                                 None
@@ -435,7 +451,7 @@ fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
                         .collect();
                     let (value, _, span) = scalars
                         .iter()
-                        .find(|(_, actual_style, _)| *actual_style == style)
+                        .find(|(_, actual_style, _)| actual_style.kind() == style.kind())
                         .expect("quoted value");
                     assert_eq!(*value, expected, "{input:?}");
                     assert_eq!(span.slice(&input), Some(quoted.as_str()));

@@ -34,7 +34,7 @@ fn collect_scalars(source: &str) -> Result<Vec<SourceScalar<'_>>, String> {
             .get(bytes.clone())
             .ok_or("event span is not a valid range in the original source")?;
 
-        if let Event::Scalar(value, ..) = event {
+        if let Event::Scalar { value, .. } = event {
             scalars.push(SourceScalar { value, bytes, raw });
         }
     }

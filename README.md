@@ -10,7 +10,7 @@
 [![Socket Badge](https://badge.socket.dev/cargo/package/granit-parser)](https://socket.dev/cargo/package/granit-parser)
 [![dependency status](https://deps.rs/crate/granit-parser/latest/status.svg)](https://deps.rs/crate/granit-parser/latest)
 
-[![1.3 API compatibility](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
+[![API compatibility](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/d/granit-parser.svg)](https://crates.io/crates/granit-parser)
@@ -32,9 +32,9 @@ Its primary goals are:
 * improved support for formatting, linting, syntax highlight and other comparable projects that need additional metadata  
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
-`granit-parser` 1.0 stabilizes the public API after the experimental 0.0.x releases. The 1.0
-migration, including scanner and parser-stack replacements, is documented in
-[`CHANGELOG.md`](CHANGELOG.md).
+`granit-parser` 3.0 exposes block-scalar header syntax and uses named, non-exhaustive
+syntax variants. See [Migrating to 3.0](#migrating-to-30) below and
+[`CHANGELOG.md`](CHANGELOG.md) for earlier migrations.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
@@ -42,7 +42,7 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges, source slices, and explicit tag-token starts for tagged nodes:
 
-Comments are emitted as [`Event::Comment(text, placement)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
+Comments are emitted as [`Event::Comment { value, placement, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
 
 Applications that do not use comments can disable their capture and emission by setting
 [`Options::emit_comments`](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html#structfield.emit_comments)
@@ -50,7 +50,7 @@ to `false` or disabling the default `comments` Cargo feature. The field is alway
 defaults to `true` with the feature enabled and `false` without it. Setting it to `true` has no
 effect without the feature. Comments are still recognized and validated as YAML syntax.
 
-Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
+Document starts are emitted as [`Event::DocumentStart { explicit, version, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
 For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
 syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
@@ -102,12 +102,12 @@ dessert: cake
         let (event, span) = next?;
 
         match &event {
-            Event::Anchor(id, name) => {
+            Event::Anchor { anchor_id: id, name, .. } => {
                 // Metadata for the preceding node, with a span covering the &name token.
                 println!("anchor: id={id} name={name:?}");
             }
-            Event::Alias(id) => println!("alias: target id={id}"),
-            Event::UnresolvedAlias(name) => {
+            Event::Alias { anchor_id: id, .. } => println!("alias: target id={id}"),
+            Event::UnresolvedAlias { name, .. } => {
                 // Still an invalid reference, with a span covering the *name token.
                 println!("undefined anchor: {name:?}");
             }
@@ -148,52 +148,103 @@ This prints an event stream like:
 
 ```text
 StreamStart bytes=Some(0..0) source=Some("")
-DocumentStart(true, Some(YamlVersion { major: 1, minor: 2 })) bytes=Some(80..83) source=Some("---")
-MappingStart(Block, 0, None) bytes=Some(84..84) source=Some("")
-Scalar("items", Plain, 0, None) bytes=Some(84..89) source=Some("items")
+DocumentStart { explicit: true, version: Some(YamlVersion { major: 1, minor: 2 }) } bytes=Some(80..83) source=Some("---")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(84..84) source=Some("")
+Scalar { value: "items", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(84..89) source=Some("items")
 node tag: !shopping custom=true tag_start(line,col,byte)=Some((6, 7, Some(91)))
-SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" })) bytes=Some(103..103) source=Some("")
-Scalar("milk", Plain, 0, None) bytes=Some(105..109) source=Some("milk")
+SequenceStart { style: Block, anchor_id: 0, tag: Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" }) } bytes=Some(103..103) source=Some("")
+Scalar { value: "milk", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(105..109) source=Some("milk")
 scalar tag: tag:example.com,2000:sliced core-suffix=None core-str=false tag_start(line,col,byte)=Some((8, 4, Some(114))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" })) bytes=Some(130..135) source=Some("bread")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" }) } bytes=Some(130..135) source=Some("bread")
 scalar tag: tag:yaml.org,2002:str core-suffix=Some("str") core-str=true tag_start(line,col,byte)=Some((9, 4, Some(140))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" })) bytes=Some(146..151) source=Some("bread")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" }) } bytes=Some(146..151) source=Some("bread")
 scalar tag: tag:yaml.org,2002:int core-suffix=Some("int") core-str=false tag_start(line,col,byte)=Some((10, 4, Some(156))) for "1"
-Scalar("1", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" })) bytes=Some(165..166) source=Some("1")
+Scalar { value: "1", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" }) } bytes=Some(165..166) source=Some("1")
 SequenceEnd bytes=Some(167..167) source=Some("")
-Scalar("locations", Plain, 0, None) bytes=Some(167..176) source=Some("locations")
-Comment(" Example with composite keys", Right) bytes=Some(178..207) source=Some("# Example with composite keys")
-MappingStart(Block, 0, None) bytes=Some(210..210) source=Some("")
-SequenceStart(Flow, 0, None) bytes=Some(210..211) source=Some("[")
-Scalar("47.3769", Plain, 0, None) bytes=Some(211..218) source=Some("47.3769")
-Scalar("8.5417", Plain, 0, None) bytes=Some(220..226) source=Some("8.5417")
+Scalar { value: "locations", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(167..176) source=Some("locations")
+Comment { value: " Example with composite keys", placement: Right } bytes=Some(178..207) source=Some("# Example with composite keys")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(210..210) source=Some("")
+SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(210..211) source=Some("[")
+Scalar { value: "47.3769", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(211..218) source=Some("47.3769")
+Scalar { value: "8.5417", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(220..226) source=Some("8.5417")
 SequenceEnd bytes=Some(226..227) source=Some("]")
-Scalar("local", Plain, 0, None) bytes=Some(229..234) source=Some("local")
-SequenceStart(Flow, 0, None) bytes=Some(237..238) source=Some("[")
-Scalar("40.7128", Plain, 0, None) bytes=Some(238..245) source=Some("40.7128")
-Scalar("-74.0060", Plain, 0, None) bytes=Some(247..255) source=Some("-74.0060")
+Scalar { value: "local", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(229..234) source=Some("local")
+SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(237..238) source=Some("[")
+Scalar { value: "40.7128", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(238..245) source=Some("40.7128")
+Scalar { value: "-74.0060", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(247..255) source=Some("-74.0060")
 SequenceEnd bytes=Some(255..256) source=Some("]")
-Scalar("remote", Plain, 0, None) bytes=Some(258..264) source=Some("remote")
-Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
+Scalar { value: "remote", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(258..264) source=Some("remote")
+Comment { value: " JSON-style \\uXXXX surrogate pairs:", placement: Above } bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
 MappingEnd bytes=Some(303..303) source=Some("")
-Scalar("music", Plain, 0, None) bytes=Some(303..308) source=Some("music")
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-Scalar("favorite", Plain, 0, None) bytes=Some(350..358) source=Some("favorite")
-Scalar("bread", Plain, 1, None) bytes=Some(370..375) source=Some("bread")
+Scalar { value: "music", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(303..308) source=Some("music")
+Scalar { value: "𝄞🎵🎶", style: DoubleQuoted, anchor_id: 0, tag: None } bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
+Scalar { value: "favorite", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(350..358) source=Some("favorite")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 1, tag: None } bytes=Some(370..375) source=Some("bread")
 anchor: id=1 name="favorite"
-Anchor(1, "favorite") bytes=Some(360..369) source=Some("&favorite")
-Scalar("order", Plain, 0, None) bytes=Some(376..381) source=Some("order")
+Anchor { anchor_id: 1, name: "favorite" } bytes=Some(360..369) source=Some("&favorite")
+Scalar { value: "order", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(376..381) source=Some("order")
 alias: target id=1
-Alias(1) bytes=Some(383..392) source=Some("*favorite")
-Scalar("unavailable", Plain, 0, None) bytes=Some(393..404) source=Some("unavailable")
+Alias { anchor_id: 1 } bytes=Some(383..392) source=Some("*favorite")
+Scalar { value: "unavailable", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(393..404) source=Some("unavailable")
 undefined anchor: "missing"
-UnresolvedAlias("missing") bytes=Some(406..414) source=Some("*missing")
-Scalar("dessert", Plain, 0, None) bytes=Some(415..422) source=Some("dessert")
-Scalar("cake", Plain, 0, None) bytes=Some(424..428) source=Some("cake")
+UnresolvedAlias { name: "missing" } bytes=Some(406..414) source=Some("*missing")
+Scalar { value: "dessert", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(415..422) source=Some("dessert")
+Scalar { value: "cake", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(424..428) source=Some("cake")
 MappingEnd bytes=Some(429..429) source=Some("")
-DocumentEnd bytes=Some(429..429) source=Some("")
+DocumentEnd { explicit: false } bytes=Some(429..429) source=Some("")
 StreamEnd bytes=Some(429..429) source=Some("")
 ```
+
+## Migrating to 3.0
+
+`Event`, `TokenType`, and the syntax/style enums use non-exhaustive variants. Match named
+fields with `..`, and include a fallback arm when matching the entire enum. For example,
+`Event::Scalar(value, style, _, _)` becomes `Event::Scalar { value, style, .. }`.
+Use constructors for synthetic values, such as `Event::new_scalar(...)`,
+`TokenType::scalar(...)`, `ScalarStyle::plain()`, and `StructureStyle::block()`.
+`Event::scalar()` remains the accessor for a scalar's decoded value and style.
+
+`ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
+explicit text (`key: ~`). Decoded values retain their existing behavior. Document-end
+events expose `explicit`, which is true only for a written `...` marker.
+
+Literal and folded styles carry `BlockScalarSyntax`: chomping, an optional explicit
+indentation digit, the positions of those indicators, and effective content indentation.
+Header locations are stored as backward distances from the accompanying `Span::start`.
+Keep the original span with the style; changing its start invalidates those distances.
+The existing span still has its original meaning, and a header range excludes the trailing
+whitespace, comment, and line break.
+
+```rust
+use granit_parser::{Parser, ScalarStyle};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "message: >2- # explanation\n  hello\n  world\n";
+    for result in Parser::new_from_str(source) {
+        let (event, span) = result?;
+        if let Some((_, style)) = event.scalar() {
+            match style {
+                ScalarStyle::Literal { syntax, .. }
+                | ScalarStyle::Folded { syntax, .. } => {
+                    let range = syntax.header_byte_range(&span)
+                        .expect("string input provides byte offsets");
+                    assert_eq!(&source[range], ">2-");
+                    assert_eq!(syntax.indentation_indicator, Some(2));
+                    assert_eq!(syntax.content_indent, 2);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+`header_char_range` also works for character-iterator inputs; `header_byte_range` returns
+`None` when the companion span lacks byte offsets. These ranges locate the header without
+reconstructing its line and column. They are not a complete scalar replacement range.
+Use `style.kind()` or predicates such as `style.is_literal()` when comparing notation
+categories without comparing source metadata.
 
 ## Learning examples
 

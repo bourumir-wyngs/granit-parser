@@ -33,7 +33,7 @@
 //!
 //! for next in Parser::new_from_str(yaml) {
 //!     let (event, span) = next?;
-//!     if let Event::Comment(text, placement) = event {
+//!     if let Event::Comment { value: text, placement, .. } = event {
 //!         comments.push((
 //!             text.into_owned(),
 //!             placement,
@@ -45,8 +45,8 @@
 //! assert_eq!(
 //!     comments,
 //!     [
-//!         (" header".to_owned(), Placement::Above, "# header".to_owned()),
-//!         (" inline".to_owned(), Placement::Right, "# inline".to_owned()),
+//!         (" header".to_owned(), Placement::above(), "# header".to_owned()),
+//!         (" inline".to_owned(), Placement::right(), "# inline".to_owned()),
 //!     ]
 //! );
 //! # }
@@ -88,11 +88,11 @@
 //!         assert_eq!(tag_span.slice(yaml), Some("!note"));
 //!     }
 //!     match event {
-//!         Event::Anchor(id, name) => {
+//!         Event::Anchor { anchor_id: id, name, .. } => {
 //!             assert_eq!(span.slice(yaml), Some("&msg"));
 //!             anchors.insert(id, (name, span));
 //!         }
-//!         Event::Alias(id) => {
+//!         Event::Alias { anchor_id: id, .. } => {
 //!             let (name, definition_span) = &anchors[&id];
 //!             assert_eq!(name, "msg");
 //!             assert_eq!(definition_span.slice(yaml), Some("&msg"));
@@ -184,6 +184,7 @@ mod macros;
 mod options;
 mod parser;
 mod parser_stack;
+mod scalar_style;
 mod scanner;
 
 pub use crate::error::{ErrorKind, InputIoError, ScanError};
@@ -194,6 +195,7 @@ pub use crate::parser::{
     Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
 pub use crate::parser_stack::{ParserStack, ReplayParser};
+pub use crate::scalar_style::{BlockScalarSyntax, Chomping, ScalarKind};
 #[cfg(feature = "comments")]
 pub use crate::scanner::{Comment, Placement};
 pub use crate::scanner::{Marker, ScalarStyle, Scanner, Span, Token, TokenType};

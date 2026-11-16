@@ -34,11 +34,15 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
         let (event, span) = next?;
 
         match &event {
-            Event::Anchor(id, name) => {
+            Event::Anchor {
+                anchor_id: id,
+                name,
+                ..
+            } => {
                 lines.push(format!("anchor: id={id} name={name:?}"));
             }
-            Event::Alias(id) => lines.push(format!("alias: target id={id}")),
-            Event::UnresolvedAlias(name) => {
+            Event::Alias { anchor_id: id, .. } => lines.push(format!("alias: target id={id}")),
+            Event::UnresolvedAlias { name, .. } => {
                 lines.push(format!("undefined anchor: {name:?}"));
             }
             _ => {}
@@ -79,7 +83,7 @@ fn minimal_example_output_matches_readme() {
     let yaml = extract_yaml_input(section);
     let expected = extract_expected_output(section)
         .lines()
-        .filter(|line| cfg!(feature = "comments") || !line.starts_with("Comment("))
+        .filter(|line| cfg!(feature = "comments") || !line.starts_with("Comment {"))
         .collect::<Vec<_>>()
         .join("\n");
     let actual =

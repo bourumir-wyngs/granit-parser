@@ -33,13 +33,13 @@ fn assert_presence<'input, I: BorrowedInput<'input>>(
     assert_eq!(
         events
             .iter()
-            .any(|(event, _)| matches!(event, Event::DocumentStart(..))),
+            .any(|(event, _)| matches!(event, Event::DocumentStart { .. })),
         expected,
     );
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
             .count(),
         1,
     );
@@ -76,12 +76,15 @@ fn presence_after_document_end_preserves_the_entire_remaining_event_stream() {
     for suffix in ["# trailing\n...\n# last\n", "# between\n---\nsecond\n"] {
         let source = format!("first\n...\n{suffix}");
         let mut reference = Parser::new_from_str(&source);
-        while reference.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+        while !matches!(
+            reference.next().unwrap().unwrap().0,
+            Event::DocumentEnd { .. }
+        ) {}
         let expected = reference.collect::<Result<Vec<_>, _>>().unwrap();
 
         for peek_end in [false, true] {
             let mut parser = Parser::new_from_str(&source);
-            while parser.peek().unwrap().unwrap().0 != Event::DocumentEnd {
+            while !matches!(parser.peek().unwrap().unwrap().0, Event::DocumentEnd { .. }) {
                 parser.next().unwrap().unwrap();
             }
             if !peek_end {
@@ -89,7 +92,7 @@ fn presence_after_document_end_preserves_the_entire_remaining_event_stream() {
             }
             let has_document = expected
                 .iter()
-                .any(|(event, _)| matches!(event, Event::DocumentStart(..)));
+                .any(|(event, _)| matches!(event, Event::DocumentStart { .. }));
             assert_eq!(parser.proceed_next_document().unwrap(), has_document);
             if !has_document {
                 assert!(!parser.proceed_next_document().unwrap());
@@ -107,9 +110,9 @@ fn repeated_proceed_preserves_an_unread_or_peeked_stream_end() {
     for _ in 0..3 {
         assert!(!parser.proceed_next_document().unwrap());
     }
-    assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamEnd);
+    assert_eq!(parser.peek().unwrap().unwrap().0, Event::stream_end());
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+    assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
     assert!(!parser.proceed_next_document().unwrap());
     assert!(parser.next().is_none());
 }
@@ -155,7 +158,10 @@ fn load_and_try_load_preserve_buffered_comments_before_the_next_syntax_error() {
     for header in ["%YAML bad", "%YAML 2.0", "@"] {
         let source = format!("first\n...\n# one\n# two\n{header}\n---\nbody\n");
         let mut reference = Parser::new_from_str(&source);
-        while reference.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+        while !matches!(
+            reference.next().unwrap().unwrap().0,
+            Event::DocumentEnd { .. }
+        ) {}
         let mut expected = Vec::new();
         let expected_error = loop {
             match reference.next().unwrap() {
@@ -191,7 +197,7 @@ fn incomplete_next_header_is_not_reported_as_clean_eof() {
     let error = parser.by_ref().find_map(Result::err).unwrap();
     assert_eq!(error.kind(), &ErrorKind::ExpectedDocumentStart);
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+    assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
 }
 
 #[cfg(feature = "comments")]
@@ -199,10 +205,10 @@ fn assert_pending_header_presence<'input, I: BorrowedInput<'input>>(
     mut parser: Parser<'input, I>,
     consume_comment: bool,
 ) {
-    while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+    while !matches!(parser.next().unwrap().unwrap().0, Event::DocumentEnd { .. }) {}
     assert!(matches!(
         parser.peek().unwrap().unwrap().0,
-        Event::Comment(..)
+        Event::Comment { .. }
     ));
     if consume_comment {
         parser.next().unwrap().unwrap();
@@ -246,10 +252,10 @@ fn pending_header_probe_keeps_source_failures_terminal() {
         .chain(std::iter::once(Err(failure.clone())))
         .chain(std::iter::from_fn(|| panic!("source polled after failure")));
     let mut parser = Parser::new_from_fallible_iter(input);
-    while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+    while !matches!(parser.next().unwrap().unwrap().0, Event::DocumentEnd { .. }) {}
     assert!(matches!(
         parser.peek().unwrap().unwrap().0,
-        Event::Comment(..)
+        Event::Comment { .. }
     ));
 
     assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
@@ -277,7 +283,7 @@ fn source_failure_while_probing_past_comments_is_terminal() {
             .chain(std::iter::once(Err(failure.clone())))
             .chain(std::iter::from_fn(|| panic!("source polled after failure")));
         let mut parser = Parser::new_from_fallible_iter(input);
-        while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+        while !matches!(parser.next().unwrap().unwrap().0, Event::DocumentEnd { .. }) {}
         assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
         assert!(parser.peek().is_none());
         assert!(parser.next().is_none());
@@ -300,10 +306,10 @@ fn terminal_probe_error_discards_a_previously_peeked_comment() {
         .chain(std::iter::once(Err(failure.clone())))
         .chain(std::iter::from_fn(|| panic!("source polled after failure")));
     let mut parser = Parser::new_from_fallible_iter(input);
-    while parser.next().unwrap().unwrap().0 != Event::DocumentEnd {}
+    while !matches!(parser.next().unwrap().unwrap().0, Event::DocumentEnd { .. }) {}
     assert!(matches!(
         parser.peek().unwrap().unwrap().0,
-        Event::Comment(..)
+        Event::Comment { .. }
     ));
     assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
     assert!(parser.peek().is_none());
@@ -338,7 +344,7 @@ fn probing_respects_the_comment_buffer_limit_and_disabled_comments() {
             },
         );
         assert!(!parser.proceed_next_document().unwrap());
-        assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+        assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
 
         let mut parser = Parser::new_from_str_with_options(
             "first\n...\n# one\n# two\n---\nhealthy\n",

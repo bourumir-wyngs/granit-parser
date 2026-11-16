@@ -73,7 +73,7 @@ fn chars_pulled_before_first_comment(source: &str, options: Options) -> usize {
             .next_event()
             .expect("parser should emit an event before EOF")
             .expect("parser should accept generated comment run");
-        if matches!(event, Event::Comment(..)) {
+        if matches!(event, Event::Comment { .. }) {
             return read.get();
         }
     }
@@ -103,7 +103,11 @@ fn first_empty_scalar_span(events: &[(Event<'_>, Span)]) -> Span {
     events
         .iter()
         .find_map(|(event, span)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) if value.as_ref() == "~" => Some(*span),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } if value.as_ref() == "~" => Some(*span),
             _ => None,
         })
         .expect("empty scalar should be emitted")
@@ -130,7 +134,7 @@ fn comment_type_is_a_convenience_container() {
     let comment = Comment::new(" payload ");
 
     assert_eq!(comment.text(), " payload ");
-    assert_eq!(comment.placement(), Placement::Free);
+    assert_eq!(comment.placement(), Placement::free());
     assert_eq!(comment.as_ref(), " payload ");
     assert_eq!(comment.trimmed_text(), "payload");
 }
@@ -145,9 +149,9 @@ fn comment_type_preserves_single_space_payload() {
 
 #[test]
 fn event_comment_stores_raw_payload() {
-    let event = Event::Comment(" payload ".into(), Placement::Free);
+    let event = Event::comment(" payload ".into(), Placement::free());
 
-    assert_eq!(event, Event::Comment(" payload ".into(), Placement::Free));
+    assert_eq!(event, Event::comment(" payload ".into(), Placement::free()));
     assert!(!event.is_node());
     assert_eq!(event.scalar(), None);
     assert_eq!(event.tag(), None);
@@ -164,12 +168,14 @@ fn token_comment_uses_span_for_full_source_comment() {
     );
     let token = Token::new(
         span,
-        TokenType::Comment(Comment::new(" payload").with_placement(Placement::Right)),
+        TokenType::comment(Comment::new(" payload").with_placement(Placement::right())),
     );
 
     assert_eq!(token.span().slice(yaml), Some("# payload"));
-    assert!(matches!(token.token_type(), TokenType::Comment(comment)
-        if comment.text() == " payload" && comment.placement() == Placement::Right));
+    assert!(
+        matches!(token.token_type(), TokenType::Comment { comment, .. }
+        if comment.text() == " payload" && comment.placement() == Placement::right())
+    );
 }
 
 #[test]
@@ -180,7 +186,7 @@ fn scanner_emits_comment_tokens_in_source_order() {
     let comments: Vec<_> = tokens
         .iter()
         .filter_map(|token| match token.token_type() {
-            TokenType::Comment(comment) => Some((comment.text(), token.span().slice(yaml))),
+            TokenType::Comment { comment, .. } => Some((comment.text(), token.span().slice(yaml))),
             _ => None,
         })
         .collect();
@@ -204,14 +210,17 @@ fn scanner_assigns_initial_comment_placements() {
     let comments: Vec<_> = tokens
         .iter()
         .filter_map(|token| match token.token_type() {
-            TokenType::Comment(comment) => Some((comment.text(), comment.placement())),
+            TokenType::Comment { comment, .. } => Some((comment.text(), comment.placement())),
             _ => None,
         })
         .collect();
 
     assert_eq!(
         comments,
-        vec![(" own line", Placement::Free), (" right", Placement::Right)]
+        vec![
+            (" own line", Placement::free()),
+            (" right", Placement::right())
+        ]
     );
 }
 
@@ -229,13 +238,13 @@ fn scanner_marks_same_line_comments_after_syntax_as_right() {
             .expect("valid YAML should scan without errors")
             .into_iter()
             .find_map(|token| match token.into_parts().1 {
-                TokenType::Comment(comment) => Some(comment),
+                TokenType::Comment { comment, .. } => Some(comment),
                 _ => None,
             })
             .expect("comment token should be emitted");
 
         assert_eq!(comment.text(), expected_text, "{yaml:?}");
-        assert_eq!(comment.placement(), Placement::Right, "{yaml:?}");
+        assert_eq!(comment.placement(), Placement::right(), "{yaml:?}");
     }
 }
 
@@ -247,13 +256,13 @@ fn scanner_emits_trailing_comment_after_plain_scalar_token() {
     let value_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Plain, value) if value == "value")
+            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value")
         })
         .expect("plain scalar token should be emitted");
     let comment_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Comment(comment) if comment.text() == " trailing")
+            matches!(token.token_type(), TokenType::Comment { comment, .. } if comment.text() == " trailing")
         })
         .expect("comment token should be emitted");
 
@@ -261,6 +270,7 @@ fn scanner_emits_trailing_comment_after_plain_scalar_token() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keep the syntax/comment ordering cases together.
 fn scanner_emits_comments_after_syntax_tokens() {
     struct Case<'input> {
         yaml: &'input str,
@@ -271,73 +281,82 @@ fn scanner_emits_comments_after_syntax_tokens() {
     let cases = [
         Case {
             yaml: "%YAML 1.2 # directive\n---\n",
-            syntax_matches: |token| matches!(token, TokenType::VersionDirective(1, 2)),
+            syntax_matches: |token| {
+                matches!(
+                    token,
+                    TokenType::VersionDirective {
+                        major: 1,
+                        minor: 2,
+                        ..
+                    }
+                )
+            },
             expected_comment: " directive",
         },
         Case {
             yaml: "%TAG !e! tag:example.com,2020:app/ # tag directive\n---\n",
             syntax_matches: |token| {
-                matches!(token, TokenType::TagDirective(handle, prefix)
+                matches!(token, TokenType::TagDirective { handle, prefix, .. }
                 if handle == "!e!" && prefix == "tag:example.com,2020:app/")
             },
             expected_comment: " tag directive",
         },
         Case {
             yaml: "---\nkey: value\n... # document end\n",
-            syntax_matches: |token| matches!(token, TokenType::DocumentEnd),
+            syntax_matches: |token| matches!(token, TokenType::DocumentEnd { .. }),
             expected_comment: " document end",
         },
         Case {
             yaml: "[ # flow start\n]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart { .. }),
             expected_comment: " flow start",
         },
         Case {
             yaml: "[a] # flow end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd { .. }),
             expected_comment: " flow end",
         },
         Case {
             yaml: "{a: b} # flow mapping end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd),
+            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd { .. }),
             expected_comment: " flow mapping end",
         },
         Case {
             yaml: "[a, # flow entry\nb]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowEntry),
+            syntax_matches: |token| matches!(token, TokenType::FlowEntry { .. }),
             expected_comment: " flow entry",
         },
         Case {
             yaml: "? # explicit key\n: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Key),
+            syntax_matches: |token| matches!(token, TokenType::Key { .. }),
             expected_comment: " explicit key",
         },
         Case {
             yaml: "!local # tag\nvalue\n",
             syntax_matches: |token| {
-                matches!(token, TokenType::Tag(handle, suffix)
+                matches!(token, TokenType::Tag { handle, suffix, .. }
                 if handle == "!" && suffix == "local")
             },
             expected_comment: " tag",
         },
         Case {
             yaml: "&a # anchor\nvalue\n",
-            syntax_matches: |token| matches!(token, TokenType::Anchor(anchor) if anchor == "a"),
+            syntax_matches: |token| matches!(token, TokenType::Anchor { name: anchor, .. } if anchor == "a"),
             expected_comment: " anchor",
         },
         Case {
             yaml: "ref: *a # alias\n",
-            syntax_matches: |token| matches!(token, TokenType::Alias(alias) if alias == "a"),
+            syntax_matches: |token| matches!(token, TokenType::Alias { name: alias, .. } if alias == "a"),
             expected_comment: " alias",
         },
         Case {
             yaml: "key: \"value\" # quoted\n",
-            syntax_matches: |token| matches!(token, TokenType::Scalar(ScalarStyle::DoubleQuoted, value) if value == "value"),
+            syntax_matches: |token| matches!(token, TokenType::Scalar { style: ScalarStyle::DoubleQuoted { .. }, value, .. } if value == "value"),
             expected_comment: " quoted",
         },
         Case {
             yaml: "key:\t# mapping value\n  nested: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Value),
+            syntax_matches: |token| matches!(token, TokenType::Value { .. }),
             expected_comment: " mapping value",
         },
     ];
@@ -351,7 +370,7 @@ fn scanner_emits_comments_after_syntax_tokens() {
         let comment_index = tokens
             .iter()
             .position(|token| {
-                matches!(token.token_type(), TokenType::Comment(comment)
+                matches!(token.token_type(), TokenType::Comment { comment, .. }
                     if comment.text() == case.expected_comment)
             })
             .expect("comment token should be emitted");
@@ -368,14 +387,14 @@ fn scanner_emits_comments_after_block_scalar_headers() {
     let scalar_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Literal, value)
+            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Literal { .. }, value, .. }
                 if value == "body\n")
         })
         .expect("literal scalar token should be emitted");
     let comment_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Comment(comment)
+            matches!(token.token_type(), TokenType::Comment { comment, .. }
                 if comment.text() == " block scalar header")
         })
         .expect("block scalar header comment should be emitted");
@@ -392,7 +411,7 @@ fn scanner_preserves_empty_comment_payloads() {
         .filter_map(|token| {
             let (span, token_type) = token.into_parts();
             match token_type {
-                TokenType::Comment(comment) => Some((
+                TokenType::Comment { comment, .. } => Some((
                     comment.into_text().into_owned(),
                     span.slice(yaml).map(str::to_owned),
                 )),
@@ -419,7 +438,9 @@ fn scanner_comment_span_stops_before_crlf() {
         .find_map(|token| {
             let (span, token_type) = token.into_parts();
             match token_type {
-                TokenType::Comment(comment) => Some((comment.into_text().into_owned(), span)),
+                TokenType::Comment { comment, .. } => {
+                    Some((comment.into_text().into_owned(), span))
+                }
                 _ => None,
             }
         })
@@ -438,7 +459,7 @@ fn scanner_preserves_non_ascii_comment_payload_offsets() {
         .find_map(|token| {
             let (span, token_type) = token.into_parts();
             match token_type {
-                TokenType::Comment(comment) => Some((comment, span)),
+                TokenType::Comment { comment, .. } => Some((comment, span)),
                 _ => None,
             }
         })
@@ -458,7 +479,7 @@ fn scanner_comment_text_is_borrowed_for_str_input() {
         .expect("valid YAML should scan without errors")
         .into_iter()
         .find_map(|token| match token.into_parts().1 {
-            TokenType::Comment(comment) => Some(comment.into_text()),
+            TokenType::Comment { comment, .. } => Some(comment.into_text()),
             _ => None,
         })
         .expect("comment token should be emitted");
@@ -476,7 +497,7 @@ fn scanner_comment_text_is_owned_for_buffered_input() {
         .expect("valid YAML should scan without errors")
         .into_iter()
         .find_map(|token| match token.into_parts().1 {
-            TokenType::Comment(comment) => Some(comment.into_text()),
+            TokenType::Comment { comment, .. } => Some(comment.into_text()),
             _ => None,
         })
         .expect("comment token should be emitted");
@@ -500,7 +521,7 @@ fn scanner_comment_tokens_match_between_str_and_buffered_input() {
             .filter_map(|token| {
                 let (span, token_type) = token.into_parts();
                 match token_type {
-                    TokenType::Comment(comment) => {
+                    TokenType::Comment { comment, .. } => {
                         let placement = comment.placement();
                         Some((
                             comment.into_text().into_owned(),
@@ -528,17 +549,17 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
     let cases = [
         (
             "key: \"# not a comment\"\n",
-            ScalarStyle::DoubleQuoted,
+            ScalarStyle::double_quoted(),
             "# not a comment",
         ),
         (
             "key: '# not a comment'\n",
-            ScalarStyle::SingleQuoted,
+            ScalarStyle::single_quoted(),
             "# not a comment",
         ),
         (
             "key: |\n  # not a comment\n",
-            ScalarStyle::Literal,
+            ScalarStyle::literal(granit_parser::BlockScalarSyntax::default()),
             "# not a comment\n",
         ),
     ];
@@ -549,13 +570,13 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
         assert!(
             !tokens
                 .iter()
-                .any(|token| matches!(token.token_type(), TokenType::Comment(_))),
+                .any(|token| matches!(token.token_type(), TokenType::Comment { .. })),
             "{yaml:?}"
         );
         assert!(
             tokens.iter().any(|token| {
-                matches!(token.token_type(), TokenType::Scalar(scalar_style, value)
-                    if *scalar_style == style && value == expected_value)
+                matches!(token.token_type(), TokenType::Scalar { style: scalar_style, value, .. }
+                    if scalar_style.kind() == style.kind() && value == expected_value)
             }),
             "{yaml:?}"
         );
@@ -569,7 +590,7 @@ fn scanner_does_not_emit_unseparated_comment_after_quoted_scalar_error() {
 
     let error = loop {
         match scanner.next() {
-            Some(Ok(token)) if matches!(token.token_type(), TokenType::Comment(_)) => {
+            Some(Ok(token)) if matches!(token.token_type(), TokenType::Comment { .. }) => {
                 saw_comment = true;
             }
             Some(Ok(_)) => {}
@@ -587,11 +608,11 @@ fn scanner_treats_unseparated_hash_after_plain_scalar_as_content() {
     let tokens = scanner_tokens("key: value#bad\n").expect("valid YAML should scan without errors");
 
     assert!(tokens.iter().any(|token| {
-        matches!(token.token_type(), TokenType::Scalar(ScalarStyle::Plain, value) if value == "value#bad")
+        matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value#bad")
     }));
     assert!(!tokens
         .iter()
-        .any(|token| matches!(token.token_type(), TokenType::Comment(_))));
+        .any(|token| matches!(token.token_type(), TokenType::Comment { .. })));
 }
 
 #[test]
@@ -625,14 +646,18 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
         let scalars = tokens
             .iter()
             .filter_map(|token| match token.token_type() {
-                TokenType::Scalar(ScalarStyle::Plain, value) => Some(value.as_ref()),
+                TokenType::Scalar {
+                    style: ScalarStyle::Plain { .. },
+                    value,
+                    ..
+                } => Some(value.as_ref()),
                 _ => None,
             })
             .collect::<Vec<_>>();
         let comments = tokens
             .iter()
             .filter_map(|token| match token.token_type() {
-                TokenType::Comment(comment) => Some((
+                TokenType::Comment { comment, .. } => Some((
                     comment.text(),
                     comment.placement(),
                     token.span().slice(case.yaml),
@@ -647,7 +672,7 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
             Some((text, slice)) => {
                 assert_eq!(
                     comments,
-                    vec![(text, Placement::Right, Some(slice))],
+                    vec![(text, Placement::right(), Some(slice))],
                     "{:?}",
                     case.yaml
                 );
@@ -664,7 +689,7 @@ fn scanner_accepts_tab_separated_explicit_key_with_comment() {
     let scalars: Vec<_> = tokens
         .iter()
         .filter_map(|token| match token.token_type() {
-            TokenType::Scalar(_, value) => Some(value.as_ref()),
+            TokenType::Scalar { value, .. } => Some(value.as_ref()),
             _ => None,
         })
         .collect();
@@ -673,7 +698,7 @@ fn scanner_accepts_tab_separated_explicit_key_with_comment() {
     let comments: Vec<_> = tokens
         .iter()
         .filter_map(|token| match token.token_type() {
-            TokenType::Comment(comment) => Some((
+            TokenType::Comment { comment, .. } => Some((
                 comment.text(),
                 comment.placement(),
                 token.span().slice(yaml),
@@ -683,7 +708,7 @@ fn scanner_accepts_tab_separated_explicit_key_with_comment() {
         .collect();
     assert_eq!(
         comments,
-        [(" key comment", Placement::Right, Some("# key comment"))]
+        [(" key comment", Placement::right(), Some("# key comment"))]
     );
 }
 
@@ -695,7 +720,7 @@ fn parser_emits_full_line_indented_and_trailing_comment_events() {
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Comment(text, _) => Some((text.as_ref(), span.slice(yaml))),
+            Event::Comment { value: text, .. } => Some((text.as_ref(), span.slice(yaml))),
             _ => None,
         })
         .collect();
@@ -719,7 +744,11 @@ fn parser_refines_comment_placements() {
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Comment(text, placement) => Some((text.as_ref(), *placement)),
+            Event::Comment {
+                value: text,
+                placement,
+                ..
+            } => Some((text.as_ref(), *placement)),
             _ => None,
         })
         .collect();
@@ -727,10 +756,10 @@ fn parser_refines_comment_placements() {
     assert_eq!(
         comments,
         vec![
-            (" above", Placement::Above),
-            (" right", Placement::Right),
-            (" free", Placement::Free),
-            (" last", Placement::Last),
+            (" above", Placement::above()),
+            (" right", Placement::right()),
+            (" free", Placement::free()),
+            (" last", Placement::last()),
         ]
     );
 }
@@ -741,12 +770,12 @@ fn own_line_comment_before_invalid_token_is_emitted_before_error() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::Comment(text, _) if text == " c"
+        Event::Comment { value: text, .. } if text == " c"
     ));
 
     let error = parser.next_event().unwrap().unwrap_err();
@@ -765,7 +794,7 @@ fn syntax_comment_before_invalid_token_is_emitted_before_error() {
             .next_event()
             .expect("parser should not end before comment")
             .expect("comment should be emitted before error");
-        if let Event::Comment(text, _) = event {
+        if let Event::Comment { value: text, .. } = event {
             break text;
         }
     };
@@ -798,7 +827,11 @@ next: value
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Comment(text, placement) => Some((text.as_ref(), *placement, span.slice(yaml))),
+            Event::Comment {
+                value: text,
+                placement,
+                ..
+            } => Some((text.as_ref(), *placement, span.slice(yaml))),
             _ => None,
         })
         .collect();
@@ -806,11 +839,11 @@ next: value
     assert_eq!(
         comments,
         vec![
-            (" root", Placement::Above, Some("# root")),
-            (" child", Placement::Above, Some("# child")),
-            (" inline", Placement::Right, Some("# inline")),
-            (" detached", Placement::Free, Some("# detached")),
-            (" eof", Placement::Last, Some("# eof")),
+            (" root", Placement::above(), Some("# root")),
+            (" child", Placement::above(), Some("# child")),
+            (" inline", Placement::right(), Some("# inline")),
+            (" detached", Placement::free(), Some("# detached")),
+            (" eof", Placement::last(), Some("# eof")),
         ]
     );
 }
@@ -823,14 +856,21 @@ fn parser_marks_consecutive_own_line_comments_as_above() {
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Comment(text, placement) => Some((text.as_ref(), *placement)),
+            Event::Comment {
+                value: text,
+                placement,
+                ..
+            } => Some((text.as_ref(), *placement)),
             _ => None,
         })
         .collect();
 
     assert_eq!(
         comments,
-        vec![(" first", Placement::Above), (" second", Placement::Above),]
+        vec![
+            (" first", Placement::above()),
+            (" second", Placement::above()),
+        ]
     );
 }
 
@@ -841,12 +881,14 @@ fn parser_emits_trailing_comment_after_plain_scalar_event() {
     let value_index = events
         .iter()
         .position(|(event, _)| {
-            matches!(event, Event::Scalar(value, ScalarStyle::Plain, ..) if value == "value")
+            matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "value")
         })
         .expect("plain scalar event should be emitted");
     let comment_index = events
         .iter()
-        .position(|(event, _)| matches!(event, Event::Comment(text, _) if text == " trailing"))
+        .position(
+            |(event, _)| matches!(event, Event::Comment { value: text, .. } if text == " trailing"),
+        )
         .expect("comment event should be emitted");
 
     assert!(value_index < comment_index);
@@ -1095,9 +1137,13 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1124,9 +1170,13 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1153,9 +1203,13 @@ fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1181,8 +1235,12 @@ fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,
         })
         .collect();
@@ -1208,8 +1266,12 @@ fn parser_handles_flow_mapping_value_after_comment() {
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,
         })
         .collect();
@@ -1228,8 +1290,12 @@ fn parser_handles_implicit_flow_mapping_value_after_comment() {
     let names: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ScalarStyle::Plain, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,
         })
         .collect();
@@ -1248,7 +1314,7 @@ fn parser_preserves_empty_comment_payloads_and_crlf_span() {
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Comment(text, _) => Some((text.as_ref(), span.slice(yaml))),
+            Event::Comment { value: text, .. } => Some((text.as_ref(), span.slice(yaml))),
             _ => None,
         })
         .collect();
@@ -1262,14 +1328,16 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     let first_peek = parser.peek().unwrap().unwrap().clone();
     let second_peek = parser.peek().unwrap().unwrap().clone();
     let next = parser.next_event().unwrap().unwrap();
 
-    assert!(matches!(first_peek.0, Event::Comment(ref text, Placement::Above) if text == " first"));
+    assert!(
+        matches!(first_peek.0, Event::Comment { value: ref text, placement: Placement::Above { .. }, .. } if text == " first")
+    );
     assert_eq!(first_peek, second_peek);
     assert_eq!(first_peek, next);
 }
@@ -1281,7 +1349,7 @@ struct CommentSink<'input> {
 
 impl<'input> EventReceiver<'input> for CommentSink<'input> {
     fn on_event(&mut self, ev: Event<'input>) {
-        if let Event::Comment(text, _) = ev {
+        if let Event::Comment { value: text, .. } = ev {
             self.comments.push(text);
         }
     }
@@ -1291,7 +1359,7 @@ impl<'input> TryEventReceiver<'input> for CommentSink<'input> {
     type Error = ();
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        if let Event::Comment(text, _) = ev {
+        if let Event::Comment { value: text, .. } = ev {
             self.comments.push(text);
         }
         Ok(())
@@ -1324,14 +1392,14 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
     let names: Vec<String> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::StreamStart => Some("StreamStart".into()),
-            Event::DocumentStart(..) => Some("DocumentStart".into()),
-            Event::SequenceStart(..) => Some("SequenceStart".into()),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
-            Event::DocumentEnd => Some("DocumentEnd".into()),
-            Event::StreamEnd => Some("StreamEnd".into()),
-            Event::Scalar(value, ..) => Some(format!("Scalar({value})")),
-            Event::Comment(text, _) => Some(format!("Comment({text})")),
+            Event::StreamStart { .. } => Some("StreamStart".into()),
+            Event::DocumentStart { .. } => Some("DocumentStart".into()),
+            Event::SequenceStart { .. } => Some("SequenceStart".into()),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
+            Event::DocumentEnd { .. } => Some("DocumentEnd".into()),
+            Event::StreamEnd { .. } => Some("StreamEnd".into()),
+            Event::Scalar { value, .. } => Some(format!("Scalar({value})")),
+            Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,
         })
         .collect();
@@ -1365,15 +1433,17 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
         parser_events(yaml).expect("parser should preserve comments around mapping syntax");
 
     for expected in [" key", " anchor", " alias"] {
-        assert!(events
-            .iter()
-            .any(|(event, _)| matches!(event, Event::Comment(text, _) if text == expected)));
+        assert!(events.iter().any(
+            |(event, _)| matches!(event, Event::Comment { value: text, .. } if text == expected)
+        ));
     }
 
     let anchored_value = events
         .iter()
         .find_map(|(event, _)| match event {
-            Event::Scalar(value, _, anchor_id, _) if value == "value" => Some(*anchor_id),
+            Event::Scalar {
+                value, anchor_id, ..
+            } if value == "value" => Some(*anchor_id),
             _ => None,
         })
         .expect("anchored scalar should be emitted");
@@ -1381,7 +1451,7 @@ fn parser_keeps_comment_events_out_of_mapping_state_and_node_properties() {
     assert_ne!(anchored_value, 0);
     assert!(events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Alias(alias_id) if *alias_id == anchored_value)));
+        .any(|(event, _)| matches!(event, Event::Alias { anchor_id: alias_id, .. } if *alias_id == anchored_value)));
 }
 
 #[test]
@@ -1390,14 +1460,17 @@ fn parser_combines_complementary_node_properties_across_comments() {
         let events = parser_events(yaml).expect("complementary node properties should parse");
         assert!(events
             .iter()
-            .any(|(event, _)| matches!(event, Event::Comment(..))));
+            .any(|(event, _)| matches!(event, Event::Comment { .. })));
 
         let (anchor_id, tag) = events
             .iter()
             .find_map(|(event, _)| match event {
-                Event::Scalar(value, _, anchor_id, Some(tag)) if value == "value" => {
-                    Some((*anchor_id, tag.original()))
-                }
+                Event::Scalar {
+                    value,
+                    anchor_id,
+                    tag: Some(tag),
+                    ..
+                } if value == "value" => Some((*anchor_id, tag.original())),
                 _ => None,
             })
             .expect("value should retain both node properties");
@@ -1414,7 +1487,7 @@ fn parser_preserves_self_reference_after_anchor_comment() {
     let anchor_id = events
         .iter()
         .find_map(|(event, _)| match event {
-            Event::SequenceStart(_, anchor_id, _) => Some(*anchor_id),
+            Event::SequenceStart { anchor_id, .. } => Some(*anchor_id),
             _ => None,
         })
         .expect("anchored sequence should be emitted");
@@ -1422,5 +1495,5 @@ fn parser_preserves_self_reference_after_anchor_comment() {
     assert_ne!(anchor_id, 0);
     assert!(events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Alias(alias_id) if *alias_id == anchor_id)));
+        .any(|(event, _)| matches!(event, Event::Alias { anchor_id: alias_id, .. } if *alias_id == anchor_id)));
 }

@@ -16,25 +16,49 @@ fn misplaced_closing_bracket_at_col_0() {
     }
 
     assert_eq!(events.len(), 9);
-    assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false, None)));
+    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(
+        events[1],
+        Event::DocumentStart {
+            explicit: false,
+            version: None,
+            ..
+        }
+    ));
     assert!(matches!(
         events[2],
-        Event::MappingStart(StructureStyle::Block, 0, None)
+        Event::MappingStart {
+            style: StructureStyle::Block { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
+    if let Event::Scalar {
+        value: ref v,
+        style: ScalarStyle::Plain { .. },
+        anchor_id: 0,
+        tag: None,
+        ..
+    } = events[3]
+    {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
     assert!(matches!(
         events[4],
-        Event::SequenceStart(StructureStyle::Flow, 0, None)
+        Event::SequenceStart {
+            style: StructureStyle::Flow { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    assert!(matches!(events[5], Event::SequenceEnd));
-    assert!(matches!(events[6], Event::MappingEnd));
-    assert!(matches!(events[7], Event::DocumentEnd));
-    assert!(matches!(events[8], Event::StreamEnd));
+    assert!(matches!(events[5], Event::SequenceEnd { .. }));
+    assert!(matches!(events[6], Event::MappingEnd { .. }));
+    assert!(matches!(events[7], Event::DocumentEnd { .. }));
+    assert!(matches!(events[8], Event::StreamEnd { .. }));
 }
 
 #[test]
@@ -53,25 +77,49 @@ fn misplaced_closing_brace_at_col_0() {
     }
 
     assert_eq!(events.len(), 9);
-    assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false, None)));
+    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(
+        events[1],
+        Event::DocumentStart {
+            explicit: false,
+            version: None,
+            ..
+        }
+    ));
     assert!(matches!(
         events[2],
-        Event::MappingStart(StructureStyle::Block, 0, None)
+        Event::MappingStart {
+            style: StructureStyle::Block { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
+    if let Event::Scalar {
+        value: ref v,
+        style: ScalarStyle::Plain { .. },
+        anchor_id: 0,
+        tag: None,
+        ..
+    } = events[3]
+    {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
     assert!(matches!(
         events[4],
-        Event::MappingStart(StructureStyle::Flow, 0, None)
+        Event::MappingStart {
+            style: StructureStyle::Flow { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    assert!(matches!(events[5], Event::MappingEnd));
-    assert!(matches!(events[6], Event::MappingEnd));
-    assert!(matches!(events[7], Event::DocumentEnd));
-    assert!(matches!(events[8], Event::StreamEnd));
+    assert!(matches!(events[5], Event::MappingEnd { .. }));
+    assert!(matches!(events[6], Event::MappingEnd { .. }));
+    assert!(matches!(events[7], Event::DocumentEnd { .. }));
+    assert!(matches!(events[8], Event::StreamEnd { .. }));
 }
 
 #[test]
@@ -90,33 +138,71 @@ fn misplaced_comma_at_col_0() {
     }
 
     assert_eq!(events.len(), 11);
-    assert!(matches!(events[0], Event::StreamStart));
-    assert!(matches!(events[1], Event::DocumentStart(false, None)));
+    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(
+        events[1],
+        Event::DocumentStart {
+            explicit: false,
+            version: None,
+            ..
+        }
+    ));
     assert!(matches!(
         events[2],
-        Event::MappingStart(StructureStyle::Block, 0, None)
+        Event::MappingStart {
+            style: StructureStyle::Block { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[3] {
+    if let Event::Scalar {
+        value: ref v,
+        style: ScalarStyle::Plain { .. },
+        anchor_id: 0,
+        tag: None,
+        ..
+    } = events[3]
+    {
         assert_eq!(&**v, "key");
     } else {
         panic!("Expected scalar 'key'");
     }
     assert!(matches!(
         events[4],
-        Event::SequenceStart(StructureStyle::Flow, 0, None)
+        Event::SequenceStart {
+            style: StructureStyle::Flow { .. },
+            anchor_id: 0,
+            tag: None,
+            ..
+        }
     ));
-    if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[5] {
+    if let Event::Scalar {
+        value: ref v,
+        style: ScalarStyle::Plain { .. },
+        anchor_id: 0,
+        tag: None,
+        ..
+    } = events[5]
+    {
         assert_eq!(&**v, "a");
     } else {
         panic!("Expected scalar 'a'");
     }
-    if let Event::Scalar(ref v, ScalarStyle::Plain, 0, None) = events[6] {
+    if let Event::Scalar {
+        value: ref v,
+        style: ScalarStyle::Plain { .. },
+        anchor_id: 0,
+        tag: None,
+        ..
+    } = events[6]
+    {
         assert_eq!(&**v, "b");
     } else {
         panic!("Expected scalar 'b'");
     }
-    assert!(matches!(events[7], Event::SequenceEnd));
-    assert!(matches!(events[8], Event::MappingEnd));
-    assert!(matches!(events[9], Event::DocumentEnd));
-    assert!(matches!(events[10], Event::StreamEnd));
+    assert!(matches!(events[7], Event::SequenceEnd { .. }));
+    assert!(matches!(events[8], Event::MappingEnd { .. }));
+    assert!(matches!(events[9], Event::DocumentEnd { .. }));
+    assert!(matches!(events[10], Event::StreamEnd { .. }));
 }

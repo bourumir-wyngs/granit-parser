@@ -31,10 +31,16 @@ fn main() -> Result<(), ScanError> {
         let (event, _) = next?;
 
         match event {
-            Event::Scalar(include_name, _, _, Some(tag)) if is_include_tag(tag.as_ref()) => {
+            Event::Scalar {
+                value: include_name,
+                tag: Some(tag),
+                ..
+            } if is_include_tag(tag.as_ref()) => {
                 stack.push_include(include_name.as_ref())?;
             }
-            Event::Scalar(value, _, anchor_id, _) if anchor_id > 0 => {
+            Event::Scalar {
+                value, anchor_id, ..
+            } if anchor_id > 0 => {
                 anchored_scalars.push((value.into_owned(), anchor_id));
             }
             _ => {}

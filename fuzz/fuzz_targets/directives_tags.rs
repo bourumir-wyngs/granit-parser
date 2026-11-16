@@ -128,7 +128,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
         .expect("comment text and separation must not consume directive limits");
     assert_eq!(
         tokens[1].token_type(),
-        &TokenType::ReservedDirective("FUTURE".into(), parameters.clone()),
+        &TokenType::reserved_directive("FUTURE".into(), parameters.clone()),
     );
     #[cfg(feature = "comments")]
     {
@@ -136,14 +136,14 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
             .iter()
             .filter_map(|token| match token.token_type() {
                 #[cfg(feature = "comments")]
-                TokenType::Comment(comment) => Some((comment, token.span())),
+                TokenType::Comment { comment, .. } => Some((comment, token.span())),
                 _ => None,
             })
             .collect::<Vec<_>>();
         assert_eq!(comments.len(), usize::from(options.emit_comments));
         if options.emit_comments {
             assert_eq!(comments[0].0.text(), comment);
-            assert_eq!(comments[0].0.placement(), Placement::Right);
+            assert_eq!(comments[0].0.placement(), Placement::right());
             assert_eq!(
                 comments[0].1.slice(&yaml),
                 Some(format!("#{comment}").as_str())
@@ -157,7 +157,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::Comment(..)))
+            .filter(|(event, _)| matches!(event, Event::Comment { .. }))
             .count(),
         usize::from(cfg!(feature = "comments") && options.emit_comments),
     );
@@ -165,7 +165,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
         events
             .iter()
             .filter_map(|(event, _)| match event {
-                Event::Scalar(value, ..) => Some(value.as_ref()),
+                Event::Scalar { value, .. } => Some(value.as_ref()),
                 _ => None,
             })
             .collect::<Vec<_>>(),

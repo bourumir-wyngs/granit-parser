@@ -22,8 +22,8 @@ fn ordinary_parsing_and_explicit_false_still_reject_unknown_anchors() {
         let mut saw_later_node = false;
         let error = loop {
             match parser.next().expect("unknown anchor must be reported") {
-                Ok((Event::Scalar(value, ..), _)) => saw_later_node |= value == "later",
-                Ok((Event::UnresolvedAlias(_), _)) => {
+                Ok((Event::Scalar { value, .. }, _)) => saw_later_node |= value == "later",
+                Ok((Event::UnresolvedAlias { .. }, _)) => {
                     panic!("strict parsing emitted an unresolved alias")
                 }
                 Ok(_) => {}
@@ -51,27 +51,30 @@ fn unresolved_alias_preserves_name_span_and_following_structure() {
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("first".into(), ScalarStyle::Plain, 0, None),
-            Event::UnresolvedAlias("míssing".into()),
-            Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(StructureStyle::Flow, 0, None),
-            Event::Scalar("one".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("two".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceEnd,
-            Event::Scalar("third".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("hello".into(), ScalarStyle::DoubleQuoted, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("first".into(), ScalarStyle::plain(), 0, None),
+            Event::unresolved_alias("míssing".into()),
+            Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_start(StructureStyle::flow(), 0, None),
+            Event::new_scalar("one".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("two".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_end(),
+            Event::new_scalar("third".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("hello".into(), ScalarStyle::double_quoted(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
     let (alias, span) = &events[4];
     assert!(matches!(
         alias,
-        Event::UnresolvedAlias(Cow::Borrowed("míssing"))
+        Event::UnresolvedAlias {
+            name: Cow::Borrowed("míssing"),
+            ..
+        }
     ));
     assert!(alias.is_alias());
     assert!(alias.is_node());
@@ -108,7 +111,7 @@ fn unresolved_aliases_complete_nodes_in_all_grammar_positions() {
             "{yaml:?}",
         );
         assert!(
-            matches!(events.last(), Some((Event::StreamEnd, _))),
+            matches!(events.last(), Some((Event::StreamEnd { .. }, _))),
             "{yaml:?}"
         );
     }
@@ -125,7 +128,7 @@ fn unresolved_mapping_key_consumes_its_indentation_hint() {
         .position(|(event, _)| event.is_alias())
         .unwrap();
     assert_eq!(events[alias].1.indent, Some(2));
-    assert!(matches!(&events[alias + 1].0, Event::Scalar(value, ..) if value == "value"));
+    assert!(matches!(&events[alias + 1].0, Event::Scalar { value, .. } if value == "value"));
     assert_eq!(events[alias + 1].1.indent, None);
     assert_eq!(events[alias + 2].1.indent, Some(2));
 }
@@ -147,10 +150,10 @@ fn repeated_names_resolve_only_to_preceding_definitions_and_do_not_allocate_ids(
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         [
-            Event::UnresolvedAlias("x".into()),
-            Event::UnresolvedAlias("x".into()),
-            Event::Alias(23),
-            Event::Alias(24),
+            Event::unresolved_alias("x".into()),
+            Event::unresolved_alias("x".into()),
+            Event::alias(23),
+            Event::alias(24),
         ],
     );
     assert_ne!(aliases[0].1.start, aliases[1].1.start);
@@ -172,10 +175,10 @@ fn document_boundaries_clear_names_and_self_references_still_resolve() {
             .filter(Event::is_alias)
             .collect::<Vec<_>>(),
         [
-            Event::Alias(1),
-            Event::UnresolvedAlias("x".into()),
-            Event::Alias(2),
-            Event::Alias(2),
+            Event::alias(1),
+            Event::unresolved_alias("x".into()),
+            Event::alias(2),
+            Event::alias(2),
         ],
     );
 }
@@ -210,7 +213,9 @@ fn input_backends_peek_and_load_preserve_the_event_stream() {
         ] {
             assert_eq!(events, expected);
             let (event, span) = events.iter().find(|(event, _)| event.is_alias()).unwrap();
-            assert!(matches!(event, Event::UnresolvedAlias(Cow::Owned(name)) if name == "missing"));
+            assert!(
+                matches!(event, Event::UnresolvedAlias { name: Cow::Owned(name), .. } if name == "missing")
+            );
             assert_eq!((span.start.line(), span.start.col()), (2, 7));
         }
 
@@ -258,7 +263,7 @@ fn scanner_clean_input_can_still_have_a_terminal_grammar_error_after_an_alias() 
             .peek()
             .expect("missing sequence separator must be reported")
         {
-            Ok((event, _)) => saw_alias |= matches!(event, Event::UnresolvedAlias(_)),
+            Ok((event, _)) => saw_alias |= matches!(event, Event::UnresolvedAlias { .. }),
             Err(error) => break error,
         }
         parser.next().unwrap().unwrap();
@@ -279,7 +284,7 @@ fn later_scanner_errors_remain_terminal() {
     let mut saw_alias = false;
     let error = loop {
         match parser.next().expect("invalid escape must be reported") {
-            Ok((event, _)) => saw_alias |= matches!(event, Event::UnresolvedAlias(_)),
+            Ok((event, _)) => saw_alias |= matches!(event, Event::UnresolvedAlias { .. }),
             Err(error) => break error,
         }
     };
@@ -297,7 +302,7 @@ fn later_scanner_errors_remain_terminal() {
     assert!(!sink
         .0
         .iter()
-        .any(|(event, _)| matches!(event, Event::StreamEnd)));
+        .any(|(event, _)| matches!(event, Event::StreamEnd { .. })));
 }
 
 #[test]
@@ -344,9 +349,9 @@ fn include_options_preserve_unresolved_events_through_replay() {
                 .map(|(event, _)| event.clone())
                 .filter(Event::is_alias)
                 .collect::<Vec<_>>(),
-            [Event::UnresolvedAlias("missing".into()), Event::Alias(1)],
+            [Event::unresolved_alias("missing".into()), Event::alias(1)],
         );
-        assert!(matches!(events.last(), Some((Event::StreamEnd, _))));
+        assert!(matches!(events.last(), Some((Event::StreamEnd { .. }, _))));
     }
 
     let mut strict: ParserStack<'_> = ParserStack::new();

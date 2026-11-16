@@ -17,13 +17,13 @@ fn parse(source: &str, options: Options) -> Vec<(Event<'_>, Span)> {
 
 fn assert_anchor_follows_node(events: &[(Event<'_>, Span)]) {
     for (index, (event, span)) in events.iter().enumerate() {
-        if let Event::Anchor(id, _) = event {
+        if let Event::Anchor { anchor_id: id, .. } = event {
             assert!(index > 0);
             assert!(events[index - 1].0.is_node());
             let node_id = match &events[index - 1].0 {
-                Event::Scalar(_, _, id, _)
-                | Event::SequenceStart(_, id, _)
-                | Event::MappingStart(_, id, _) => *id,
+                Event::Scalar { anchor_id: id, .. }
+                | Event::SequenceStart { anchor_id: id, .. }
+                | Event::MappingStart { anchor_id: id, .. } => *id,
                 event => panic!("anchor metadata followed {event:?}"),
             };
             assert_eq!(node_id, *id);
@@ -38,7 +38,7 @@ fn assert_anchor_follows_node(events: &[(Event<'_>, Span)]) {
         } else if event.is_node() {
             if let Some(id) = event.anchor_id() {
                 assert!(
-                    matches!(events.get(index + 1), Some((Event::Anchor(next_id, _), _)) if *next_id == id)
+                    matches!(events.get(index + 1), Some((Event::Anchor { anchor_id: next_id, .. }, _)) if *next_id == id)
                 );
             }
         }
@@ -52,12 +52,16 @@ fn anchor_name_id_and_exact_token_span_connect_nodes_and_aliases() {
     assert_anchor_follows_node(&events);
     let anchors: Vec<_> = events
         .iter()
-        .filter(|(event, _)| matches!(event, Event::Anchor(..)))
+        .filter(|(event, _)| matches!(event, Event::Anchor { .. }))
         .collect();
     assert_eq!(anchors.len(), 1);
     assert!(matches!(
         anchors[0].0,
-        Event::Anchor(1, Cow::Borrowed("msg"))
+        Event::Anchor {
+            anchor_id: 1,
+            name: Cow::Borrowed("msg"),
+            ..
+        }
     ));
     assert_eq!(anchors[0].1.slice(source), Some("&msg"));
     assert_eq!(anchors[0].1.byte_range(), Some(9..13));
@@ -99,7 +103,7 @@ fn emission_is_opt_in_and_preserves_all_existing_events_and_spans() {
             assert_anchor_follows_node(&events);
             let filtered: Vec<_> = events
                 .into_iter()
-                .filter(|(event, _)| !matches!(event, Event::Anchor(..)))
+                .filter(|(event, _)| !matches!(event, Event::Anchor { .. }))
                 .collect();
             assert_eq!(filtered, baseline, "{source:?}");
         }
@@ -129,7 +133,12 @@ fn assert_anchored_nodes(
     );
     let mut nodes = Vec::new();
     for (index, (event, span)) in events.iter().enumerate() {
-        if let Event::Anchor(id, name) = event {
+        if let Event::Anchor {
+            anchor_id: id,
+            name,
+            ..
+        } = event
+        {
             assert_eq!(*id, offset + nodes.len(), "{source:?}");
             let expected_name = ["a", "b", "c"][nodes.len()];
             assert_eq!(name, expected_name, "{source:?}");
@@ -139,16 +148,20 @@ fn assert_anchored_nodes(
             assert_eq!(span.byte_range(), Some(start..start + token.len()));
             let (node, node_span) = &events[index - 1];
             nodes.push(match node {
-                Event::Scalar(value, ScalarStyle::Plain, _, _) => Scalar(value),
-                Event::SequenceStart(style, _, _) => Sequence(*style),
-                Event::MappingStart(style, _, _) => Mapping(*style),
+                Event::Scalar {
+                    value,
+                    style: ScalarStyle::Plain { .. },
+                    ..
+                } => Scalar(value),
+                Event::SequenceStart { style, .. } => Sequence(*style),
+                Event::MappingStart { style, .. } => Mapping(*style),
                 other => panic!("unexpected anchored node {other:?}"),
             });
             if source.contains("!t") {
                 assert_eq!(node.tag().unwrap().original(), "!t");
                 assert_eq!(node_span.tag_span().unwrap().slice(source), Some("!t"));
             }
-        } else if let Event::Alias(id) = event {
+        } else if let Event::Alias { anchor_id: id, .. } = event {
             let name = span.slice(source).unwrap().strip_prefix('*').unwrap();
             let index = ["a", "b", "c"]
                 .iter()
@@ -163,28 +176,37 @@ fn assert_anchored_nodes(
 #[test]
 fn every_anchored_node_kind_emits_metadata_immediately_after_its_node_event() {
     use AnchoredNode::{Mapping, Scalar, Sequence};
-    use StructureStyle::{Block, Flow};
 
     let cases: &[(&str, &[AnchoredNode<'_>])] = &[
         ("&a value\n", &[Scalar("value")]),
         ("&a\n", &[Scalar("~")]),
         ("[&a, next]\n", &[Scalar("~")]),
         ("key: &a\nnext: value\n", &[Scalar("~")]),
-        ("&a []\n", &[Sequence(Flow)]),
-        ("&a {}\n", &[Mapping(Flow)]),
-        ("&a [value]\n", &[Sequence(Flow)]),
-        ("&a {key: value}\n", &[Mapping(Flow)]),
-        ("&a\n- value\n", &[Sequence(Block)]),
-        ("&a\nkey: value\n", &[Mapping(Block)]),
-        ("key: &a\n- value\n", &[Sequence(Block)]),
-        ("key: &a\n-\nnext: value\n", &[Sequence(Block)]),
+        ("&a []\n", &[Sequence(StructureStyle::flow())]),
+        ("&a {}\n", &[Mapping(StructureStyle::flow())]),
+        ("&a [value]\n", &[Sequence(StructureStyle::flow())]),
+        ("&a {key: value}\n", &[Mapping(StructureStyle::flow())]),
+        ("&a\n- value\n", &[Sequence(StructureStyle::block())]),
+        ("&a\nkey: value\n", &[Mapping(StructureStyle::block())]),
+        ("key: &a\n- value\n", &[Sequence(StructureStyle::block())]),
+        (
+            "key: &a\n-\nnext: value\n",
+            &[Sequence(StructureStyle::block())],
+        ),
         ("? &a key\n: value\n", &[Scalar("key")]),
         ("[&a key: value]\n", &[Scalar("key")]),
         (
             "&a [*a, &b {key: &c value}, *b, *c]\n",
-            &[Sequence(Flow), Mapping(Flow), Scalar("value")],
+            &[
+                Sequence(StructureStyle::flow()),
+                Mapping(StructureStyle::flow()),
+                Scalar("value"),
+            ],
         ),
-        ("key: &a # c\n- # c2\n- x\n", &[Sequence(Block)]),
+        (
+            "key: &a # c\n- # c2\n- x\n",
+            &[Sequence(StructureStyle::block())],
+        ),
         ("? &a # c\n: &b v\n", &[Scalar("~"), Scalar("v")]),
         ("- &a # c\n- &b x\n", &[Scalar("~"), Scalar("x")]),
         ("- &a\n- &b\n", &[Scalar("~"), Scalar("~")]),
@@ -192,11 +214,17 @@ fn every_anchored_node_kind_emits_metadata_immediately_after_its_node_event() {
         ("&a # c\n...\n--- &b x\n", &[Scalar("~"), Scalar("x")]),
         ("--- &a\n--- &b x\n", &[Scalar("~"), Scalar("x")]),
         ("&a # c", &[Scalar("~")]),
-        ("key: !t &a # c\n- x\n", &[Sequence(Block)]),
+        (
+            "key: !t &a # c\n- x\n",
+            &[Sequence(StructureStyle::block())],
+        ),
         ("&a key: # c\n  &b v\n", &[Scalar("key"), Scalar("v")]),
-        ("- &a\n  - &b x\n", &[Sequence(Block), Scalar("x")]),
-        ("&a [*a]\n", &[Sequence(Flow)]),
-        ("<<: &a {x: 1}\n", &[Mapping(Flow)]),
+        (
+            "- &a\n  - &b x\n",
+            &[Sequence(StructureStyle::block()), Scalar("x")],
+        ),
+        ("&a [*a]\n", &[Sequence(StructureStyle::flow())]),
+        ("<<: &a {x: 1}\n", &[Mapping(StructureStyle::flow())]),
     ];
     for &(source, expected_nodes) in cases {
         for offset in [0, 1] {
@@ -245,7 +273,7 @@ fn anchor_and_raw_tag_ranges_survive_property_order_and_comments() {
             assert_anchor_follows_node(&events);
             let index = events
                 .iter()
-                .position(|(event, _)| matches!(event, Event::Anchor(..)))
+                .position(|(event, _)| matches!(event, Event::Anchor { .. }))
                 .unwrap();
             assert_eq!(events[index].1.slice(source), Some("&a"));
             assert_eq!(events[index - 1].0.tag().unwrap().original(), "!note");
@@ -277,11 +305,15 @@ fn unicode_anchor_names_and_escaped_tags_retain_source_spelling() {
         assert_anchor_follows_node(&events);
         let index = events
             .iter()
-            .position(|(event, _)| matches!(event, Event::Anchor(..)))
+            .position(|(event, _)| matches!(event, Event::Anchor { .. }))
             .unwrap();
         assert!(matches!(
             events[index].0,
-            Event::Anchor(1, Cow::Borrowed("mémo"))
+            Event::Anchor {
+                anchor_id: 1,
+                name: Cow::Borrowed("mémo"),
+                ..
+            }
         ));
         let span = events[index].1;
         let start = source.find("&mémo").unwrap();
@@ -318,7 +350,11 @@ fn reused_names_resolve_to_the_latest_definition_with_custom_ids() {
     let metadata: Vec<_> = events
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Anchor(id, name) => Some((*id, name.as_ref(), span.byte_range().unwrap())),
+            Event::Anchor {
+                anchor_id: id,
+                name,
+                ..
+            } => Some((*id, name.as_ref(), span.byte_range().unwrap())),
             _ => None,
         })
         .collect();
@@ -343,9 +379,9 @@ fn zero_anchor_offset_still_emits_metadata_and_allows_later_definitions() {
         .iter()
         .enumerate()
         .filter_map(|(index, (event, span))| match event {
-            Event::Anchor(id, name) => {
+            Event::Anchor { anchor_id: id, name, .. } => {
                 assert!(
-                    matches!(&events[index - 1].0, Event::Scalar(_, _, node_id, _) if node_id == id)
+                    matches!(&events[index - 1].0, Event::Scalar { anchor_id: node_id, .. } if node_id == id)
                 );
                 Some((*id, name.as_ref(), span.slice(source)))
             }
@@ -444,9 +480,18 @@ fn zero_anchor_offset_preserves_empty_scalars_and_tags_across_comments() {
                 assert_eq!(actual, expected, "{source:?}");
                 let index = expected
                     .iter()
-                    .position(|(event, _)| matches!(event, Event::Scalar(..)))
+                    .position(|(event, _)| matches!(event, Event::Scalar { .. }))
                     .unwrap();
-                let (Event::Scalar(actual, _, id, tag), span) = &expected[index] else {
+                let (
+                    Event::Scalar {
+                        value: actual,
+                        anchor_id: id,
+                        tag,
+                        ..
+                    },
+                    span,
+                ) = &expected[index]
+                else {
                     unreachable!()
                 };
                 assert_eq!(actual, value, "{source:?}");
@@ -462,19 +507,19 @@ fn zero_anchor_offset_preserves_empty_scalars_and_tags_across_comments() {
                 let anchors: Vec<_> = expected
                     .iter()
                     .enumerate()
-                    .filter(|(_, (event, _))| matches!(event, Event::Anchor(..)))
+                    .filter(|(_, (event, _))| matches!(event, Event::Anchor { .. }))
                     .collect();
                 if emit_anchor_events {
                     assert_eq!(anchors.len(), 1);
                     let (anchor_index, (event, span)) = anchors[0];
                     assert_eq!(anchor_index, index + 1);
-                    assert_eq!(*event, Event::Anchor(0, "a".into()));
+                    assert_eq!(*event, Event::anchor(0, "a".into()));
                     assert_eq!(span.slice(source), Some("&a"));
                 } else {
                     assert_eq!(anchors, []);
                 }
                 if source.contains("*a") {
-                    assert!(expected.iter().any(|(event, _)| *event == Event::Alias(0)));
+                    assert!(expected.iter().any(|(event, _)| *event == Event::alias(0)));
                 }
             }
         }
@@ -494,17 +539,17 @@ fn document_boundaries_clear_names_but_preserve_assigned_id_identity() {
     assert_anchor_follows_node(&events);
     let references: Vec<_> = events
         .iter()
-        .filter(|(event, _)| event.is_alias() || matches!(event, Event::Anchor(..)))
+        .filter(|(event, _)| event.is_alias() || matches!(event, Event::Anchor { .. }))
         .map(|(event, _)| event.clone())
         .collect();
     assert_eq!(
         references,
         [
-            Event::Anchor(1, "same".into()),
-            Event::Alias(1),
-            Event::UnresolvedAlias("same".into()),
-            Event::Anchor(2, "same".into()),
-            Event::Alias(2),
+            Event::anchor(1, "same".into()),
+            Event::alias(1),
+            Event::unresolved_alias("same".into()),
+            Event::anchor(2, "same".into()),
+            Event::alias(2),
         ]
     );
 }
@@ -541,7 +586,7 @@ fn streaming_peek_and_load_preserve_anchor_metadata_and_order() {
             assert_eq!(streamed, expected);
             assert_anchor_follows_node(&streamed);
             for (event, span) in &streamed {
-                if let Event::Anchor(_, name) = event {
+                if let Event::Anchor { name, .. } = event {
                     assert!(matches!(name, Cow::Owned(_)));
                     assert_eq!(span.byte_range(), None);
                 }
@@ -561,7 +606,10 @@ fn streaming_peek_and_load_preserve_anchor_metadata_and_order() {
         let mut parser = Parser::new_from_str_with_options(source, options);
         let mut loaded = Events::default();
         parser.load(&mut loaded, false).unwrap();
-        assert!(matches!(loaded.0.last(), Some((Event::DocumentEnd, _))));
+        assert!(matches!(
+            loaded.0.last(),
+            Some((Event::DocumentEnd { .. }, _))
+        ));
         parser.load(&mut loaded, true).unwrap();
         assert_eq!(loaded.0, expected);
     }
@@ -578,13 +626,13 @@ fn loading_documents_separately_delivers_each_anchor_once() {
             parser.load(&mut sink, false).unwrap();
             let id = offset + index;
             let mut expected = vec![
-                Event::DocumentStart(true, None),
-                Event::Scalar(value.into(), ScalarStyle::Plain, id, None),
-                Event::Anchor(id, name.into()),
-                Event::DocumentEnd,
+                Event::document_start(true, None),
+                Event::new_scalar(value.into(), ScalarStyle::plain(), id, None),
+                Event::anchor(id, name.into()),
+                Event::document_end(false),
             ];
             if index == 0 {
-                expected.insert(0, Event::StreamStart);
+                expected.insert(0, Event::stream_start());
             }
             assert_eq!(
                 sink.0.iter().map(|(event, _)| event).collect::<Vec<_>>(),
@@ -594,14 +642,14 @@ fn loading_documents_separately_delivers_each_anchor_once() {
             let (_, span) = sink
                 .0
                 .iter()
-                .find(|(event, _)| matches!(event, Event::Anchor(..)))
+                .find(|(event, _)| matches!(event, Event::Anchor { .. }))
                 .unwrap();
             assert_eq!(span.slice(source), Some(format!("&{name}").as_str()));
             sink.0.clear();
         }
         parser.load(&mut sink, true).unwrap();
         assert_eq!(sink.0.len(), 1);
-        assert_eq!(sink.0[0].0, Event::StreamEnd);
+        assert_eq!(sink.0[0].0, Event::stream_end());
         assert!(parser.next().is_none());
     }
 }
@@ -614,16 +662,16 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
         parser.set_anchor_offset(offset);
         loop {
             let (event, _) = parser.next().unwrap().unwrap();
-            if matches!(event, Event::Scalar(..)) {
+            if matches!(event, Event::Scalar { .. }) {
                 assert_eq!(
                     event,
-                    Event::Scalar("x".into(), ScalarStyle::Plain, offset, None)
+                    Event::new_scalar("x".into(), ScalarStyle::plain(), offset, None)
                 );
                 break;
             }
         }
         let (event, span) = parser.peek().unwrap().unwrap();
-        assert_eq!(*event, Event::Anchor(offset, "a".into()));
+        assert_eq!(*event, Event::anchor(offset, "a".into()));
         assert_eq!(span.slice(source), Some("&a"));
         let mut sink = Events::default();
         parser.load(&mut sink, true).unwrap();
@@ -633,9 +681,9 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
                 .map(|(event, _)| event.clone())
                 .collect::<Vec<_>>(),
             [
-                Event::Anchor(offset, "a".into()),
-                Event::DocumentEnd,
-                Event::StreamEnd
+                Event::anchor(offset, "a".into()),
+                Event::document_end(false),
+                Event::stream_end()
             ]
         );
         assert_eq!(sink.0[0].1.slice(source), Some("&a"));
@@ -653,7 +701,7 @@ impl<'input> TrySpannedEventReceiver<'input> for StopAfter<'input> {
 
     fn on_event(&mut self, event: Event<'input>, span: Span) -> Result<(), Self::Error> {
         let stop = if self.metadata {
-            matches!(event, Event::Anchor(..))
+            matches!(event, Event::Anchor { .. })
         } else {
             event.is_node() && event.anchor_id().is_some()
         };
@@ -681,7 +729,7 @@ fn receiver_failure_can_resume_before_or_after_anchor_metadata() {
             Err(TryLoadError::Receiver(()))
         );
         assert_eq!(
-            matches!(parser.peek().unwrap().unwrap().0, Event::Anchor(..)),
+            matches!(parser.peek().unwrap().unwrap().0, Event::Anchor { .. }),
             !metadata
         );
         sink.events
@@ -701,7 +749,7 @@ fn recovery_discards_metadata_for_a_node_that_failed_before_emission() {
     let mut failed = false;
     for event in parser.by_ref() {
         match event {
-            Ok((Event::Anchor(..), _)) => panic!("failed node emitted anchor metadata"),
+            Ok((Event::Anchor { .. }, _)) => panic!("failed node emitted anchor metadata"),
             Ok(_) => {}
             Err(_) => {
                 failed = true;
@@ -716,14 +764,14 @@ fn recovery_discards_metadata_for_a_node_that_failed_before_emission() {
     assert_anchor_follows_node(&events);
     let metadata: Vec<_> = events
         .iter()
-        .filter(|(event, _)| matches!(event, Event::Anchor(..)))
+        .filter(|(event, _)| matches!(event, Event::Anchor { .. }))
         .collect();
     assert_eq!(metadata.len(), 1);
-    assert!(matches!(&metadata[0].0, Event::Anchor(_, name) if name == "kept"));
+    assert!(matches!(&metadata[0].0, Event::Anchor { name, .. } if name == "kept"));
     assert_eq!(metadata[0].1.slice(source), Some("&kept"));
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::UnresolvedAlias(name) if name == "abandoned")));
+    assert!(events.iter().any(
+        |(event, _)| matches!(event, Event::UnresolvedAlias { name, .. } if name == "abandoned")
+    ));
 }
 
 #[test]
@@ -734,14 +782,14 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
             let mut parser = Parser::new_from_str_with_options(source, anchor_options());
             parser.set_anchor_offset(offset);
             loop {
-                if matches!(parser.next().unwrap().unwrap().0, Event::Scalar(..)) {
+                if matches!(parser.next().unwrap().unwrap().0, Event::Scalar { .. }) {
                     break;
                 }
             }
             if peek_metadata {
                 assert_eq!(
                     parser.peek().unwrap().unwrap().0,
-                    Event::Anchor(offset, "skipped".into())
+                    Event::anchor(offset, "skipped".into())
                 );
             }
             parser.proceed_next_document().unwrap();
@@ -753,11 +801,11 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
                     .map(|(event, _)| event.clone())
                     .collect::<Vec<_>>(),
                 [
-                    Event::DocumentStart(true, None),
-                    Event::Scalar("second".into(), ScalarStyle::Plain, offset + 1, None),
-                    Event::Anchor(offset + 1, "kept".into()),
-                    Event::DocumentEnd,
-                    Event::StreamEnd,
+                    Event::document_start(true, None),
+                    Event::new_scalar("second".into(), ScalarStyle::plain(), offset + 1, None),
+                    Event::anchor(offset + 1, "kept".into()),
+                    Event::document_end(false),
+                    Event::stream_end(),
                 ]
             );
             assert_eq!(events[2].1.slice(source), Some("&kept"));
@@ -792,10 +840,10 @@ fn anchored_collection_emits_metadata_before_an_unclosed_child_error() {
             assert_anchored_nodes(
                 source,
                 &events,
-                &[AnchoredNode::Sequence(StructureStyle::Block)],
+                &[AnchoredNode::Sequence(StructureStyle::block())],
                 offset,
             );
-            assert_eq!(events.last().unwrap().0, Event::Anchor(offset, "a".into()));
+            assert_eq!(events.last().unwrap().0, Event::anchor(offset, "a".into()));
             assert!(parser.next().is_none());
         }
     }
@@ -815,10 +863,12 @@ fn assert_anchor_precedes_late_error<'input, I: BorrowedInput<'input>>(
         }
     }
     assert_anchor_follows_node(&events);
-    assert!(matches!(events.last(), Some((Event::Anchor(1, name), _)) if name == "a"));
+    assert!(
+        matches!(events.last(), Some((Event::Anchor { anchor_id: 1, name, .. }, _)) if name == "a")
+    );
     assert!(matches!(
         events[events.len() - 2].0,
-        Event::SequenceStart(_, 1, _)
+        Event::SequenceStart { anchor_id: 1, .. }
     ));
     assert!(parser.next().is_none());
     assert!(parser.peek().is_none());

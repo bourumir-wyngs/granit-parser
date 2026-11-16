@@ -22,7 +22,7 @@ fn test_span() -> Span {
 }
 
 fn plain_scalar(value: &'static str, anchor_id: usize) -> Event<'static> {
-    Event::Scalar(value.into(), ScalarStyle::Plain, anchor_id, None)
+    Event::new_scalar(value.into(), ScalarStyle::plain(), anchor_id, None)
 }
 
 fn collect_events<'a, I, T>(stack: &mut ParserStack<'a, I, T>) -> Result<Vec<Event<'a>>, String>
@@ -34,7 +34,7 @@ where
     loop {
         match stack.next_event() {
             Some(Ok((ev, _))) => {
-                let is_end = matches!(ev, Event::StreamEnd);
+                let is_end = matches!(ev, Event::StreamEnd { .. });
                 events.push(ev);
                 if is_end {
                     break;
@@ -49,7 +49,12 @@ where
 
 fn find_anchor_id(events: &[Event], value: &str) -> Option<usize> {
     events.iter().find_map(|event| {
-        if let Event::Scalar(scalar, _, anchor_id, _) = event {
+        if let Event::Scalar {
+            value: scalar,
+            anchor_id,
+            ..
+        } = event
+        {
             (scalar.as_ref() == value).then_some(*anchor_id)
         } else {
             None
@@ -66,7 +71,10 @@ fn stack_after_first_parent_anchor() -> MyStack<'static> {
 
     loop {
         let event = stack.next_event().unwrap().unwrap().0;
-        if let Event::Scalar(value, _, anchor_id, _) = event {
+        if let Event::Scalar {
+            value, anchor_id, ..
+        } = event
+        {
             if value == "parent-value" {
                 assert_eq!(anchor_id, 1);
                 break;
@@ -80,7 +88,9 @@ fn stack_after_first_parent_anchor() -> MyStack<'static> {
 
 fn assert_include_anchor_offset_is_inherited(events: &[Event]) {
     assert_eq!(find_anchor_id(events, "included-value"), Some(2));
-    assert!(events.iter().any(|event| matches!(event, Event::Alias(2))));
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::Alias { anchor_id: 2, .. })));
     assert_eq!(find_anchor_id(events, "resumed-parent-value"), Some(3));
 }
 
@@ -88,17 +98,17 @@ fn format_events(events: &[Event]) -> Vec<String> {
     events
         .iter()
         .map(|e| match e {
-            Event::StreamStart => "StreamStart".to_string(),
-            Event::StreamEnd => "StreamEnd".to_string(),
-            Event::DocumentStart(..) => "DocStart".to_string(),
-            Event::DocumentEnd => "DocEnd".to_string(),
+            Event::StreamStart { .. } => "StreamStart".to_string(),
+            Event::StreamEnd { .. } => "StreamEnd".to_string(),
+            Event::DocumentStart { .. } => "DocStart".to_string(),
+            Event::DocumentEnd { .. } => "DocEnd".to_string(),
             #[cfg(feature = "comments")]
-            Event::Comment(text, _) => alloc::format!("Comment({})", text.as_ref()),
-            Event::Scalar(val, _, _, _) => alloc::format!("Scalar({})", val.as_ref()),
-            Event::MappingStart(..) => "MapStart".to_string(),
-            Event::MappingEnd => "MapEnd".to_string(),
-            Event::SequenceStart(..) => "SeqStart".to_string(),
-            Event::SequenceEnd => "SeqEnd".to_string(),
+            Event::Comment { value: text, .. } => alloc::format!("Comment({})", text.as_ref()),
+            Event::Scalar { value: val, .. } => alloc::format!("Scalar({})", val.as_ref()),
+            Event::MappingStart { .. } => "MapStart".to_string(),
+            Event::MappingEnd { .. } => "MapEnd".to_string(),
+            Event::SequenceStart { .. } => "SeqStart".to_string(),
+            Event::SequenceEnd { .. } => "SeqEnd".to_string(),
             _ => "Other".to_string(),
         })
         .collect()
@@ -244,14 +254,14 @@ fn test_three_parsers_dynamic_adding() {
 
     // Fetch first event from top parser (p1)
     let ev1 = stack.next_event().unwrap().unwrap().0;
-    assert!(matches!(ev1, Event::StreamStart));
+    assert!(matches!(ev1, Event::StreamStart { .. }));
 
     // Now push middle parser
     stack.push_str_parser(Parser::new_from_str("p2: 2"), "p2".to_string());
 
     // Fetch first event from middle parser (p2)
     let ev2 = stack.next_event().unwrap().unwrap().0;
-    assert!(matches!(ev2, Event::MappingStart(..)));
+    assert!(matches!(ev2, Event::MappingStart { .. }));
 
     // Now push third parser
     stack.push_str_parser(Parser::new_from_str("p3: 3"), "p3".to_string());
@@ -295,7 +305,12 @@ fn test_anchor_id_propagation() {
     // Read until v1 is consumed
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        let is_v1 = if let Event::Scalar(val, _, anchor_id, _) = &ev {
+        let is_v1 = if let Event::Scalar {
+            value: val,
+            anchor_id,
+            ..
+        } = &ev
+        {
             if val.as_ref() == "v1" {
                 assert_eq!(*anchor_id, 1, "First anchor should have ID 1");
                 true
@@ -319,7 +334,7 @@ fn test_anchor_id_propagation() {
     loop {
         match stack.next_event() {
             Some(Ok((ev, _))) => {
-                let is_end = matches!(ev, Event::StreamEnd);
+                let is_end = matches!(ev, Event::StreamEnd { .. });
                 events.push(ev);
                 if is_end {
                     break;
@@ -333,17 +348,17 @@ fn test_anchor_id_propagation() {
     // Verify anchor IDs for v2 and v3
     let v2_ev = events
         .iter()
-        .find(|e| matches!(e, Event::Scalar(v, _, _, _) if v.as_ref() == "v2"))
+        .find(|e| matches!(e, Event::Scalar { value: v, .. } if v.as_ref() == "v2"))
         .unwrap();
-    if let Event::Scalar(_, _, id, _) = v2_ev {
+    if let Event::Scalar { anchor_id: id, .. } = v2_ev {
         assert_eq!(*id, 2, "Second anchor (from inner parser) should have ID 2");
     }
 
     let v3_ev = events
         .iter()
-        .find(|e| matches!(e, Event::Scalar(v, _, _, _) if v.as_ref() == "v3"))
+        .find(|e| matches!(e, Event::Scalar { value: v, .. } if v.as_ref() == "v3"))
         .unwrap();
-    if let Event::Scalar(_, _, id, _) = v3_ev {
+    if let Event::Scalar { anchor_id: id, .. } = v3_ev {
         assert_eq!(
             *id, 3,
             "Third anchor (from parent parser after inner) should have ID 3"
@@ -369,7 +384,7 @@ impl<'input> TryEventReceiver<'input> for TryTestReceiver<'input> {
     type Error = &'static str;
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        let should_fail = matches!(&ev, Event::Scalar(value, ..) if value.as_ref() == "stop");
+        let should_fail = matches!(&ev, Event::Scalar { value, .. } if value.as_ref() == "stop");
         self.events.push(ev);
         if should_fail {
             Err("stop requested")
@@ -436,11 +451,11 @@ fn test_parser_stack_try_load_stops_on_receiver_error() {
     assert!(recv
         .events
         .iter()
-        .any(|event| matches!(event, Event::Scalar(value, ..) if value == "stop")));
+        .any(|event| matches!(event, Event::Scalar { value, .. } if value == "stop")));
     assert!(!recv
         .events
         .iter()
-        .any(|event| matches!(event, Event::Scalar(value, ..) if value == "after")));
+        .any(|event| matches!(event, Event::Scalar { value, .. } if value == "after")));
 }
 
 #[test]
@@ -553,7 +568,7 @@ fn borrowed_include_resolver_preserves_borrowed_event_text() {
     stack.push_include("borrowed.yaml").unwrap();
 
     while let Some(event) = stack.next_event() {
-        if let Event::Scalar(value, _, _, _) = event.unwrap().0 {
+        if let Event::Scalar { value, .. } = event.unwrap().0 {
             if value == "borrowed-value" {
                 assert!(matches!(value, Cow::Borrowed("borrowed-value")));
                 return;
@@ -591,7 +606,7 @@ fn empty_stack_include_preserves_fresh_parser_anchor_offset() {
     assert_eq!(find_anchor_id(&owned_events, "anchored"), Some(1));
     assert!(owned_events
         .iter()
-        .any(|event| matches!(event, Event::Alias(1))));
+        .any(|event| matches!(event, Event::Alias { anchor_id: 1, .. })));
 
     let mut borrowed: MyStack<'static> = ParserStack::new();
     borrowed.set_borrowed_resolver(|_| Ok(INCLUDED));
@@ -601,7 +616,7 @@ fn empty_stack_include_preserves_fresh_parser_anchor_offset() {
     assert_eq!(find_anchor_id(&borrowed_events, "anchored"), Some(1));
     assert!(borrowed_events
         .iter()
-        .any(|event| matches!(event, Event::Alias(1))));
+        .any(|event| matches!(event, Event::Alias { anchor_id: 1, .. })));
 }
 
 #[test]
@@ -640,14 +655,18 @@ fn replay_parser_moves_owned_event_text() {
     let value_ptr = value.as_ptr();
     let mut replay = ReplayParser::new(
         vec![(
-            Event::Scalar(Cow::Owned(value), ScalarStyle::Plain, 0, None),
+            Event::new_scalar(Cow::Owned(value), ScalarStyle::plain(), 0, None),
             test_span(),
         )],
         1,
     );
 
     let event = replay.next().unwrap().unwrap().0;
-    let Event::Scalar(Cow::Owned(value), _, _, _) = event else {
+    let Event::Scalar {
+        value: Cow::Owned(value),
+        ..
+    } = event
+    else {
         panic!("expected an owned scalar");
     };
 
@@ -673,37 +692,37 @@ fn test_replay_parser_updates_anchor_offset() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { value: ref val, .. } if val.as_ref() == "v1") {
             break;
         }
     }
 
     let span = Span::empty(Marker::new(0, 1, 0));
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
-        (Event::MappingStart(StructureStyle::Block, 0, None), span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
+        (Event::mapping_start(StructureStyle::block(), 0, None), span),
         (
-            Event::Scalar("k2".into(), granit_parser::ScalarStyle::Plain, 0, None),
+            Event::new_scalar("k2".into(), granit_parser::ScalarStyle::plain(), 0, None),
             span,
         ),
         (
-            Event::Scalar("v2".into(), granit_parser::ScalarStyle::Plain, 2, None),
+            Event::new_scalar("v2".into(), granit_parser::ScalarStyle::plain(), 2, None),
             span,
         ),
-        (Event::MappingEnd, span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::mapping_end(), span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     stack.push_replay_parser(ReplayParser::new(replay_events, 1), "replay".to_string());
 
     let events = collect_events(&mut stack).unwrap();
     let v3_ev = events
         .iter()
-        .find(|e| matches!(e, Event::Scalar(v, _, _, _) if v.as_ref() == "v3"))
+        .find(|e| matches!(e, Event::Scalar { value: v, .. } if v.as_ref() == "v3"))
         .unwrap();
 
-    if let Event::Scalar(_, _, id, _) = v3_ev {
+    if let Event::Scalar { anchor_id: id, .. } = v3_ev {
         assert_eq!(
             *id, 3,
             "Parent parser should continue after replayed anchors"
@@ -721,32 +740,32 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { value: ref val, .. } if val.as_ref() == "v1") {
             break;
         }
     }
 
     let span = Span::empty(Marker::new(0, 1, 0));
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
-        (Event::MappingStart(StructureStyle::Block, 0, None), span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
+        (Event::mapping_start(StructureStyle::block(), 0, None), span),
         (
-            Event::Scalar(
+            Event::new_scalar(
                 "included".into(),
-                granit_parser::ScalarStyle::Plain,
+                granit_parser::ScalarStyle::plain(),
                 0,
                 None,
             ),
             span,
         ),
         (
-            Event::Scalar("value".into(), granit_parser::ScalarStyle::Plain, 0, None),
+            Event::new_scalar("value".into(), granit_parser::ScalarStyle::plain(), 0, None),
             span,
         ),
-        (Event::MappingEnd, span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::mapping_end(), span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
 
     stack.push_replay_parser(ReplayParser::new(replay_events, 1), "replay".to_string());
@@ -754,10 +773,10 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
     let events = collect_events(&mut stack).unwrap();
     let v2_ev = events
         .iter()
-        .find(|e| matches!(e, Event::Scalar(v, _, _, _) if v.as_ref() == "v2"))
+        .find(|e| matches!(e, Event::Scalar { value: v, .. } if v.as_ref() == "v2"))
         .unwrap();
 
-    if let Event::Scalar(_, _, id, _) = v2_ev {
+    if let Event::Scalar { anchor_id: id, .. } = v2_ev {
         assert_eq!(
             *id, 2,
             "Parent parser should not reuse anchor IDs after replay without anchors"
@@ -769,24 +788,27 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
 fn replay_parser_peek_next_and_load_track_collection_anchors() {
     let span = test_span();
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
-        (Event::SequenceStart(StructureStyle::Block, 4, None), span),
-        (Event::SequenceEnd, span),
-        (Event::MappingStart(StructureStyle::Block, 7, None), span),
-        (Event::MappingEnd, span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
+        (
+            Event::sequence_start(StructureStyle::block(), 4, None),
+            span,
+        ),
+        (Event::sequence_end(), span),
+        (Event::mapping_start(StructureStyle::block(), 7, None), span),
+        (Event::mapping_end(), span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     let mut replay = ReplayParser::new(replay_events, 1);
 
     assert!(matches!(
         replay.peek().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
     assert!(matches!(
         replay.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     let mut recv = TestReceiver { events: Vec::new() };
@@ -811,14 +833,14 @@ fn replay_parser_peek_next_and_load_track_collection_anchors() {
 fn replay_parser_load_single_stops_at_document_end() {
     let span = test_span();
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("first", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::DocumentStart(false, None), span),
+        (Event::document_end(false), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("second", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TestReceiver { events: Vec::new() };
@@ -835,14 +857,14 @@ fn replay_parser_load_single_stops_at_document_end() {
 fn replay_parser_try_load_single_stops_at_document_end() {
     let span = test_span();
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("first", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::DocumentStart(false, None), span),
+        (Event::document_end(false), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("second", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TryTestReceiver { events: Vec::new() };
@@ -859,11 +881,11 @@ fn replay_parser_try_load_single_stops_at_document_end() {
 fn replay_parser_try_load_multi_reads_stream_end() {
     let span = test_span();
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::DocumentStart(false, None), span),
+        (Event::stream_start(), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("first", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TryTestReceiver { events: Vec::new() };
@@ -887,12 +909,12 @@ fn replay_parser_try_load_multi_reads_stream_end() {
 fn replay_parser_preserves_comment_events() {
     let span = test_span();
     let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::Comment(" replay".into(), Placement::Free), span),
-        (Event::DocumentStart(false, None), span),
+        (Event::stream_start(), span),
+        (Event::comment(" replay".into(), Placement::free()), span),
+        (Event::document_start(false, None), span),
         (plain_scalar("value", 0), span),
-        (Event::DocumentEnd, span),
-        (Event::StreamEnd, span),
+        (Event::document_end(false), span),
+        (Event::stream_end(), span),
     ];
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TestReceiver { events: Vec::new() };
@@ -964,7 +986,7 @@ fn parser_stack_include_preserves_comment_events_and_local_spans() {
 
     let (_, span) = events
         .iter()
-        .find(|(event, _)| matches!(event, Event::Comment(text, _) if text == " inc"))
+        .find(|(event, _)| matches!(event, Event::Comment { value: text, .. } if text == " inc"))
         .expect("included comment should be forwarded");
 
     assert_eq!(span.start.index(), 0);
@@ -975,11 +997,17 @@ fn parser_stack_include_preserves_comment_events_and_local_spans() {
 fn default_empty_stack_peek_and_next_emit_stream_end_once() {
     let mut stack: MyStack = ParserStack::default();
 
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
     assert!(matches!(
         stack.next_event().unwrap().unwrap().0,
-        Event::StreamEnd
+        Event::StreamEnd { .. }
     ));
     assert!(stack.next_event().is_none());
 }
@@ -1001,7 +1029,10 @@ fn parser_stack_push_str_after_exhaustion_stays_exhausted() {
 fn parser_stack_push_after_peeked_empty_stream_end_reactivates_stack() {
     let mut stack: MyStack = ParserStack::new();
 
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
 
     stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
 
@@ -1114,10 +1145,17 @@ fn multi_document_include_does_not_splice_into_parent() {
 
     while let Some(result) = stack.next_event() {
         match result {
-            Ok((Event::Scalar(value, _, _, Some(_)), _)) if value.as_ref() == "two.yaml" => {
+            Ok((
+                Event::Scalar {
+                    value,
+                    tag: Some(_),
+                    ..
+                },
+                _,
+            )) if value.as_ref() == "two.yaml" => {
                 stack.push_include(value.as_ref()).unwrap();
             }
-            Ok((Event::Scalar(value, ..), _)) if value.as_ref() == "y" => {
+            Ok((Event::Scalar { value, .. }, _)) if value.as_ref() == "y" => {
                 spliced = true;
             }
             Err(err) => {
@@ -1152,7 +1190,7 @@ fn iter_parser_inherits_anchor_offset_and_reports_stack() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { value: ref val, .. } if val.as_ref() == "v1") {
             break;
         }
     }
@@ -1182,7 +1220,7 @@ fn custom_parser_inherits_anchor_offset_and_reports_stack() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref val, _, _, _) if val.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { value: ref val, .. } if val.as_ref() == "v1") {
             break;
         }
     }
@@ -1233,11 +1271,11 @@ fn replay_parser_without_stream_end_is_popped_at_eof() {
 
     assert!(matches!(
         stack.next_event().unwrap().unwrap().0,
-        Event::Scalar(..)
+        Event::Scalar { .. }
     ));
     assert!(matches!(
         stack.next_event().unwrap().unwrap().0,
-        Event::StreamEnd
+        Event::StreamEnd { .. }
     ));
     assert!(stack.next_event().is_none());
 }
@@ -1342,7 +1380,7 @@ fn nested_replay_stream_end_is_popped_and_parent_continues() {
     let mut stack: MyStack = ParserStack::new();
     stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
     stack.push_replay_parser(
-        ReplayParser::new(vec![(Event::StreamEnd, span)], 1),
+        ReplayParser::new(vec![(Event::stream_end(), span)], 1),
         "empty".to_string(),
     );
 
@@ -1385,7 +1423,7 @@ fn replay_child_propagates_anchor_offset_to_iter_parent() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref value, _, _, _) if value.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { ref value, .. } if value.as_ref() == "v1") {
             break;
         }
     }
@@ -1395,7 +1433,7 @@ fn replay_child_propagates_anchor_offset_to_iter_parent() {
         ReplayParser::new(
             vec![
                 (plain_scalar("included", 2), span),
-                (Event::StreamEnd, span),
+                (Event::stream_end(), span),
             ],
             1,
         ),
@@ -1418,7 +1456,7 @@ fn replay_child_propagates_anchor_offset_to_custom_parent() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref value, _, _, _) if value.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { ref value, .. } if value.as_ref() == "v1") {
             break;
         }
     }
@@ -1428,7 +1466,7 @@ fn replay_child_propagates_anchor_offset_to_custom_parent() {
         ReplayParser::new(
             vec![
                 (plain_scalar("included", 2), span),
-                (Event::StreamEnd, span),
+                (Event::stream_end(), span),
             ],
             1,
         ),
@@ -1451,7 +1489,10 @@ fn replay_child_propagates_anchor_offset_to_replay_parent() {
     );
     stack.push_replay_parser(
         ReplayParser::new(
-            vec![(plain_scalar("child", 4), span), (Event::StreamEnd, span)],
+            vec![
+                (plain_scalar("child", 4), span),
+                (Event::stream_end(), span),
+            ],
             1,
         ),
         "replay-child".to_string(),
@@ -1478,7 +1519,7 @@ fn custom_parser_with_current_inherits_parent_anchor_offset() {
 
     loop {
         let ev = stack.next_event().unwrap().unwrap().0;
-        if matches!(ev, Event::Scalar(ref value, _, _, _) if value.as_ref() == "v1") {
+        if matches!(ev, Event::Scalar { ref value, .. } if value.as_ref() == "v1") {
             break;
         }
     }

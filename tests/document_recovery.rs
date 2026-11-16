@@ -29,10 +29,10 @@ fn recover<'input, I: BorrowedInput<'input>>(
 
 fn scalar_document(value: &str, explicit: bool) -> Vec<Event<'_>> {
     vec![
-        Event::DocumentStart(explicit, None),
-        Event::Scalar(value.into(), ScalarStyle::Plain, 0, None),
-        Event::DocumentEnd,
-        Event::StreamEnd,
+        Event::document_start(explicit, None),
+        Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
+        Event::document_end(false),
+        Event::stream_end(),
     ]
 }
 
@@ -94,23 +94,23 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         vec![
-            Event::DocumentStart(true, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("healthy".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("enabled".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("true".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingEnd,
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::document_start(true, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("healthy".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("enabled".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("true".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ],
     );
 
     let scalars: Vec<_> = recovered
         .iter()
         .filter_map(|(event, span)| match event {
-            Event::Scalar(..) => Some((span.slice(source), span.start.line(), span.start.col())),
+            Event::Scalar { .. } => Some((span.slice(source), span.start.line(), span.start.col())),
             _ => None,
         })
         .collect();
@@ -154,7 +154,11 @@ fn recovery_discards_a_peeked_error() {
     parser.proceed_next_document().unwrap();
     assert!(matches!(
         parser.peek().unwrap().unwrap().0,
-        Event::DocumentStart(true, None)
+        Event::DocumentStart {
+            explicit: true,
+            version: None,
+            ..
+        }
     ));
     assert_eq!(
         remaining_events(&mut parser),
@@ -179,10 +183,13 @@ fn load_can_resume_without_synthetic_ends_for_the_abandoned_document() {
     assert!(partial
         .0
         .iter()
-        .any(|event| matches!(event, Event::SequenceStart(..))));
+        .any(|event| matches!(event, Event::SequenceStart { .. })));
     assert!(!partial.0.iter().any(|event| matches!(
         event,
-        Event::SequenceEnd | Event::MappingEnd | Event::DocumentEnd | Event::StreamEnd
+        Event::SequenceEnd { .. }
+            | Event::MappingEnd { .. }
+            | Event::DocumentEnd { .. }
+            | Event::StreamEnd { .. }
     )));
 
     parser.proceed_next_document().unwrap();
@@ -262,7 +269,7 @@ fn explicit_end_can_recover_into_an_implicit_document() {
             .map(|(event, _)| event)
             .filter(|event| {
                 #[cfg(feature = "comments")]
-                if matches!(event, Event::Comment(..)) {
+                if matches!(event, Event::Comment { .. }) {
                     return false;
                 }
                 let _ = event;
@@ -279,14 +286,14 @@ fn recovery_preserves_original_unicode_and_crlf_positions() {
     let events = recover(Parser::new_from_str(source));
     let start = events.first().unwrap();
     let byte_offset = source.find("---").unwrap();
-    assert_eq!(start.0, Event::DocumentStart(true, None));
+    assert_eq!(start.0, Event::document_start(true, None));
     assert_eq!(start.1.start.index(), source[..byte_offset].chars().count());
     assert_eq!(start.1.start.byte_offset(), Some(byte_offset));
     assert_eq!((start.1.start.line(), start.1.start.col()), (3, 0));
     assert_eq!(start.1.slice(source), Some("---"));
     let (_, scalar) = events
         .iter()
-        .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "λ"))
+        .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "λ"))
         .unwrap();
     assert_eq!((scalar.start.line(), scalar.start.col()), (4, 9));
     assert_eq!(scalar.slice(source), Some("λ"));
@@ -339,7 +346,7 @@ fn a_healthy_document_can_be_skipped_at_every_event_offset() {
         let source =
             format!("---\nfirst:\n  - [one, two]\n  - {{nested: value}}\n{boundary}second\n");
         let document_end = Parser::new_from_str(&source)
-            .position(|event| event.unwrap().0 == Event::DocumentEnd)
+            .position(|event| matches!(event.unwrap().0, Event::DocumentEnd { .. }))
             .unwrap();
         for consumed in 0..=document_end {
             for peek in [false, true] {
@@ -360,7 +367,7 @@ fn skipping_discards_a_peeked_node_and_pending_collection_state() {
     let mut parser = Parser::new_from_str("first: [one, two]\n---\nsecond\n");
     loop {
         match parser.peek().unwrap().unwrap().0 {
-            Event::SequenceStart(..) => break,
+            Event::SequenceStart { .. } => break,
             _ => {
                 parser.next_event().unwrap().unwrap();
             }
@@ -379,7 +386,7 @@ fn skipping_discards_a_deferred_scanner_error_after_a_peeked_event() {
     let mut parser = Parser::new_from_iter("a:\n-\nb\n---\nhealthy\n".chars());
     loop {
         match parser.peek().unwrap().unwrap().0 {
-            Event::SequenceStart(..) => break,
+            Event::SequenceStart { .. } => break,
             _ => {
                 parser.next_event().unwrap().unwrap();
             }
@@ -397,7 +404,10 @@ fn proceeding_after_document_end_preserves_the_next_document() {
     for source in ["first\n---\nsecond\n", "first\n...\nsecond\n"] {
         let mut parser = Parser::new_from_str(source);
         loop {
-            if parser.next_event().unwrap().unwrap().0 == Event::DocumentEnd {
+            if matches!(
+                parser.next_event().unwrap().unwrap().0,
+                Event::DocumentEnd { .. }
+            ) {
                 break;
             }
         }
@@ -447,7 +457,7 @@ fn recovery_at_eof_emits_stream_end_once() {
         first_error(&mut parser);
         parser.proceed_next_document().unwrap();
         let (event, span) = parser.next_event().unwrap().unwrap();
-        assert_eq!(event, Event::StreamEnd);
+        assert_eq!(event, Event::stream_end());
         assert_eq!(span.start.index(), source.chars().count());
         for _ in 0..3 {
             assert!(parser.next_event().is_none());
@@ -464,7 +474,7 @@ fn repeated_proceed_calls_preserve_an_unread_stream_end() {
         for _ in 0..4 {
             parser.proceed_next_document().unwrap();
         }
-        assert_eq!(remaining_events(&mut parser), [Event::StreamEnd]);
+        assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
         parser.proceed_next_document().unwrap();
         assert!(parser.next_event().is_none());
     }
@@ -474,16 +484,16 @@ fn repeated_proceed_calls_preserve_an_unread_stream_end() {
 fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
     let mut parser = Parser::new_from_str("healthy\n");
     loop {
-        if parser.peek().unwrap().unwrap().0 == Event::StreamEnd {
+        if parser.peek().unwrap().unwrap().0 == Event::stream_end() {
             break;
         }
         parser.next_event().unwrap().unwrap();
     }
     for _ in 0..3 {
         parser.proceed_next_document().unwrap();
-        assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamEnd);
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::stream_end());
     }
-    assert_eq!(remaining_events(&mut parser), [Event::StreamEnd]);
+    assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
     parser.proceed_next_document().unwrap();
     assert!(parser.peek().is_none());
 }
@@ -492,7 +502,7 @@ fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
 fn skipping_an_empty_or_finished_stream_does_not_restart_it() {
     let mut empty = Parser::new_from_str("");
     empty.proceed_next_document().unwrap();
-    assert_eq!(remaining_events(&mut empty), vec![Event::StreamEnd]);
+    assert_eq!(remaining_events(&mut empty), vec![Event::stream_end()]);
 
     let mut finished = Parser::new_from_str("healthy\n");
     remaining_events(&mut finished);
@@ -510,7 +520,7 @@ fn proceed_after_load_consumes_a_recovered_eof_stays_exhausted() {
         parser.proceed_next_document().unwrap();
         let mut events = Events::default();
         parser.load(&mut events, true).unwrap();
-        assert_eq!(events.0, [Event::StreamEnd]);
+        assert_eq!(events.0, [Event::stream_end()]);
         parser.proceed_next_document().unwrap();
         assert!(parser.peek().is_none());
         assert!(parser.next_event().is_none());
@@ -524,7 +534,14 @@ fn anchor_names_are_cleared_and_anchor_ids_remain_unique() {
     let mut first_id = None;
     loop {
         match parser.next_event().unwrap() {
-            Ok((Event::Scalar(value, _, id, _), _)) if value == "one" => first_id = Some(id),
+            Ok((
+                Event::Scalar {
+                    value,
+                    anchor_id: id,
+                    ..
+                },
+                _,
+            )) if value == "one" => first_id = Some(id),
             Ok(_) => {}
             Err(_) => break,
         }
@@ -534,12 +551,16 @@ fn anchor_names_are_cleared_and_anchor_ids_remain_unique() {
     let second_id = events
         .iter()
         .find_map(|event| match event {
-            Event::Scalar(value, _, id, _) if value == "two" => Some(*id),
+            Event::Scalar {
+                value,
+                anchor_id: id,
+                ..
+            } if value == "two" => Some(*id),
             _ => None,
         })
         .unwrap();
     assert!(second_id > first_id.unwrap());
-    assert!(events.contains(&Event::Alias(second_id)));
+    assert!(events.contains(&Event::alias(second_id)));
 
     let mut parser = Parser::new_from_str("first: &base one\nbroken: *missing\n---\n*base\n");
     first_error(&mut parser);
@@ -555,14 +576,14 @@ fn versions_and_tag_directives_follow_normal_document_boundaries() {
     strict.proceed_next_document().unwrap();
     assert_eq!(
         strict.next_event().unwrap().unwrap().0,
-        Event::DocumentStart(true, None)
+        Event::document_start(true, None)
     );
     first_error(&mut strict);
 
     let events = recover(Parser::new_from_str(source).keep_tags(true));
-    assert_eq!(events[0].0, Event::DocumentStart(true, None));
+    assert_eq!(events[0].0, Event::document_start(true, None));
     assert!(events.iter().any(|(event, _)| matches!(event,
-        Event::Scalar(value, _, _, Some(tag))
+        Event::Scalar { value, tag: Some(tag), .. }
             if value == "two" && tag.handle() == "tag:example.com,2026:" && tag.suffix() == "thing"
     )));
 
@@ -570,7 +591,7 @@ fn versions_and_tag_directives_follow_normal_document_boundaries() {
     let events = recover(Parser::new_from_str(source));
     assert_eq!(
         events[0].0,
-        Event::DocumentStart(true, Some(YamlVersion::new(1, 1)))
+        Event::document_start(true, Some(YamlVersion::new(1, 1)))
     );
 }
 
@@ -641,13 +662,13 @@ fn assert_header_error_tag_retention<'input, I: BorrowedInput<'input>>(
     if keep_tags {
         let events = remaining_events(&mut parser);
         assert!(events.iter().any(|event| matches!(event,
-            Event::Scalar(value, _, _, Some(tag))
+            Event::Scalar { value, tag: Some(tag), .. }
                 if value == "two" && tag.handle() == "tag:example.com,2026:" && tag.suffix() == "thing"
         )));
         assert!(!events
             .iter()
-            .any(|event| matches!(event, Event::Scalar(value, ..) if value == "discard")));
-        assert_eq!(events.last(), Some(&Event::StreamEnd));
+            .any(|event| matches!(event, Event::Scalar { value, .. } if value == "discard")));
+        assert_eq!(events.last(), Some(&Event::stream_end()));
     } else {
         assert_eq!(
             first_error(&mut parser).kind(),
@@ -764,7 +785,7 @@ fn failed_headers_can_recover_after_an_explicit_end_or_reach_eof() {
                 .into_iter()
                 .map(|(event, _)| event)
                 .collect::<Vec<_>>(),
-            [Event::StreamEnd],
+            [Event::stream_end()],
             "source: {source:?}",
         );
     }
@@ -780,7 +801,11 @@ fn keep_tags_does_not_retain_redefined_primary_or_builtin_handles_after_recovery
         let tag = events
             .iter()
             .find_map(|(event, _)| match event {
-                Event::Scalar(value, _, _, Some(tag)) if value == "two" => Some(tag),
+                Event::Scalar {
+                    value,
+                    tag: Some(tag),
+                    ..
+                } if value == "two" => Some(tag),
                 _ => None,
             })
             .unwrap();
@@ -803,9 +828,9 @@ fn recovery_retains_options_and_resets_nesting_limits() {
     first_error(&mut parser);
     parser.proceed_next_document().unwrap();
     let events = remaining_events(&mut parser);
-    assert!(events.contains(&Event::UnresolvedAlias("missing".into())));
-    assert_eq!(events.first(), Some(&Event::DocumentStart(true, None)));
-    assert_eq!(events.last(), Some(&Event::StreamEnd));
+    assert!(events.contains(&Event::unresolved_alias("missing".into())));
+    assert_eq!(events.first(), Some(&Event::document_start(true, None)));
+    assert_eq!(events.last(), Some(&Event::stream_end()));
 }
 
 #[cfg(feature = "comments")]
@@ -816,7 +841,7 @@ fn abandoned_comments_do_not_leak_into_the_recovered_document() {
     let comments: Vec<_> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Comment(text, _) => Some(text.as_ref()),
+            Event::Comment { value: text, .. } => Some(text.as_ref()),
             _ => None,
         })
         .collect();
@@ -828,7 +853,7 @@ fn abandoned_comments_do_not_leak_into_the_recovered_document() {
     ));
     assert!(!events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Comment(..))));
+        .any(|(event, _)| matches!(event, Event::Comment { .. })));
 }
 
 #[test]

@@ -8,7 +8,7 @@ fn bs4k_comment_between_plain_scalar_lines_should_fail() {
     let parser = Parser::new_from_str(yaml);
     for next in parser {
         match next {
-            Ok((Event::DocumentEnd, _)) => {
+            Ok((Event::DocumentEnd { .. }, _)) => {
                 unreachable!("Document end before any error");
             }
             Err(err) => {

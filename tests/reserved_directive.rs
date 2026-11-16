@@ -54,15 +54,15 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
         let tokens = scanner_tokens(yaml, Options::default());
         assert_eq!(
             tokens[1].token_type(),
-            &TokenType::ReservedDirective(name.into(), vec![param.into()]),
+            &TokenType::reserved_directive(name.into(), vec![param.into()]),
         );
         #[cfg(feature = "comments")]
         {
-            let TokenType::Comment(comment) = tokens[2].token_type() else {
+            let TokenType::Comment { comment, .. } = tokens[2].token_type() else {
                 panic!("expected a comment after the directive: {yaml:?}");
             };
             assert_eq!(comment.text(), comment_text);
-            assert_eq!(comment.placement(), Placement::Right);
+            assert_eq!(comment.placement(), Placement::right());
             assert_eq!(tokens[1].span().end, tokens[2].span().start);
             let comment_source = format!("#{comment_text}");
             assert_eq!(tokens[2].span().slice(yaml), Some(comment_source.as_str()));
@@ -83,7 +83,7 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
                 .iter()
                 .filter_map(|(event, span)| match event {
                     #[cfg(feature = "comments")]
-                    Event::Comment(text, _) => Some((text.as_ref(), *span)),
+                    Event::Comment { value: text, .. } => Some((text.as_ref(), *span)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -91,7 +91,7 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
         }
 
         assert!(events.iter().any(|(event, span)| {
-            matches!(event, Event::Scalar(value, ..) if value == "value")
+            matches!(event, Event::Scalar { value, .. } if value == "value")
                 && span.slice(yaml) == Some("value")
         }));
     }
@@ -117,7 +117,10 @@ fn reserved_directive_comments_do_not_consume_parameter_or_byte_limits() {
                     options
                 };
                 let tokens = scanner_tokens(&yaml, options.clone());
-                let TokenType::ReservedDirective(_, params) = tokens[1].token_type() else {
+                let TokenType::ReservedDirective {
+                    parameters: params, ..
+                } = tokens[1].token_type()
+                else {
                     panic!("expected a reserved directive");
                 };
                 assert_eq!(params.len(), param_count);
@@ -172,17 +175,20 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
                 let tokens = scanner_tokens(&yaml, options.clone());
                 assert_eq!(
                     tokens[1].token_type(),
-                    &TokenType::ReservedDirective("FUTURE".into(), params.clone()),
+                    &TokenType::reserved_directive("FUTURE".into(), params.clone()),
                 );
                 assert_eq!(tokens.len(), 3 + usize::from(emit_comments));
-                assert_eq!(tokens.last().unwrap().token_type(), &TokenType::StreamEnd);
+                assert_eq!(
+                    tokens.last().unwrap().token_type(),
+                    &TokenType::stream_end()
+                );
                 #[cfg(feature = "comments")]
                 if emit_comments {
-                    let TokenType::Comment(comment) = tokens[2].token_type() else {
+                    let TokenType::Comment { comment, .. } = tokens[2].token_type() else {
                         panic!("expected EOF comment: {yaml:?}");
                     };
                     assert_eq!(comment.text(), comment_text);
-                    assert_eq!(comment.placement(), Placement::Right);
+                    assert_eq!(comment.placement(), Placement::right());
                     assert_eq!(
                         tokens[2].span().slice(&yaml),
                         Some(&yaml[1 + directive.len() + 1..])
@@ -236,7 +242,7 @@ fn reserved_directive_comment_separator_is_excluded_from_utf8_byte_limit() {
             };
             let tokens = scanner_tokens(&yaml, exact.clone());
             assert!(
-                matches!(tokens[1].token_type(), TokenType::ReservedDirective(_, params) if params.len() == 1)
+                matches!(tokens[1].token_type(), TokenType::ReservedDirective { parameters: params, .. } if params.len() == 1)
             );
             assert!(first_error(&yaml, exact.clone()).is_none());
             assert!(first_iter_error(&yaml, exact.clone()).is_none());

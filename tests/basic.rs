@@ -58,8 +58,8 @@ fn collection_styles(input: &str) -> Vec<(&'static str, StructureStyle)> {
         .unwrap()
         .into_iter()
         .filter_map(|event| match event {
-            Event::SequenceStart(style, ..) => Some(("sequence", style)),
-            Event::MappingStart(style, ..) => Some(("mapping", style)),
+            Event::SequenceStart { style, .. } => Some(("sequence", style)),
+            Event::MappingStart { style, .. } => Some(("mapping", style)),
             _ => None,
         })
         .collect()
@@ -96,16 +96,16 @@ fn test_sequence_structure_styles() {
     assert_eq!(
         collection_styles("- block\n- [flow]\n"),
         vec![
-            ("sequence", StructureStyle::Block),
-            ("sequence", StructureStyle::Flow),
+            ("sequence", StructureStyle::block()),
+            ("sequence", StructureStyle::flow()),
         ]
     );
 
     assert_eq!(
         collection_styles("[flow, [nested]]\n"),
         vec![
-            ("sequence", StructureStyle::Flow),
-            ("sequence", StructureStyle::Flow),
+            ("sequence", StructureStyle::flow()),
+            ("sequence", StructureStyle::flow()),
         ]
     );
 }
@@ -115,17 +115,17 @@ fn test_mapping_structure_styles() {
     assert_eq!(
         collection_styles("block:\n  child: value\nflow: {child: value}\n"),
         vec![
-            ("mapping", StructureStyle::Block),
-            ("mapping", StructureStyle::Block),
-            ("mapping", StructureStyle::Flow),
+            ("mapping", StructureStyle::block()),
+            ("mapping", StructureStyle::block()),
+            ("mapping", StructureStyle::flow()),
         ]
     );
 
     assert_eq!(
         collection_styles("[implicit: flow]\n"),
         vec![
-            ("sequence", StructureStyle::Flow),
-            ("mapping", StructureStyle::Flow),
+            ("sequence", StructureStyle::flow()),
+            ("mapping", StructureStyle::flow()),
         ]
     );
 }
@@ -134,17 +134,17 @@ fn test_mapping_structure_styles() {
 fn test_empty_doc() {
     assert_eq!(
         run_parser("").unwrap(),
-        [Event::StreamStart, Event::StreamEnd]
+        [Event::stream_start(), Event::stream_end()]
     );
 
     assert_eq!(
         run_parser("---").unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(true, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(true, None),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -154,14 +154,14 @@ fn test_utf() {
     assert_eq!(
         run_parser("a: \u{4F60}\u{5273}").unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("\u{4F60}\u{5273}".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("\u{4F60}\u{5273}".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -178,22 +178,22 @@ a: b # This is another comment
     assert_eq!(
         run_parser(s).unwrap(),
         expected_events([
-            Event::StreamStart,
+            Event::stream_start(),
             #[cfg(feature = "comments")]
-            Event::Comment(" This is a comment".into(), Placement::Above),
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
+            Event::comment(" This is a comment".into(), Placement::above()),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
             #[cfg(feature = "comments")]
-            Event::Comment(" This is another comment".into(), Placement::Right),
+            Event::comment(" This is another comment".into(), Placement::right()),
             #[cfg(feature = "comments")]
-            Event::Comment("#".into(), Placement::Above),
+            Event::comment("#".into(), Placement::above()),
             #[cfg(feature = "comments")]
-            Event::Comment("".into(), Placement::Above),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::comment("".into(), Placement::above()),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ])
     );
 }
@@ -209,15 +209,15 @@ fn test_quoting() {
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::SequenceStart(StructureStyle::Block, 0, None),
-            Event::Scalar("plain".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("squote".into(), ScalarStyle::SingleQuoted, 0, None),
-            Event::Scalar("dquote".into(), ScalarStyle::DoubleQuoted, 0, None),
-            Event::SequenceEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::sequence_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("plain".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("squote".into(), ScalarStyle::single_quoted(), 0, None),
+            Event::new_scalar("dquote".into(), ScalarStyle::double_quoted(), 0, None),
+            Event::sequence_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -234,17 +234,17 @@ a scalar
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::DocumentStart(true, None),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::DocumentStart(true, None),
-            Event::Scalar("a scalar".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::document_start(true, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::document_start(true, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -255,11 +255,11 @@ fn test_github_27() {
     assert_eq!(
         run_parser("&a").unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 1, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 1, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -271,7 +271,13 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
             .unwrap()
             .into_iter()
             .filter_map(|event| match event {
-                Event::Scalar(value, style, anchor, tag) => Some((
+                Event::Scalar {
+                    value,
+                    style,
+                    anchor_id: anchor,
+                    tag,
+                    ..
+                } => Some((
                     value.into_owned(),
                     style,
                     anchor,
@@ -285,17 +291,17 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
     assert_eq!(
         scalar_events("a: &x\n"),
         vec![
-            ("a".to_string(), ScalarStyle::Plain, 0, None),
-            ("~".to_string(), ScalarStyle::Plain, 1, None),
+            ("a".to_string(), ScalarStyle::plain(), 0, None),
+            ("~".to_string(), ScalarStyle::implicit_plain(), 1, None),
         ]
     );
     assert_eq!(
         scalar_events("a: !!str\n"),
         vec![
-            ("a".to_string(), ScalarStyle::Plain, 0, None),
+            ("a".to_string(), ScalarStyle::plain(), 0, None),
             (
                 String::new(),
-                ScalarStyle::Plain,
+                ScalarStyle::implicit_plain(),
                 0,
                 Some("!!str".to_string()),
             ),
@@ -336,15 +342,15 @@ foobar";
     assert_eq!(
         run_parser(s).unwrap(),
         expected_events([
-            Event::StreamStart,
+            Event::stream_start(),
             #[cfg(feature = "comments")]
-            Event::Comment(" This is a comment".into(), Placement::Above),
-            Event::DocumentStart(true, Some(YamlVersion::new(1, 2))),
+            Event::comment(" This is a comment".into(), Placement::above()),
+            Event::document_start(true, Some(YamlVersion::new(1, 2))),
             #[cfg(feature = "comments")]
-            Event::Comment("-------".into(), Placement::Right),
-            Event::Scalar("foobar".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::comment("-------".into(), Placement::right()),
+            Event::new_scalar("foobar".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ])
     );
 }
@@ -366,7 +372,11 @@ fn test_empty_block_scalar_value_does_not_depend_on_eof() {
             .unwrap()
             .into_iter()
             .find_map(|event| match event {
-                Event::Scalar(value, ScalarStyle::Literal, _, _) => Some(value.into_owned()),
+                Event::Scalar {
+                    value,
+                    style: ScalarStyle::Literal { .. },
+                    ..
+                } => Some(value.into_owned()),
                 _ => None,
             })
             .unwrap()
@@ -393,14 +403,29 @@ a: |-
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("a\n    b".into(), ScalarStyle::Literal, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar(
+                "a\n    b".into(),
+                {
+                    let mut syntax = granit_parser::BlockScalarSyntax::new(
+                        granit_parser::Chomping::strip(),
+                        None,
+                        18,
+                    )
+                    .unwrap();
+                    syntax.header_chars_before_span = 21;
+                    syntax.header_bytes_before_span = 21;
+                    ScalarStyle::literal(syntax)
+                },
+                0,
+                None
+            ),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -411,37 +436,37 @@ fn test_bad_docstart() {
     assert_eq!(
         run_parser("----").unwrap(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 
     assert_eq!(
         run_parser("--- #comment").unwrap(),
         expected_events([
-            Event::StreamStart,
-            Event::DocumentStart(true, None),
+            Event::stream_start(),
+            Event::document_start(true, None),
             #[cfg(feature = "comments")]
-            Event::Comment("comment".into(), Placement::Right),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::comment("comment".into(), Placement::right()),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ])
     );
 
     assert_eq!(
         run_parser("---- #comment").unwrap(),
         expected_events([
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar("----".into(), ScalarStyle::Plain, 0, None),
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
             #[cfg(feature = "comments")]
-            Event::Comment("comment".into(), Placement::Right),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::comment("comment".into(), Placement::right()),
+            Event::document_end(false),
+            Event::stream_end(),
         ])
     );
 }

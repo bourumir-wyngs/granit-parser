@@ -13,7 +13,7 @@
 
 use granit_parser::{
     input::{is_breakz, BorrowedInput, Input},
-    Event, Parser, ScalarStyle, ScanError, StructureStyle,
+    Event, Parser, ScalarKind, ScalarStyle, ScanError, StructureStyle,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -31,12 +31,12 @@ fn first_error_info(input: &str) -> String {
     panic!("expected parser error");
 }
 
-fn scalars_of(events: &[Event<'_>]) -> Vec<(String, ScalarStyle)> {
+fn scalars_of(events: &[Event<'_>]) -> Vec<(String, ScalarKind)> {
     events
         .iter()
         .filter_map(|event| {
-            if let Event::Scalar(value, style, ..) = event {
-                Some((value.to_string(), *style))
+            if let Event::Scalar { value, style, .. } = event {
+                Some((value.to_string(), style.kind()))
             } else {
                 None
             }
@@ -253,7 +253,7 @@ fn block_scalar_line_longer_than_lookahead_window_is_read_completely() {
         scalars_of(&events),
         vec![(
             "abcdefghijklmnopqrstuvwxyz 0123456789\n".to_owned(),
-            ScalarStyle::Literal
+            ScalarKind::literal()
         )]
     );
 }
@@ -273,7 +273,7 @@ fn folded_scalar_long_lines_with_windowed_input_fold_to_spaces() {
         scalars_of(&events),
         vec![(
             "the quick brown fox jumps over the lazy dog and runs away\n".to_owned(),
-            ScalarStyle::Folded
+            ScalarKind::folded()
         )]
     );
 }
@@ -295,8 +295,8 @@ fn deeply_indented_block_scalar_with_buffered_input() {
     assert_eq!(
         scalars_of(&events),
         vec![
-            ("k".to_owned(), ScalarStyle::Plain),
-            ("aaaa\n\nbbbb\n".to_owned(), ScalarStyle::Literal),
+            ("k".to_owned(), ScalarKind::plain()),
+            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::literal()),
         ]
     );
 }
@@ -318,8 +318,8 @@ fn deeply_indented_block_scalar_with_windowed_input() {
     assert_eq!(
         scalars_of(&events),
         vec![
-            ("k".to_owned(), ScalarStyle::Plain),
-            ("aaaa\n\nbbbb\n".to_owned(), ScalarStyle::Literal),
+            ("k".to_owned(), ScalarKind::plain()),
+            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::literal()),
         ]
     );
 }
@@ -337,7 +337,7 @@ fn double_quoted_trailing_blank_before_break_folds_to_space() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("a b".to_owned(), ScalarStyle::DoubleQuoted)]
+        vec![("a b".to_owned(), ScalarKind::double_quoted())]
     );
 }
 
@@ -348,7 +348,7 @@ fn single_quoted_trailing_blanks_before_break_fold_to_space() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("a b".to_owned(), ScalarStyle::SingleQuoted)]
+        vec![("a b".to_owned(), ScalarKind::single_quoted())]
     );
 }
 
@@ -365,7 +365,7 @@ fn quoted_scalar_from_offsets_without_borrowing_is_copied() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("hello world".to_owned(), ScalarStyle::DoubleQuoted)]
+        vec![("hello world".to_owned(), ScalarKind::double_quoted())]
     );
 }
 
@@ -417,17 +417,17 @@ fn empty_flow_sequence_key_in_existing_block_mapping() {
     assert_eq!(
         events,
         vec![
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("x".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("y".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(StructureStyle::Flow, 0, None),
-            Event::SequenceEnd,
-            Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("x".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("y".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_start(StructureStyle::flow(), 0, None),
+            Event::sequence_end(),
+            Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -442,16 +442,16 @@ fn sequence_indented_one_column_under_mapping_key() {
     assert_eq!(
         events,
         vec![
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("a".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceStart(StructureStyle::Block, 0, None),
-            Event::Scalar("b".into(), ScalarStyle::Plain, 0, None),
-            Event::SequenceEnd,
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_end(),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }

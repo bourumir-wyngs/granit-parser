@@ -94,7 +94,7 @@ fn main() -> Result<(), ScanError> {
     // failures (`Some(Err(...))`). The `?` below returns either source or YAML syntax failures.
     for next in Parser::new_from_fallible_iter(input) {
         let (event, _) = next?;
-        if let Event::Scalar(value, ..) = event {
+        if let Event::Scalar { value, .. } = event {
             println!("{value}");
         }
     }

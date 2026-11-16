@@ -19,7 +19,7 @@ fn scalar_values(events: &[Event<'_>]) -> Vec<String> {
     events
         .iter()
         .filter_map(|event| {
-            if let Event::Scalar(value, ..) = event {
+            if let Event::Scalar { value, .. } = event {
                 Some(value.to_string())
             } else {
                 None
@@ -35,14 +35,14 @@ fn explicit_block_mapping_empty_key_is_null() {
     assert_eq!(
         events,
         vec![
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("~".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("value".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("value".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -52,10 +52,10 @@ fn flow_mapping_entry_without_colon_gets_null_value() {
     let events = parse_events("{foo}").unwrap();
 
     assert_eq!(scalar_values(&events), vec!["foo", "~"]);
-    assert!(matches!(events.get(2), Some(Event::MappingStart(..))));
+    assert!(matches!(events.get(2), Some(Event::MappingStart { .. })));
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::MappingEnd)));
+        .any(|event| matches!(event, Event::MappingEnd { .. })));
 }
 
 #[test]
@@ -65,10 +65,10 @@ fn flow_sequence_explicit_mapping_can_omit_key_and_value() {
     assert_eq!(scalar_values(&events), vec!["~", "~"]);
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::SequenceStart(..))));
+        .any(|event| matches!(event, Event::SequenceStart { .. })));
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::MappingStart(..))));
+        .any(|event| matches!(event, Event::MappingStart { .. })));
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn flow_sequence_explicit_mapping_can_omit_value() {
     assert_eq!(scalar_values(&events), vec!["foo", "~"]);
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::MappingEnd)));
+        .any(|event| matches!(event, Event::MappingEnd { .. })));
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn flow_sequence_entry_requires_comma_before_next_collection() {
 fn repeated_document_end_markers_do_not_start_empty_documents() {
     let events = parse_events("...\n...\n").unwrap();
 
-    assert_eq!(events, vec![Event::StreamStart, Event::StreamEnd]);
+    assert_eq!(events, vec![Event::stream_start(), Event::stream_end()]);
 }
 
 #[test]

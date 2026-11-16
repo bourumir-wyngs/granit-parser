@@ -2,7 +2,7 @@
 #![allow(non_upper_case_globals)]
 extern crate granit_parser;
 
-use granit_parser::{Event, EventReceiver, Parser, ScalarStyle};
+use granit_parser::{Event, EventReceiver, Parser};
 
 // These names match the names used in the C++ test suite.
 #[allow(clippy::enum_variant_names)]
@@ -26,20 +26,24 @@ struct YamlChecker {
 impl EventReceiver<'_> for YamlChecker {
     fn on_event(&mut self, ev: Event) {
         let tev = match ev {
-            Event::DocumentStart(..) => TestEvent::OnDocumentStart,
-            Event::DocumentEnd => TestEvent::OnDocumentEnd,
-            Event::SequenceStart(..) => TestEvent::OnSequenceStart,
-            Event::SequenceEnd => TestEvent::OnSequenceEnd,
-            Event::MappingStart(..) => TestEvent::OnMapStart,
-            Event::MappingEnd => TestEvent::OnMapEnd,
-            Event::Scalar(ref v, style, _, _) => {
-                if v == "~" && style == ScalarStyle::Plain {
+            Event::DocumentStart { .. } => TestEvent::OnDocumentStart,
+            Event::DocumentEnd { .. } => TestEvent::OnDocumentEnd,
+            Event::SequenceStart { .. } => TestEvent::OnSequenceStart,
+            Event::SequenceEnd { .. } => TestEvent::OnSequenceEnd,
+            Event::MappingStart { .. } => TestEvent::OnMapStart,
+            Event::MappingEnd { .. } => TestEvent::OnMapEnd,
+            Event::Scalar {
+                value: ref v,
+                style,
+                ..
+            } => {
+                if v == "~" && style.is_plain() {
                     TestEvent::OnNull
                 } else {
                     TestEvent::OnScalar
                 }
             }
-            Event::Alias(_) => TestEvent::OnAlias,
+            Event::Alias { .. } => TestEvent::OnAlias,
             _ => return, // ignore other events
         };
         self.evs.push(tev);

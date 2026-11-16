@@ -75,9 +75,9 @@ pub struct Options {
     /// let events = Parser::new_from_str_with_options("[*missing, value]", options)
     ///     .collect::<Result<Vec<_>, _>>()?;
     /// assert!(events.iter().any(|(event, _)| {
-    ///     matches!(event, Event::UnresolvedAlias(name) if name == "missing")
+    ///     matches!(event, Event::UnresolvedAlias { name, .. } if name == "missing")
     /// }));
-    /// assert!(matches!(events.last(), Some((Event::StreamEnd, _))));
+    /// assert!(matches!(events.last(), Some((Event::StreamEnd { .. }, _))));
     /// # Ok::<(), granit_parser::ScanError>(())
     /// ```
     pub emit_unresolved_aliases: bool,

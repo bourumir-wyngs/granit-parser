@@ -2,7 +2,7 @@ use granit_parser::{Event, Parser, ScalarStyle, StructureStyle};
 
 fn scalar_value<'a>(ev: &'a Event<'_>) -> Option<&'a str> {
     match ev {
-        Event::Scalar(v, ..) => Some(v.as_ref()),
+        Event::Scalar { value: v, .. } => Some(v.as_ref()),
         _ => None,
     }
 }
@@ -11,9 +11,11 @@ fn block_scalar_indents(yaml: &str) -> Vec<(String, Option<usize>)> {
     Parser::new_from_str(yaml)
         .map(|event| event.expect("valid yaml"))
         .filter_map(|(event, span)| match event {
-            Event::Scalar(value, ScalarStyle::Literal | ScalarStyle::Folded, ..) => {
-                Some((value.into_owned(), span.indent))
-            }
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Literal { .. } | ScalarStyle::Folded { .. },
+                ..
+            } => Some((value.into_owned(), span.indent)),
             _ => None,
         })
         .collect()
@@ -232,7 +234,7 @@ fn queued_key_node_after_comment_keeps_key_indent() {
 
     for next in Parser::new_from_str(yaml) {
         let (event, span) = next.expect("valid yaml");
-        if matches!(event, Event::SequenceStart(..)) {
+        if matches!(event, Event::SequenceStart { .. }) {
             key_sequence_indent = span.indent;
             break;
         }
@@ -265,9 +267,15 @@ fn root_block_sequence_can_have_anchor_on_previous_line() {
         .map(|event| event.expect("valid yaml").0)
         .collect::<Vec<_>>();
 
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, Event::SequenceStart(StructureStyle::Block, 1, None))));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::SequenceStart {
+            style: StructureStyle::Block { .. },
+            anchor_id: 1,
+            tag: None,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -277,9 +285,15 @@ fn indented_mapping_value_sequence_can_have_anchor_and_comment_on_previous_lines
         .map(|event| event.expect("valid yaml").0)
         .collect::<Vec<_>>();
 
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, Event::SequenceStart(StructureStyle::Block, 1, None))));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::SequenceStart {
+            style: StructureStyle::Block { .. },
+            anchor_id: 1,
+            tag: None,
+            ..
+        }
+    )));
 }
 
 #[test]

@@ -25,7 +25,7 @@ fn scalar<'events, 'input>(
     events
         .iter()
         .find_map(|(event, span)| match event {
-            Event::Scalar(value, ..) => Some((value, *span)),
+            Event::Scalar { value, .. } => Some((value, *span)),
             _ => None,
         })
         .expect("expected a scalar")

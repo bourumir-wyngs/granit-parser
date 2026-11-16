@@ -3,7 +3,7 @@
 pub fn is_comment_event(event: &granit_parser::Event<'_>) -> bool {
     #[cfg(feature = "comments")]
     {
-        matches!(event, granit_parser::Event::Comment(..))
+        matches!(event, granit_parser::Event::Comment { .. })
     }
     #[cfg(not(feature = "comments"))]
     {
@@ -15,7 +15,7 @@ pub fn is_comment_event(event: &granit_parser::Event<'_>) -> bool {
 pub fn is_comment_token(token: &granit_parser::TokenType<'_>) -> bool {
     #[cfg(feature = "comments")]
     {
-        matches!(token, granit_parser::TokenType::Comment(_))
+        matches!(token, granit_parser::TokenType::Comment { .. })
     }
     #[cfg(not(feature = "comments"))]
     {

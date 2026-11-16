@@ -94,7 +94,7 @@ fn first_iter_error(input: &str) -> ScanError {
 fn first_str_scalar(input: &str) -> String {
     Parser::new_from_str(input)
         .find_map(|item| match item.expect("input should parse") {
-            (Event::Scalar(value, ..), _) => Some(value.into_owned()),
+            (Event::Scalar { value, .. }, _) => Some(value.into_owned()),
             _ => None,
         })
         .expect("input should contain a scalar")
@@ -103,7 +103,7 @@ fn first_str_scalar(input: &str) -> String {
 fn first_iter_scalar(input: &str) -> String {
     Parser::new_from_iter(input.chars())
         .find_map(|item| match item.expect("input should parse") {
-            (Event::Scalar(value, ..), _) => Some(value.into_owned()),
+            (Event::Scalar { value, .. }, _) => Some(value.into_owned()),
             _ => None,
         })
         .expect("input should contain a scalar")
@@ -253,7 +253,7 @@ fn under_indented_flow_scalar_spans_match_between_input_backends() {
     for events in [&str_events, &iter_events] {
         let (_, span) = events
             .iter()
-            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "foo"))
+            .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "foo"))
             .expect("flow entry should be present");
         assert_eq!(span.start, Marker::new(7, 3, 0));
         assert_eq!(span.end, Marker::new(10, 3, 3));

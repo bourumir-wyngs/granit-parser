@@ -1,7 +1,7 @@
 mod support;
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
-use granit_parser::{Event, Parser, ScalarStyle, ScanError, Span};
+use granit_parser::{Event, Parser, ScalarKind, ScalarStyle, ScanError, Span};
 
 /// Run the parser through the string.
 ///
@@ -51,7 +51,7 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
 
 #[test]
 fn root_block_scalars_stop_at_document_markers() {
-    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
         for (chomping, content, expected) in [
             ("", "text\n", "text\n"),
             ("", "", ""),
@@ -71,6 +71,8 @@ fn root_block_scalars_stop_at_document_markers() {
             ] {
                 let yaml = format!("{indicator}{chomping}\n{content}{next_document}");
                 let spanned_events = run_parser_with_span(&yaml).unwrap();
+                let actual_style = spanned_events[2].0.scalar().unwrap().1;
+                assert_eq!(actual_style.kind(), style);
                 let marker_start = yaml.len() - next_document.len();
                 assert_eq!(
                     spanned_events[2].1.end.index(),
@@ -85,14 +87,23 @@ fn root_block_scalars_stop_at_document_markers() {
                 assert_eq!(
                     events,
                     [
-                        Event::StreamStart,
-                        Event::DocumentStart(false, None),
-                        Event::Scalar(expected.into(), style, 0, None),
-                        Event::DocumentEnd,
-                        Event::DocumentStart(explicit, None),
-                        Event::Scalar(second.into(), ScalarStyle::Plain, 0, None),
-                        Event::DocumentEnd,
-                        Event::StreamEnd,
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::new_scalar(expected.into(), actual_style, 0, None),
+                        Event::document_end(!explicit),
+                        Event::document_start(explicit, None),
+                        Event::new_scalar(
+                            second.into(),
+                            if second == "~" {
+                                ScalarStyle::implicit_plain()
+                            } else {
+                                ScalarStyle::plain()
+                            },
+                            0,
+                            None
+                        ),
+                        Event::document_end(false),
+                        Event::stream_end(),
                     ],
                     "input: {yaml:?}",
                 );
@@ -104,8 +115,8 @@ fn root_block_scalars_stop_at_document_markers() {
 #[test]
 fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_markers() {
     for (indicator, style, body) in [
-        ('|', ScalarStyle::Literal, "\nα\nβ"),
-        ('>', ScalarStyle::Folded, "\nα β"),
+        ('|', ScalarKind::literal(), "\nα\nβ"),
+        ('>', ScalarKind::folded(), "\nα β"),
     ] {
         for (chomping, tail) in [("-", ""), ("", "\n"), ("+", "\n\n")] {
             for newline in ["\n", "\r\n", "\r"] {
@@ -113,6 +124,8 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                     format!("{indicator}{chomping}{newline}{newline}α{newline}β{newline}{newline}");
                 let yaml = format!("{prefix}--- # next document{newline}second{newline}");
                 let events = run_parser_with_span(&yaml).unwrap();
+                let actual_style = events[2].0.scalar().unwrap().1;
+                assert_eq!(actual_style.kind(), style);
 
                 assert_eq!(
                     events
@@ -120,16 +133,16 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         .map(|(event, _)| event.clone())
                         .collect::<Vec<_>>(),
                     [
-                        Event::StreamStart,
-                        Event::DocumentStart(false, None),
-                        Event::Scalar(format!("{body}{tail}").into(), style, 0, None),
-                        Event::DocumentEnd,
-                        Event::DocumentStart(true, None),
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::new_scalar(format!("{body}{tail}").into(), actual_style, 0, None),
+                        Event::document_end(false),
+                        Event::document_start(true, None),
                         #[cfg(feature = "comments")]
-                        Event::Comment(" next document".into(), Placement::Right),
-                        Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
-                        Event::DocumentEnd,
-                        Event::StreamEnd,
+                        Event::comment(" next document".into(), Placement::right()),
+                        Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+                        Event::document_end(false),
+                        Event::stream_end(),
                     ]
                     .into_iter()
                     .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
@@ -157,7 +170,7 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
 
 #[test]
 fn block_scalars_preserve_content_resembling_document_markers() {
-    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
         for (content, expected) in [
             ("---text\n", "---text\n"),
             ("---#text\n", "---#text\n"),
@@ -175,14 +188,16 @@ fn block_scalars_preserve_content_resembling_document_markers() {
                 .into_iter()
                 .map(|(event, _)| event)
                 .collect();
+            let actual_style = events[2].scalar().unwrap().1;
+            assert_eq!(actual_style.kind(), style);
             assert_eq!(
                 events,
                 [
-                    Event::StreamStart,
-                    Event::DocumentStart(false, None),
-                    Event::Scalar(expected.into(), style, 0, None),
-                    Event::DocumentEnd,
-                    Event::StreamEnd,
+                    Event::stream_start(),
+                    Event::document_start(false, None),
+                    Event::new_scalar(expected.into(), actual_style, 0, None),
+                    Event::document_end(false),
+                    Event::stream_end(),
                 ],
                 "input: {yaml:?}",
             );
@@ -207,7 +222,7 @@ fn test_document_end_emitted_immediately() {
     // Find the DocumentEnd event and check its span
     let doc_end_event = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::DocumentEnd))
+        .find(|(ev, _)| matches!(ev, Event::DocumentEnd { .. }))
         .expect("DocumentEnd event should exist");
 
     // The DocumentEnd span should start at position 4 (start of "...")
@@ -239,7 +254,16 @@ fn test_document_start_emitted_immediately() {
     // Find the DocumentStart event and check its span
     let doc_start_event = events
         .iter()
-        .find(|(ev, _)| matches!(ev, Event::DocumentStart(true, None)))
+        .find(|(ev, _)| {
+            matches!(
+                ev,
+                Event::DocumentStart {
+                    explicit: true,
+                    version: None,
+                    ..
+                }
+            )
+        })
         .expect("DocumentStart(true) event should exist");
 
     // The DocumentStart span should start at position 0 (start of "---")
@@ -277,7 +301,7 @@ fn test_document_end_emitted_immediately_on_next_document_start_marker() {
     // Find the index of the DocumentEnd event.
     let doc_end_idx = events
         .iter()
-        .position(|(ev, _)| matches!(ev, Event::DocumentEnd))
+        .position(|(ev, _)| matches!(ev, Event::DocumentEnd { .. }))
         .expect("DocumentEnd event should exist");
 
     // The next event must be DocumentStart(true) for the second document.
@@ -285,7 +309,14 @@ fn test_document_end_emitted_immediately_on_next_document_start_marker() {
         .get(doc_end_idx + 1)
         .expect("DocumentStart(true) should follow DocumentEnd");
     assert!(
-        matches!(next_ev, Event::DocumentStart(true, None)),
+        matches!(
+            next_ev,
+            Event::DocumentStart {
+                explicit: true,
+                version: None,
+                ..
+            }
+        ),
         "DocumentStart(true) should immediately follow DocumentEnd"
     );
 

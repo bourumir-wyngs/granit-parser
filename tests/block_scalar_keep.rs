@@ -10,13 +10,22 @@ fn case_6fwr_keep_space() {
 
     for next in parser {
         match next {
-            Ok((Event::DocumentEnd, _)) => {
+            Ok((Event::DocumentEnd { .. }, _)) => {
                 break; // fine
             }
             Err(err) => {
                 unreachable!("{} reported for valid YAML", err);
             }
-            Ok((Event::Scalar(cow, style, size, _tag), span)) => {
+            Ok((
+                Event::Scalar {
+                    value: cow,
+                    style,
+                    anchor_id: size,
+                    tag: _tag,
+                    ..
+                },
+                span,
+            )) => {
                 // "ab\n\n\n"|Literal|0|Span { start: Marker { index: 8, line: 2, col: 1 }, end: Marker { index: 14, line: 5, col: 0 } }
                 println!("{cow:?}|{style:?}|{size:?}|{span:?}");
             }

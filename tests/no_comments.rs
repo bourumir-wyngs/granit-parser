@@ -129,16 +129,16 @@ type ExpectedScalar = Option<(ScalarStyle, &'static str)>;
 fn has_completed_token(tokens: &[Token<'_>], expected_scalar: &ExpectedScalar) -> bool {
     match expected_scalar {
         Some((style, value)) => tokens.iter().any(|token| {
-            matches!(token.token_type(), TokenType::Scalar(actual_style, actual_value)
-                if actual_style == style && actual_value == value)
+            matches!(token.token_type(), TokenType::Scalar { style: actual_style, value: actual_value, .. }
+                if actual_style.kind() == style.kind() && actual_value == value)
         }),
         None => {
             tokens
                 .iter()
-                .any(|token| matches!(token.token_type(), TokenType::BlockMappingStart))
+                .any(|token| matches!(token.token_type(), TokenType::BlockMappingStart { .. }))
                 && tokens
                     .iter()
-                    .any(|token| matches!(token.token_type(), TokenType::Key))
+                    .any(|token| matches!(token.token_type(), TokenType::Key { .. }))
         }
     }
 }
@@ -146,12 +146,12 @@ fn has_completed_token(tokens: &[Token<'_>], expected_scalar: &ExpectedScalar) -
 fn has_completed_event(events: &[(Event<'_>, Span)], expected_scalar: &ExpectedScalar) -> bool {
     match expected_scalar {
         Some((style, value)) => events.iter().any(|(event, _)| {
-            matches!(event, Event::Scalar(actual_value, actual_style, ..)
-                if actual_style == style && actual_value == value)
+            matches!(event, Event::Scalar { value: actual_value, style: actual_style, .. }
+                if actual_style.kind() == style.kind() && actual_value == value)
         }),
         None => events
             .iter()
-            .any(|(event, _)| matches!(event, Event::MappingStart(..))),
+            .any(|(event, _)| matches!(event, Event::MappingStart { .. })),
     }
 }
 
@@ -246,10 +246,10 @@ fn scanner_suppresses_every_lexical_comment_for_string_and_iterator_input() {
 
     for tokens in [&str_tokens[..], &iter_tokens[..]] {
         assert!(tokens.iter().any(|token| {
-            matches!(token.token_type(), TokenType::Scalar(_, value) if value == "value")
+            matches!(token.token_type(), TokenType::Scalar { value, .. } if value == "value")
         }));
         assert!(tokens.iter().any(|token| {
-            matches!(token.token_type(), TokenType::Scalar(_, value) if value == "two")
+            matches!(token.token_type(), TokenType::Scalar { value, .. } if value == "two")
         }));
     }
 }
@@ -315,11 +315,15 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
     {
         assert!(matches!(
             enabled.as_slice(),
-            [Event::StreamStart, Event::Comment(..), Event::StreamEnd]
+            [
+                Event::StreamStart { .. },
+                Event::Comment { .. },
+                Event::StreamEnd { .. }
+            ]
         ));
     }
     #[cfg(not(feature = "comments"))]
-    assert_eq!(enabled, [Event::StreamStart, Event::StreamEnd]);
+    assert_eq!(enabled, [Event::stream_start(), Event::stream_end()]);
     enabled.retain(|event| !support::is_comment_event(event));
 
     let disabled = parse_str(yaml, no_comments())
@@ -350,7 +354,7 @@ fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
         assert_eq!(disabled_comments, 0, "{context}");
         assert_eq!(disabled_events, enabled_events, "{context}");
         assert!(
-            matches!(enabled_events.as_slice(), [(Event::StreamStart, _)]),
+            matches!(enabled_events.as_slice(), [(Event::StreamStart { .. }, _)]),
             "unexpected parser prefix: {context}"
         );
 
@@ -415,10 +419,10 @@ fn disabled_comments_preserve_non_comment_event_spans() {
 fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
     // YAML 1.2.2 §§6.6, 6.9 and 7.2 permit EOF-terminated comments and empty nodes
     // whose anchor/tag properties remain significant, including an empty explicit key.
-    let null = |anchor| Event::Scalar("~".into(), ScalarStyle::Plain, anchor, None);
-    let local_empty = Event::Scalar(
+    let null = |anchor| Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), anchor, None);
+    let local_empty = Event::new_scalar(
         "".into(),
-        ScalarStyle::Plain,
+        ScalarStyle::implicit_plain(),
         1,
         Some(Cow::Owned(Tag::new("!", "local"))),
     );
@@ -426,26 +430,26 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
         (
             "? # café",
             vec![
-                Event::MappingStart(StructureStyle::Block, 0, None),
+                Event::mapping_start(StructureStyle::block(), 0, None),
                 null(0),
                 null(0),
-                Event::MappingEnd,
+                Event::mapping_end(),
             ],
         ),
         (
             "? &a # café",
             vec![
-                Event::MappingStart(StructureStyle::Block, 0, None),
+                Event::mapping_start(StructureStyle::block(), 0, None),
                 null(1),
                 null(0),
-                Event::MappingEnd,
+                Event::mapping_end(),
             ],
         ),
         (
             "!!str # café",
-            vec![Event::Scalar(
+            vec![Event::new_scalar(
                 "".into(),
-                ScalarStyle::Plain,
+                ScalarStyle::implicit_plain(),
                 0,
                 Some(Cow::Owned(Tag::with_original_handle(
                     "tag:yaml.org,2002:",
@@ -460,11 +464,12 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
     for (template, body) in empty_node_comment_cases() {
-        let mut expected_events = vec![Event::StreamStart, Event::DocumentStart(false, None)];
+        let mut expected_events = vec![Event::stream_start(), Event::document_start(false, None)];
         expected_events.extend(body);
-        expected_events.extend([Event::DocumentEnd, Event::StreamEnd]);
+        expected_events.extend([Event::document_end(false), Event::stream_end()]);
         for line_break in ["\n", "\r", "\r\n"] {
             let yaml = format!("# pré{line_break}{}", template.replace('\n', line_break));
             let eof = Marker::new(
@@ -547,7 +552,11 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                         );
                         tokens.retain(|token| !support::is_comment_token(token.token_type()));
                         let stream_end = tokens.last().unwrap();
-                        assert_eq!(stream_end.token_type(), &TokenType::StreamEnd, "{context}");
+                        assert_eq!(
+                            stream_end.token_type(),
+                            &TokenType::stream_end(),
+                            "{context}"
+                        );
                         assert_eq!(stream_end.span(), Span::empty(eof), "{context}");
                         if let Some(expected) = &expected_tokens {
                             assert_eq!(&tokens, expected, "{context}");
@@ -670,9 +679,10 @@ fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
         let expected_error = ErrorKind::UnexpectedCharacter { character: '\u{1}' };
         assert_eq!(enabled_error.kind(), &expected_error, "{name}");
         assert!(
-            enabled_events
-                .iter()
-                .all(|(event, _)| !matches!(event, Event::MappingEnd | Event::DocumentEnd)),
+            enabled_events.iter().all(|(event, _)| !matches!(
+                event,
+                Event::MappingEnd { .. } | Event::DocumentEnd { .. }
+            )),
             "parser emitted closing events after the error: {name}"
         );
     }
@@ -749,13 +759,13 @@ fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
             "completed quoted scalar",
             "\"value\"\n# ignored\n@\n",
             ErrorKind::UnexpectedCharacter { character: '@' },
-            Some((ScalarStyle::DoubleQuoted, "value")),
+            Some((ScalarStyle::double_quoted(), "value")),
         ),
         (
             "completed plain scalar",
             "foo\n# ignored\n@\n",
             ErrorKind::UnexpectedCharacter { character: '@' },
-            Some((ScalarStyle::Plain, "foo")),
+            Some((ScalarStyle::plain(), "foo")),
         ),
     ] {
         assert_scanner_prefix(
@@ -793,7 +803,7 @@ fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
 fn ignored_tab_prefixed_comments_preserve_completed_scalars_before_later_errors() {
     let source = "root:\n  key: \"value\"\n\t# ignored\n\t# invalid \u{1}\n";
     let expected_error = ErrorKind::UnexpectedCharacter { character: '\u{1}' };
-    let expected_scalar = Some((ScalarStyle::DoubleQuoted, "value"));
+    let expected_scalar = Some((ScalarStyle::double_quoted(), "value"));
 
     for strict_indentation in [false, true] {
         let enabled = granit_parser::options! { strict_indentation: strict_indentation };
@@ -860,7 +870,10 @@ fn disabled_comments_preserve_required_block_scalar_error_prefix() {
         assert!(
             enabled_tokens.iter().all(|token| !matches!(
                 token.token_type(),
-                TokenType::Scalar(ScalarStyle::Literal, _)
+                TokenType::Scalar {
+                    style: ScalarStyle::Literal { .. },
+                    ..
+                }
             )),
             "block scalar escaped before its required-key error: {context}"
         );
@@ -888,9 +901,13 @@ fn disabled_comments_preserve_required_block_scalar_error_prefix() {
         assert_eq!(disabled_comments, 0, "{context}");
         assert_eq!(disabled_events, enabled_events, "{context}");
         assert!(
-            enabled_events
-                .iter()
-                .all(|(event, _)| !matches!(event, Event::Scalar(_, ScalarStyle::Literal, ..))),
+            enabled_events.iter().all(|(event, _)| !matches!(
+                event,
+                Event::Scalar {
+                    style: ScalarStyle::Literal { .. },
+                    ..
+                }
+            )),
             "block scalar escaped before its required-key error: {context}"
         );
     }
@@ -982,13 +999,13 @@ fn streaming_comment_failures_preserve_source_errors_in_all_emission_modes() {
             assert!(
                 events
                     .iter()
-                    .all(|(event, _)| !matches!(event, Event::StreamEnd)),
+                    .all(|(event, _)| !matches!(event, Event::StreamEnd { .. })),
                 "{context}"
             );
             assert!(
                 tokens
                     .iter()
-                    .all(|token| !matches!(token.token_type(), TokenType::StreamEnd)),
+                    .all(|token| !matches!(token.token_type(), TokenType::StreamEnd { .. })),
                 "{context}"
             );
             if !cfg!(feature = "comments") || !emit_comments {
@@ -1000,17 +1017,20 @@ fn streaming_comment_failures_preserve_source_errors_in_all_emission_modes() {
 
 fn assert_literal_hash_scalars(events: &[Event<'_>]) {
     let expected = [
-        (ScalarStyle::Plain, "value#plain"),
-        (ScalarStyle::SingleQuoted, "# single"),
-        (ScalarStyle::DoubleQuoted, "# double"),
-        (ScalarStyle::Literal, "# block\n"),
+        (ScalarStyle::plain(), "value#plain"),
+        (ScalarStyle::single_quoted(), "# single"),
+        (ScalarStyle::double_quoted(), "# double"),
+        (
+            ScalarStyle::literal(granit_parser::BlockScalarSyntax::default()),
+            "# block\n",
+        ),
     ];
 
     for (style, expected_value) in expected {
         assert!(
             events.iter().any(|event| {
-                matches!(event, Event::Scalar(value, actual_style, ..)
-                    if *actual_style == style && value == expected_value)
+                matches!(event, Event::Scalar { value, style: actual_style, .. }
+                    if actual_style.kind() == style.kind() && value == expected_value)
             }),
             "missing {style:?} scalar {expected_value:?} in {events:?}",
         );
@@ -1055,8 +1075,12 @@ fn completed_plain_scalar_is_returned_before_long_suppressed_comment_tail_is_rea
             .expect("the comment tail should not fail");
         match event {
             #[cfg(feature = "comments")]
-            Event::Comment(..) => panic!("disabled comments must not be emitted"),
-            Event::Scalar(value, ScalarStyle::Plain, ..) if value == "foo" => break,
+            Event::Comment { .. } => panic!("disabled comments must not be emitted"),
+            Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                ..
+            } if value == "foo" => break,
             _ => {}
         }
     }
@@ -1084,8 +1108,15 @@ fn completed_plain_scalar_is_returned_before_fallible_suppressed_comment_tail_fa
             .expect("parser should return the completed scalar")
         {
             #[cfg(feature = "comments")]
-            Ok((Event::Comment(..), _)) => panic!("disabled comments must not be emitted"),
-            Ok((Event::Scalar(value, ScalarStyle::Plain, ..), _)) if value == "foo" => break,
+            Ok((Event::Comment { .. }, _)) => panic!("disabled comments must not be emitted"),
+            Ok((
+                Event::Scalar {
+                    value,
+                    style: ScalarStyle::Plain { .. },
+                    ..
+                },
+                _,
+            )) if value == "foo" => break,
             Ok(_) => {}
             Err(error) => panic!("source failure overtook the completed scalar: {error}"),
         }

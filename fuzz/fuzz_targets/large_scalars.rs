@@ -8,7 +8,7 @@ use crate::common;
 use std::str;
 
 use common::parse_with_both_inputs;
-use granit_parser::{Event, Parser, ScalarStyle};
+use granit_parser::{Event, Parser, ScalarKind, ScalarStyle};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
@@ -40,13 +40,13 @@ pub fn check_input(data: &[u8]) {
         0 => {
             let scalar = expanded_scalar(&hex_seed(seed), target_len);
             let yaml = format!("value: {scalar}\n");
-            assert_generated_scalar(&yaml, ScalarStyle::Plain, &scalar);
+            assert_generated_scalar(&yaml, ScalarKind::plain(), &scalar);
             yaml
         }
         1 => {
             let scalar = expanded_scalar(&hex_seed(seed), target_len);
             let yaml = format!("value: \"{scalar}\"\n");
-            assert_generated_scalar(&yaml, ScalarStyle::DoubleQuoted, &scalar);
+            assert_generated_scalar(&yaml, ScalarKind::double_quoted(), &scalar);
             yaml
         }
         2 | 3 => {
@@ -57,11 +57,11 @@ pub fn check_input(data: &[u8]) {
             let header = if mode % 8 == 2 { "|" } else { ">-" };
             let yaml = block_document(header, &wrapped);
             let style = if mode % 8 == 2 {
-                ScalarStyle::Literal
+                ScalarKind::literal()
             } else {
-                ScalarStyle::Folded
+                ScalarKind::folded()
             };
-            let expected = if style == ScalarStyle::Literal {
+            let expected = if matches!(style, ScalarKind::Literal { .. }) {
                 wrapped
             } else {
                 wrapped.lines().collect::<Vec<_>>().join(" ")
@@ -103,9 +103,9 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
     wrapped.insert(0, 'λ');
     let folded = variant & 1 != 0;
     let (indicator, style) = if folded {
-        ('>', ScalarStyle::Folded)
+        ('>', ScalarKind::folded())
     } else {
-        ('|', ScalarStyle::Literal)
+        ('|', ScalarKind::literal())
     };
     let chomp = ["", "-", "+"][usize::from((variant >> 1) & 3) % 3];
     let newline = ["\n", "\r\n", "\r"][usize::from((variant >> 3) & 3) % 3];
@@ -134,20 +134,25 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
     let events = Parser::new_from_str(&yaml)
         .collect::<Result<Vec<_>, _>>()
         .expect("zero-indented root block scalar must preserve the next document");
+    let (_, actual_style) = events[2]
+        .0
+        .scalar()
+        .expect("root block document must contain its scalar");
+    assert_eq!(actual_style.kind(), style);
     assert_eq!(
         events
             .iter()
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         [
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar(expected.into(), style, 0, None),
-            Event::DocumentEnd,
-            Event::DocumentStart(true, None),
-            Event::Scalar("second".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar(expected.into(), actual_style, 0, None),
+            Event::document_end(false),
+            Event::document_start(true, None),
+            Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+            Event::document_end(false),
+            Event::stream_end(),
         ],
         "root block scalar folding, chomping, or document boundary changed",
     );
@@ -174,7 +179,7 @@ fn hex_seed(data: &[u8]) -> String {
     encoded
 }
 
-fn assert_generated_scalar(input: &str, expected_style: ScalarStyle, expected_value: &str) {
+fn assert_generated_scalar(input: &str, expected_style: ScalarKind, expected_value: &str) {
     let events = Parser::new_from_str(input)
         .collect::<Result<Vec<_>, _>>()
         .expect("generated scalar document must parse");
@@ -184,7 +189,7 @@ fn assert_generated_scalar(input: &str, expected_style: ScalarStyle, expected_va
         .next_back()
         .expect("generated document must emit its scalar value");
 
-    assert_eq!(style, expected_style);
+    assert_eq!(style.kind(), expected_style);
     assert_eq!(value, expected_value);
 }
 

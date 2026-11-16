@@ -56,12 +56,12 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
     for expected in ["child", "parent"] {
         assert!(events
             .iter()
-            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == expected)));
+            .any(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == expected)));
     }
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
             .count(),
         1
     );
@@ -75,10 +75,10 @@ fn default_stack_emits_replayed_comments() {
         ReplayParser::new(
             vec![
                 (
-                    Event::Comment(Cow::Borrowed(" replay"), Placement::Free),
+                    Event::comment(Cow::Borrowed(" replay"), Placement::free()),
                     span(),
                 ),
-                (Event::StreamEnd, span()),
+                (Event::stream_end(), span()),
             ],
             1,
         ),
@@ -86,7 +86,7 @@ fn default_stack_emits_replayed_comments() {
     );
 
     let first = stack.next_event().unwrap().unwrap().0;
-    assert!(matches!(first, Event::Comment(ref text, _) if text == " replay"));
+    assert!(matches!(first, Event::Comment { value: ref text, .. } if text == " replay"));
 }
 
 #[test]
@@ -97,14 +97,14 @@ fn no_comments_stack_suppresses_replayed_events() {
         ReplayParser::new(
             vec![
                 (
-                    Event::Comment(Cow::Borrowed(" replay"), Placement::Free),
+                    Event::comment(Cow::Borrowed(" replay"), Placement::free()),
                     span(),
                 ),
                 (
-                    Event::Scalar(Cow::Borrowed("value"), ScalarStyle::Plain, 0, None),
+                    Event::new_scalar(Cow::Borrowed("value"), ScalarStyle::plain(), 0, None),
                     span(),
                 ),
-                (Event::StreamEnd, span()),
+                (Event::stream_end(), span()),
             ],
             1,
         ),
@@ -115,7 +115,7 @@ fn no_comments_stack_suppresses_replayed_events() {
     assert_has_no_comments(&events);
     assert!(events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+        .any(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "value")));
 }
 
 #[test]
@@ -124,10 +124,10 @@ fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
     let current = parser.next_event().unwrap().unwrap();
-    assert!(matches!(current.0, Event::Comment(..)));
+    assert!(matches!(current.0, Event::Comment { .. }));
 
     let mut stack = Stack::with_options(no_comment_options());
     stack.push_custom_parser_with_current(parser, "custom".to_owned(), current);
@@ -136,7 +136,7 @@ fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     assert_has_no_comments(&events);
     assert!(events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+        .any(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "value")));
 }
 
 #[test]
@@ -217,15 +217,15 @@ fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document(
         ReplayParser::new(
             vec![
                 (
-                    Event::Scalar(Cow::Borrowed("child"), ScalarStyle::Plain, 0, None),
+                    Event::new_scalar(Cow::Borrowed("child"), ScalarStyle::plain(), 0, None),
                     span(),
                 ),
-                (Event::DocumentEnd, span()),
+                (Event::document_end(false), span()),
                 (
-                    Event::Comment(Cow::Borrowed(" trailing"), Placement::Last),
+                    Event::comment(Cow::Borrowed(" trailing"), Placement::last()),
                     span(),
                 ),
-                (Event::StreamEnd, span()),
+                (Event::stream_end(), span()),
             ],
             1,
         ),

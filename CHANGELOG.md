@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 (unreleased, breaking changes)
+
+**Source syntax and API migration**
+
+- Expose `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
+  `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
+  [#42, section 3](https://github.com/bourumir-wyngs/granit-parser/issues/42).
+  Retain chomping, the explicit indentation digit and indicator positions, and effective
+  content indentation. Header positions use compact backward character/byte distances from
+  the accompanying span, rather than an additional `Marker`. Checked range accessors locate
+  headers and individual indicators without rescanning; byte ranges are unavailable for
+  character-iterator inputs. Existing event spans and decoded scalar values are preserved.
+- Convert public `Event` and `TokenType` variants to named fields and make all variants of
+  the public syntax enums non-exhaustive. Downstream patterns must use named fields and `..`;
+  use constructors for synthetic events, tokens, and styles. Enum-level non-exhaustiveness
+  also allows additional variants. `Event::scalar()` remains an accessor; construct a scalar
+  event with `Event::new_scalar(...)`.
+- Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
+  written plain text, retaining the existing decoded representation of empty nodes.
+  Add `ScalarKind` and style predicates for category comparisons independent of metadata.
+- Add `Event::DocumentEnd { explicit }` to distinguish a written `...` marker from an
+  implicit document end.
+
 
 **Support user cases**
 

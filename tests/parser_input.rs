@@ -34,7 +34,7 @@ impl<'input> TryEventReceiver<'input> for RejectStreamEnd {
     type Error = &'static str;
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        if matches!(ev, Event::StreamEnd) {
+        if matches!(ev, Event::StreamEnd { .. }) {
             Err("stream end rejected")
         } else {
             Ok(())
@@ -60,7 +60,7 @@ impl<'input> TryEventReceiver<'input> for RejectSequenceStart {
     type Error = &'static str;
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        if matches!(ev, Event::SequenceStart(..)) {
+        if matches!(ev, Event::SequenceStart { .. }) {
             Err("sequence start reached")
         } else {
             Ok(())
@@ -181,30 +181,40 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
     #[cfg(not(feature = "comments"))]
     assert!(events.windows(3).any(|events| matches!(
         events,
-        [Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None), Event::Scalar(key, ..), Event::Scalar(value, ..)]
+        [Event::MappingStart { style: granit_parser::StructureStyle::Flow { .. }, anchor_id: 0, tag: None, .. }, Event::Scalar { value: key, .. }, Event::Scalar { value, .. }]
             if key == "a" && value == "b"
     )));
     #[cfg(feature = "comments")]
     {
         let comment_pos = events
             .iter()
-            .position(|event| matches!(event, Event::Comment(text, _) if text == " note"))
+            .position(
+                |event| matches!(event, Event::Comment { value: text, .. } if text == " note"),
+            )
             .expect("the comment between the key and value must be emitted");
         assert!(matches!(
             events[comment_pos - 2],
-            Event::MappingStart(granit_parser::StructureStyle::Flow, 0, None)
+            Event::MappingStart {
+                style: granit_parser::StructureStyle::Flow { .. },
+                anchor_id: 0,
+                tag: None,
+                ..
+            }
         ));
         assert!(matches!(
             events[comment_pos - 1],
-            Event::Scalar(ref value, ..) if value == "a"
+            Event::Scalar { ref value, .. } if value == "a"
         ));
         assert!(matches!(
             events[comment_pos + 1],
-            Event::Scalar(ref value, ..) if value == "b"
+            Event::Scalar { ref value, .. } if value == "b"
         ));
         assert!(matches!(
             events[comment_pos],
-            Event::Comment(_, Placement::Right)
+            Event::Comment {
+                placement: Placement::Right { .. },
+                ..
+            }
         ));
     }
 }
@@ -354,7 +364,7 @@ fn try_load_emits_peeked_sequence_start_before_deferred_scanner_error() {
     // later scanner error on streaming inputs.
     loop {
         match parser.peek() {
-            Some(Ok((Event::SequenceStart(..), _))) => break,
+            Some(Ok((Event::SequenceStart { .. }, _))) => break,
             Some(Ok(_)) => {
                 parser.next_event().unwrap().unwrap();
             }
@@ -385,7 +395,7 @@ fn next_event_after_receiver_error_on_stream_end_returns_stream_end() {
     // The parser already reached its terminal state; asking for another event
     // re-emits `StreamEnd` instead of scanning further.
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::StreamEnd);
+    assert_eq!(event, Event::stream_end());
     assert!(parser.next_event().is_none());
 }
 
@@ -398,6 +408,6 @@ fn next_event_after_receiver_error_on_stream_end_with_comments_returns_stream_en
     assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
 
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::StreamEnd);
+    assert_eq!(event, Event::stream_end());
     assert!(parser.next_event().is_none());
 }

@@ -62,29 +62,29 @@ impl Walker {
     /// A node event gets a context; structural and metadata events get `None`.
     fn observe(&mut self, event: &Event<'_>) -> Result<Option<(Role, usize)>, &'static str> {
         match event {
-            Event::Scalar(..) | Event::Alias(_) | Event::UnresolvedAlias(_) => {
+            Event::Scalar { .. } | Event::Alias { .. } | Event::UnresolvedAlias { .. } => {
                 // Both resolved and unresolved aliases occupy one slot. Neither
                 // causes the target's children to be visited by this walker.
                 Ok(Some(self.take_node_slot()))
             }
-            Event::SequenceStart(..) => {
+            Event::SequenceStart { .. } => {
                 // Update the parent BEFORE pushing the children's context.
                 let context = self.take_node_slot();
                 self.frames.push(Frame::Sequence);
                 Ok(Some(context))
             }
-            Event::MappingStart(..) => {
+            Event::MappingStart { .. } => {
                 let context = self.take_node_slot();
                 self.frames.push(Frame::Mapping { next_is_key: true });
                 Ok(Some(context))
             }
-            Event::SequenceEnd => {
+            Event::SequenceEnd { .. } => {
                 assert_eq!(self.frames.pop(), Some(Frame::Sequence));
                 // Closing a collection only restores its parent's context.
                 // Its parent already advanced when the collection started.
                 Ok(None)
             }
-            Event::MappingEnd => {
+            Event::MappingEnd { .. } => {
                 assert_eq!(
                     self.frames.pop(),
                     Some(Frame::Mapping { next_is_key: true }),
@@ -92,7 +92,7 @@ impl Walker {
                 );
                 Ok(None)
             }
-            Event::DocumentStart(..) => {
+            Event::DocumentStart { .. } => {
                 // Comparing the stack itself shows any unfinished collections on failure.
                 assert_eq!(self.frames, [] as [Frame; 0]);
                 self.root_seen = false;
@@ -101,16 +101,16 @@ impl Walker {
                 // happen to continue increasing across document boundaries.
                 Ok(None)
             }
-            Event::DocumentEnd => {
+            Event::DocumentEnd { .. } => {
                 assert_eq!(self.frames, [] as [Frame; 0]);
                 assert!(self.root_seen);
                 Ok(None)
             }
-            Event::StreamStart | Event::StreamEnd => Ok(None),
+            Event::StreamStart { .. } | Event::StreamEnd { .. } => Ok(None),
             // Anchor metadata describes the preceding node and consumes no slot.
-            Event::Anchor(..) => Ok(None),
+            Event::Anchor { .. } => Ok(None),
             #[cfg(feature = "comments")]
-            Event::Comment(..) => {
+            Event::Comment { .. } => {
                 // Comments are presentation metadata, so they never advance a
                 // mapping or add depth. Their placement is a best-effort hint;
                 // event order alone does not determine comment ownership.
@@ -128,15 +128,27 @@ impl Walker {
 /// Short labels keep the expected results below readable.
 fn node_label<'event>(event: &'event Event<'_>) -> &'event str {
     match event {
-        Event::Scalar(value, ..) => value.as_ref(),
+        Event::Scalar { value, .. } => value.as_ref(),
         // Collection notation is already available as StructureStyle. There is
         // no need to infer it from indentation, spans, or source punctuation.
-        Event::SequenceStart(StructureStyle::Block, ..) => "block sequence",
-        Event::SequenceStart(StructureStyle::Flow, ..) => "flow sequence",
-        Event::MappingStart(StructureStyle::Block, ..) => "block mapping",
-        Event::MappingStart(StructureStyle::Flow, ..) => "flow mapping",
-        Event::Alias(_) => "alias",
-        Event::UnresolvedAlias(_) => "unresolved alias",
+        Event::SequenceStart {
+            style: StructureStyle::Block { .. },
+            ..
+        } => "block sequence",
+        Event::SequenceStart {
+            style: StructureStyle::Flow { .. },
+            ..
+        } => "flow sequence",
+        Event::MappingStart {
+            style: StructureStyle::Block { .. },
+            ..
+        } => "block mapping",
+        Event::MappingStart {
+            style: StructureStyle::Flow { .. },
+            ..
+        } => "flow mapping",
+        Event::Alias { .. } => "alias",
+        Event::UnresolvedAlias { .. } => "unresolved alias",
         _ => unreachable!("observe only returns a context for known node events"),
     }
 }
@@ -159,7 +171,12 @@ fn walk(
         // separate makes the same Walker usable with another parser input type.
         let (event, _span) = next?;
         let Some((role, depth)) = walker.observe(&event)? else {
-            if let Event::Anchor(id, name) = &event {
+            if let Event::Anchor {
+                anchor_id: id,
+                name,
+                ..
+            } = &event
+            {
                 println!("    anchor metadata: &{name} (ID {id})");
             }
             continue;

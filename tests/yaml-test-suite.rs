@@ -452,16 +452,24 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
         self.last_span = Some((ev.clone(), span));
 
         let line: String = match ev {
-            Event::StreamStart => "+STR".into(),
-            Event::StreamEnd => "-STR".into(),
+            Event::StreamStart { .. } => "+STR".into(),
+            Event::StreamEnd { .. } => "-STR".into(),
 
-            Event::DocumentStart(explicit, _) => if explicit { "+DOC ---" } else { "+DOC" }.into(),
-            Event::DocumentEnd => "-DOC".into(),
+            Event::DocumentStart { explicit, .. } => {
+                if explicit { "+DOC ---" } else { "+DOC" }.into()
+            }
+            Event::DocumentEnd { .. } => "-DOC".into(),
 
-            Event::SequenceStart(style, idx, tag) => {
+            Event::SequenceStart {
+                style,
+                anchor_id: idx,
+                tag,
+                ..
+            } => {
                 let style = match style {
-                    StructureStyle::Block => "",
-                    StructureStyle::Flow => " []",
+                    StructureStyle::Block { .. } => "",
+                    StructureStyle::Flow { .. } => " []",
+                    _ => panic!("unknown collection style"),
                 };
                 format!(
                     "+SEQ{style}{}{}",
@@ -469,12 +477,18 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::SequenceEnd => "-SEQ".into(),
+            Event::SequenceEnd { .. } => "-SEQ".into(),
 
-            Event::MappingStart(style, idx, tag) => {
+            Event::MappingStart {
+                style,
+                anchor_id: idx,
+                tag,
+                ..
+            } => {
                 let style = match style {
-                    StructureStyle::Block => "",
-                    StructureStyle::Flow => " {}",
+                    StructureStyle::Block { .. } => "",
+                    StructureStyle::Flow { .. } => " {}",
+                    _ => panic!("unknown collection style"),
                 };
                 format!(
                     "+MAP{style}{}{}",
@@ -482,15 +496,22 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::MappingEnd => "-MAP".into(),
+            Event::MappingEnd { .. } => "-MAP".into(),
 
-            Event::Scalar(ref text, style, idx, ref tag) => {
+            Event::Scalar {
+                value: ref text,
+                style,
+                anchor_id: idx,
+                ref tag,
+                ..
+            } => {
                 let kind = match style {
-                    ScalarStyle::Plain => ":",
-                    ScalarStyle::SingleQuoted => "'",
-                    ScalarStyle::DoubleQuoted => r#"""#,
-                    ScalarStyle::Literal => "|",
-                    ScalarStyle::Folded => ">",
+                    ScalarStyle::Plain { .. } => ":",
+                    ScalarStyle::SingleQuoted { .. } => "'",
+                    ScalarStyle::DoubleQuoted { .. } => r#"""#,
+                    ScalarStyle::Literal { .. } => "|",
+                    ScalarStyle::Folded { .. } => ">",
+                    _ => panic!("unknown scalar style"),
                 };
                 format!(
                     "=VAL{}{} {kind}{}",
@@ -499,9 +520,9 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     escape_text(text)
                 )
             }
-            Event::Alias(idx) => format!("=ALI *{idx}"),
+            Event::Alias { anchor_id: idx, .. } => format!("=ALI *{idx}"),
             #[cfg(feature = "comments")]
-            Event::Comment(..) => unreachable!("comments are ignored above"),
+            Event::Comment { .. } => unreachable!("comments are ignored above"),
             _ => return,
         };
         self.events.push(line);
