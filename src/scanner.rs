@@ -3599,10 +3599,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if chomping != Chomping::Strip {
             // If we had reached an eof but the last content line wasn't terminated by a line
             // break, check if the last line was indented at least as the rest of the scalar, then
-            // we need to consider there is a newline. When that line already ended with a break
-            // (`leading_break`), the indentation-only remainder at EOF is not a line (it has no
-            // break, so it is no `l-empty`) and adds nothing.
-            if !leading_break && self.input.next_is_z() && self.mark.col >= indent.max(1) {
+            // we need to consider there is a newline, unless the caller opted into libyaml's
+            // reading. When that line already ended with a break (`leading_break`), the
+            // indentation-only remainder at EOF is not a line (it has no break, so it is no
+            // `l-empty`) and adds nothing.
+            if !leading_break
+                && !self.options.block_scalar_eof_without_line_feed
+                && self.input.next_is_z()
+                && self.mark.col >= indent.max(1)
+            {
                 string.push('\n');
             }
             if leading_break {
