@@ -101,7 +101,7 @@ fn no_comments_stack_suppresses_replayed_events() {
                     span(),
                 ),
                 (
-                    Event::new_scalar(Cow::Borrowed("value"), ScalarStyle::plain(), 0, None),
+                    Event::new_scalar(Cow::Borrowed("value"), ScalarStyle::Plain, false, 0, None),
                     span(),
                 ),
                 (Event::StreamEnd, span()),
@@ -217,7 +217,7 @@ fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document(
         ReplayParser::new(
             vec![
                 (
-                    Event::new_scalar(Cow::Borrowed("child"), ScalarStyle::plain(), 0, None),
+                    Event::new_scalar(Cow::Borrowed("child"), ScalarStyle::Plain, false, 0, None),
                     span(),
                 ),
                 (Event::document_end(false), span()),

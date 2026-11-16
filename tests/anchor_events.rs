@@ -150,7 +150,7 @@ fn assert_anchored_nodes(
             nodes.push(match node {
                 Event::Scalar {
                     value,
-                    style: ScalarStyle::Plain { .. },
+                    style: ScalarStyle::Plain,
                     ..
                 } => Scalar(value),
                 Event::SequenceStart { style, .. } => Sequence(*style),
@@ -624,7 +624,7 @@ fn loading_documents_separately_delivers_each_anchor_once() {
             let id = offset + index;
             let mut expected = vec![
                 Event::document_start(true, None),
-                Event::new_scalar(value.into(), ScalarStyle::plain(), id, None),
+                Event::new_scalar(value.into(), ScalarStyle::Plain, false, id, None),
                 Event::anchor(id, name.into()),
                 Event::document_end(false),
             ];
@@ -662,7 +662,7 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
             if matches!(event, Event::Scalar { .. }) {
                 assert_eq!(
                     event,
-                    Event::new_scalar("x".into(), ScalarStyle::plain(), offset, None)
+                    Event::new_scalar("x".into(), ScalarStyle::Plain, false, offset, None)
                 );
                 break;
             }
@@ -799,7 +799,7 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
                     .collect::<Vec<_>>(),
                 [
                     Event::document_start(true, None),
-                    Event::new_scalar("second".into(), ScalarStyle::plain(), offset + 1, None),
+                    Event::new_scalar("second".into(), ScalarStyle::Plain, false, offset + 1, None),
                     Event::anchor(offset + 1, "kept".into()),
                     Event::document_end(false),
                     Event::StreamEnd,

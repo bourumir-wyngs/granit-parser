@@ -506,7 +506,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 ..
             } => {
                 let kind = match style {
-                    ScalarStyle::Plain { .. } => ":",
+                    ScalarStyle::Plain => ":",
                     ScalarStyle::SingleQuoted => "'",
                     ScalarStyle::DoubleQuoted => r#"""#,
                     ScalarStyle::Literal { .. } => "|",

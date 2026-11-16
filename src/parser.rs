@@ -96,7 +96,7 @@ impl YamlVersion {
 /// ```
 /// use granit_parser::{Event, ScalarStyle};
 ///
-/// let event = Event::new_scalar("hello".into(), ScalarStyle::plain(), 0, None);
+/// let event = Event::new_scalar("hello".into(), ScalarStyle::Plain, false, 0, None);
 /// if let Event::Scalar { value, .. } = event {
 ///     assert_eq!(value, "hello");
 /// }
@@ -199,6 +199,11 @@ pub enum Event<'input> {
         value: Cow<'input, str>,
         /// The source notation used for the scalar.
         style: ScalarStyle,
+        /// Whether the parser synthesized an omitted node instead of reading scalar text.
+        ///
+        /// Empty quoted and block scalars are explicitly written and report `false`.
+        /// An explicit tag or anchor does not make an omitted scalar explicit.
+        implicit: bool,
         /// The anchor ID defined on this scalar, or `0` if it has no anchor.
         anchor_id: usize,
         /// The resolved tag attached to this scalar, if any.
@@ -547,6 +552,7 @@ impl<'input> Event<'input> {
     /// # Parameters
     /// - `value`: decoded scalar content.
     /// - `style`: source notation and its syntax metadata.
+    /// - `implicit`: whether this represents an omitted scalar synthesized by the parser.
     /// - `anchor_id`: anchor defined on this node, or zero for none.
     /// - `tag`: resolved explicit tag, if present.
     ///
@@ -556,12 +562,14 @@ impl<'input> Event<'input> {
     pub fn new_scalar(
         value: Cow<'input, str>,
         style: ScalarStyle,
+        implicit: bool,
         anchor_id: usize,
         tag: Option<Cow<'input, Tag>>,
     ) -> Self {
         Self::Scalar {
             value,
             style,
+            implicit,
             anchor_id,
             tag,
         }
@@ -695,7 +703,8 @@ impl<'input> Event<'input> {
         // a null scalar
         Event::Scalar {
             value: "~".into(),
-            style: ScalarStyle::implicit_plain(),
+            style: ScalarStyle::Plain,
+            implicit: true,
             anchor_id: 0,
             tag: None,
         }
@@ -711,7 +720,8 @@ impl<'input> Event<'input> {
 
         Event::Scalar {
             value,
-            style: ScalarStyle::implicit_plain(),
+            style: ScalarStyle::Plain,
+            implicit: true,
             anchor_id: anchor,
             tag,
         }
@@ -2597,6 +2607,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
                     Event::Scalar {
                         value: v,
                         style,
+                        implicit: false,
                         anchor_id,
                         tag,
                     },
@@ -3479,19 +3490,28 @@ mod test {
         let scalars: Vec<_> = Parser::new_from_str(source)
             .map(Result::unwrap)
             .filter_map(|(event, _)| match event {
-                Event::Scalar { value, style, .. } => Some((value, style)),
+                Event::Scalar {
+                    value,
+                    style,
+                    implicit,
+                    ..
+                } => Some((value, style, implicit)),
                 _ => None,
             })
             .collect();
         let nulls: Vec<_> = scalars
             .iter()
-            .filter(|(value, _)| value == "~")
-            .map(|(_, style)| matches!(style, ScalarStyle::Plain { implicit: true }))
+            .filter(|(value, _, _)| value == "~")
+            .map(|(_, style, implicit)| {
+                assert_eq!(*style, ScalarStyle::Plain);
+                *implicit
+            })
             .collect();
         assert_eq!(nulls, vec![false, true, true]);
-        let (value, style) = scalars.last().unwrap();
+        let (value, style, implicit) = scalars.last().unwrap();
         assert!(value.is_empty());
-        assert!(matches!(style, ScalarStyle::Plain { implicit: true }));
+        assert_eq!(*style, ScalarStyle::Plain);
+        assert!(*implicit);
     }
 
     #[cfg(feature = "comments")]
@@ -3770,7 +3790,8 @@ mod test {
     fn attach_tag_span_preserves_node_span() {
         let event = Event::Scalar {
             value: "value".into(),
-            style: ScalarStyle::plain(),
+            style: ScalarStyle::Plain,
+            implicit: false,
             anchor_id: 0,
             tag: None,
         };
@@ -3800,6 +3821,7 @@ mod test {
         let scalar = Event::Scalar {
             value: "value".into(),
             style: ScalarStyle::DoubleQuoted,
+            implicit: false,
             anchor_id: 7,
             tag: Some(Cow::Borrowed(&tag)),
         };
@@ -3841,7 +3863,8 @@ mod test {
 
         let unanchored_scalar = Event::Scalar {
             value: "x".into(),
-            style: ScalarStyle::plain(),
+            style: ScalarStyle::Plain,
+            implicit: false,
             anchor_id: 0,
             tag: None,
         };
@@ -4092,7 +4115,8 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "root".into(),
-                    style: ScalarStyle::plain(),
+                    style: ScalarStyle::Plain,
+                    implicit: false,
                     anchor_id: 0,
                     tag: None
                 },
@@ -4108,13 +4132,15 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "item".into(),
-                    style: ScalarStyle::plain(),
+                    style: ScalarStyle::Plain,
+                    implicit: false,
                     anchor_id: 0,
                     tag: None
                 },
                 Event::Scalar {
                     value: "value".into(),
-                    style: ScalarStyle::plain(),
+                    style: ScalarStyle::Plain,
+                    implicit: false,
                     anchor_id: 0,
                     tag: None
                 },
@@ -4126,13 +4152,15 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "a".into(),
-                    style: ScalarStyle::plain(),
+                    style: ScalarStyle::Plain,
+                    implicit: false,
                     anchor_id: 0,
                     tag: None
                 },
                 Event::Scalar {
                     value: "b".into(),
-                    style: ScalarStyle::plain(),
+                    style: ScalarStyle::Plain,
+                    implicit: false,
                     anchor_id: 0,
                     tag: None
                 },
@@ -4291,7 +4319,8 @@ a5: *x
         parser.current = Some((
             Event::Scalar {
                 value: "value".into(),
-                style: ScalarStyle::plain(),
+                style: ScalarStyle::Plain,
+                implicit: false,
                 anchor_id: 0,
                 tag: None,
             },

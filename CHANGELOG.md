@@ -19,11 +19,13 @@
   direct comparisons such as `chomping == Chomping::Keep`. Enum-level non-exhaustiveness
   allows additional variants. `Event::scalar()` remains an accessor; construct a scalar
   event with `Event::new_scalar(...)`.
-- Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
+- Add `Event::Scalar { implicit, .. }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.
+  `ScalarStyle::Plain` remains a unit variant, so direct style comparisons continue to match
+  both written and omitted plain scalars. The flag is `false` for written empty quoted or
+  block scalars and independent of explicit tags or anchors. `Event::new_scalar` accepts it
+  after the style argument.
   Add `ScalarKind` and style predicates for category comparisons independent of metadata.
-  Migrate `style == ScalarStyle::Plain` to `style.is_plain()`, not a comparison with
-  `ScalarStyle::plain()`: that constructor creates only the explicitly written style.
 - Add `Event::DocumentEnd { explicit }` to distinguish a written `...` marker from an
   implicit document end.
 

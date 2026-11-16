@@ -1,6 +1,6 @@
 use granit_parser::{
-    BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarStyle, Scanner,
-    Span, StrInput, TokenType,
+    BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
+    ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
 use std::collections::{BTreeSet, HashSet};
 
@@ -437,34 +437,123 @@ fn indicator_order_affects_identity_only_when_both_indicators_are_present() {
 }
 
 #[test]
-fn implicit_empty_plain_scalars_are_distinct_from_written_text() {
-    for (source, expected_value, expected_implicit) in [
-        ("key:\n", "~", true),
-        ("key: &a\n", "~", true),
-        ("key: !note\n", "", true),
-        ("key: ~\n", "~", false),
-        ("key: null\n", "null", false),
+fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
+    for (source, expected_value, expected_kind, expected_implicit) in [
+        ("key:\n", "~", ScalarKind::Plain, true),
+        ("key: &a\n", "~", ScalarKind::Plain, true),
+        ("key: !note\n", "", ScalarKind::Plain, true),
+        ("key: !!str\n", "", ScalarKind::Plain, true),
+        ("key: ~\n", "~", ScalarKind::Plain, false),
+        ("key: null\n", "null", ScalarKind::Plain, false),
+        ("key: !note ~\n", "~", ScalarKind::Plain, false),
+        ("key: ''\n", "", ScalarKind::SingleQuoted, false),
+        ("key: \"\"\n", "", ScalarKind::DoubleQuoted, false),
+        ("key: !note \"\"\n", "", ScalarKind::DoubleQuoted, false),
+        ("key: |-\n", "", ScalarKind::Literal, false),
+        ("key: >-\n", "", ScalarKind::Folded, false),
     ] {
         let parsed = events(source);
-        let (value, implicit) = parsed
+        let (value, style, implicit) = parsed
             .iter()
             .rev()
             .find_map(|(event, _)| match event {
                 Event::Scalar {
                     value,
-                    style: ScalarStyle::Plain { implicit, .. },
+                    style,
+                    implicit,
                     ..
-                } => Some((value.as_ref(), *implicit)),
+                } => Some((value.as_ref(), *style, *implicit)),
                 _ => None,
             })
             .unwrap();
         assert_eq!(value, expected_value, "{source:?}");
+        assert_eq!(style.kind(), expected_kind, "{source:?}");
         assert_eq!(implicit, expected_implicit, "{source:?}");
+
+        let streaming = Parser::new_from_iter(source.chars())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(parsed, streaming, "{source:?}");
     }
-    let parsed = events("key: \"\"\n");
-    assert!(parsed.iter().any(|(event, _)| matches!(event,
-        Event::Scalar { value, style: ScalarStyle::DoubleQuoted, .. } if value.is_empty()
-    )));
+}
+
+#[test]
+fn omitted_collection_nodes_and_empty_documents_are_implicit() {
+    for (source, expected) in [
+        ("-\n- ~\n", vec![("~", true), ("~", false)]),
+        ("{key:}\n", vec![("key", false), ("~", true)]),
+        ("{: value}\n", vec![("~", true), ("value", false)]),
+        ("?\n: value\n", vec![("~", true), ("value", false)]),
+        ("---\n...\n", vec![("~", true)]),
+    ] {
+        let parsed = events(source);
+        let scalars: Vec<_> = parsed
+            .iter()
+            .filter_map(|(event, _)| match event {
+                Event::Scalar {
+                    value,
+                    style,
+                    implicit,
+                    ..
+                } => {
+                    assert_eq!(*style, ScalarStyle::Plain, "{source:?}");
+                    Some((value.as_ref(), *implicit))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(scalars, expected, "{source:?}");
+    }
+}
+
+#[test]
+fn plain_style_comparisons_keep_matching_omitted_nulls() {
+    let source = "omitted:\nwritten: ~\nquoted: \"~\"\n";
+    let parsed = events(source);
+    let scalars: Vec<_> = parsed
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar {
+                value,
+                style,
+                implicit,
+                ..
+            } if value == "~" => Some((event, *style, *implicit)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scalars.len(), 3);
+    assert_eq!(
+        scalars
+            .iter()
+            .map(|(_, style, _)| *style == ScalarStyle::Plain)
+            .collect::<Vec<_>>(),
+        [true, true, false],
+    );
+    assert_eq!(
+        scalars
+            .iter()
+            .map(|(_, _, implicit)| *implicit)
+            .collect::<Vec<_>>(),
+        [true, false, false],
+    );
+    assert_eq!(scalars[0].0.scalar(), scalars[1].0.scalar());
+    assert_ne!(scalars[0].0, scalars[1].0);
+
+    let tokens = Scanner::new(StrInput::new(source))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        tokens
+            .iter()
+            .filter(|token| matches!(token.token_type(),
+                TokenType::Scalar { value, style, .. }
+                    if value == "~" && *style == ScalarStyle::Plain
+            ))
+            .count(),
+        1,
+        "the scanner only emits the written plain null",
+    );
 }
 
 #[test]

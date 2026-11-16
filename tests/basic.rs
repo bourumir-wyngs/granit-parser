@@ -142,7 +142,7 @@ fn test_empty_doc() {
         [
             Event::StreamStart,
             Event::document_start(true, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ]
@@ -157,8 +157,14 @@ fn test_utf() {
             Event::StreamStart,
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("\u{4F60}\u{5273}".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
+            Event::new_scalar(
+                "\u{4F60}\u{5273}".into(),
+                ScalarStyle::Plain,
+                false,
+                0,
+                None
+            ),
             Event::MappingEnd,
             Event::document_end(false),
             Event::StreamEnd,
@@ -183,8 +189,8 @@ a: b # This is another comment
             Event::comment(" This is a comment".into(), Placement::Above),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
+            Event::new_scalar("b".into(), ScalarStyle::Plain, false, 0, None),
             #[cfg(feature = "comments")]
             Event::comment(" This is another comment".into(), Placement::Right),
             #[cfg(feature = "comments")]
@@ -212,9 +218,9 @@ fn test_quoting() {
             Event::StreamStart,
             Event::document_start(false, None),
             Event::sequence_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("plain".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("squote".into(), ScalarStyle::SingleQuoted, 0, None),
-            Event::new_scalar("dquote".into(), ScalarStyle::DoubleQuoted, 0, None),
+            Event::new_scalar("plain".into(), ScalarStyle::Plain, false, 0, None),
+            Event::new_scalar("squote".into(), ScalarStyle::SingleQuoted, false, 0, None),
+            Event::new_scalar("dquote".into(), ScalarStyle::DoubleQuoted, false, 0, None),
             Event::SequenceEnd,
             Event::document_end(false),
             Event::StreamEnd,
@@ -236,13 +242,13 @@ a scalar
         [
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::document_start(true, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::document_start(true, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ]
@@ -257,7 +263,7 @@ fn test_github_27() {
         [
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 1, None),
+            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 1, None),
             Event::document_end(false),
             Event::StreamEnd,
         ]
@@ -266,7 +272,7 @@ fn test_github_27() {
 
 #[test]
 fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
-    let scalar_events = |input: &str| -> Vec<(String, ScalarStyle, usize, Option<String>)> {
+    let scalar_events = |input: &str| -> Vec<(String, ScalarStyle, bool, usize, Option<String>)> {
         run_parser(input)
             .unwrap()
             .into_iter()
@@ -274,12 +280,14 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
                 Event::Scalar {
                     value,
                     style,
+                    implicit,
                     anchor_id: anchor,
                     tag,
                     ..
                 } => Some((
                     value.into_owned(),
                     style,
+                    implicit,
                     anchor,
                     tag.map(|tag| tag.original()),
                 )),
@@ -291,17 +299,18 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
     assert_eq!(
         scalar_events("a: &x\n"),
         vec![
-            ("a".to_string(), ScalarStyle::plain(), 0, None),
-            ("~".to_string(), ScalarStyle::implicit_plain(), 1, None),
+            ("a".to_string(), ScalarStyle::Plain, false, 0, None),
+            ("~".to_string(), ScalarStyle::Plain, true, 1, None),
         ]
     );
     assert_eq!(
         scalar_events("a: !!str\n"),
         vec![
-            ("a".to_string(), ScalarStyle::plain(), 0, None),
+            ("a".to_string(), ScalarStyle::Plain, false, 0, None),
             (
                 String::new(),
-                ScalarStyle::implicit_plain(),
+                ScalarStyle::Plain,
+                true,
                 0,
                 Some("!!str".to_string()),
             ),
@@ -348,7 +357,7 @@ foobar";
             Event::document_start(true, Some(YamlVersion::new(1, 2))),
             #[cfg(feature = "comments")]
             Event::comment("-------".into(), Placement::Right),
-            Event::new_scalar("foobar".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("foobar".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ])
@@ -406,7 +415,7 @@ a: |-
             Event::StreamStart,
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
             Event::new_scalar(
                 "a\n    b".into(),
                 {
@@ -420,6 +429,7 @@ a: |-
                     syntax.header_bytes_before_span = 21;
                     ScalarStyle::literal(syntax)
                 },
+                false,
                 0,
                 None
             ),
@@ -438,7 +448,7 @@ fn test_bad_docstart() {
         [
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("----".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ]
@@ -451,7 +461,7 @@ fn test_bad_docstart() {
             Event::document_start(true, None),
             #[cfg(feature = "comments")]
             Event::comment("comment".into(), Placement::Right),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ])
@@ -462,7 +472,7 @@ fn test_bad_docstart() {
         expected_events([
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("----".into(), ScalarStyle::Plain, false, 0, None),
             #[cfg(feature = "comments")]
             Event::comment("comment".into(), Placement::Right),
             Event::document_end(false),

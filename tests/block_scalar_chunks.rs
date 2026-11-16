@@ -84,7 +84,7 @@ fn long_lines_preserve_folding_chomping_indentation_and_line_breaks() {
                     assert_eq!(actual_style.kind(), style);
                     assert!(events.iter().any(|(event, _)| matches!(
                         event,
-                        Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "tail"
+                        Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "tail"
                     )));
                 }
             }
@@ -327,6 +327,7 @@ fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof()
                         Event::new_scalar(
                             expected_value.into(),
                             actual_style,
+                            false,
                             1,
                             Some(Cow::Owned(Tag::new("!", "custom"))),
                         ),

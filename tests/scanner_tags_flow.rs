@@ -411,7 +411,7 @@ fn no_borrow_input_scans_anchor_and_alias_as_owned() {
         .find_map(|event| {
             if let Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 anchor_id,
                 tag: None,
                 ..

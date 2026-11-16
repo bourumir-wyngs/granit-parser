@@ -166,10 +166,10 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
             .map(|(event, _)| event)
             .collect::<Vec<_>>(),
         [
-            Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("parent".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ],
@@ -242,7 +242,7 @@ fn ignored_comments_preserve_collection_entry_order() {
             .filter_map(|(event, _)| match event {
                 Event::Scalar {
                     value,
-                    style: ScalarStyle::Plain { .. },
+                    style: ScalarStyle::Plain,
                     ..
                 } => Some(value.as_ref()),
                 Event::SequenceEnd => Some("<sequence end>"),

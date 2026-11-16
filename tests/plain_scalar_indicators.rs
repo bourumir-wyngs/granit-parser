@@ -38,8 +38,8 @@ fn colon_without_space_is_part_of_scalar_value() {
             Event::StreamStart,
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("k".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("a:b".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("k".into(), ScalarStyle::Plain, false, 0, None),
+            Event::new_scalar("a:b".into(), ScalarStyle::Plain, false, 0, None),
             Event::MappingEnd,
             Event::document_end(false),
             Event::StreamEnd,
@@ -71,8 +71,8 @@ fn plain_scalar_dash_before_flow_delimiter() {
                     Event::StreamStart,
                     Event::document_start(false, None),
                     Event::sequence_start(StructureStyle::Flow, 0, None),
-                    Event::new_scalar(expected_first.into(), ScalarStyle::plain(), 0, None),
-                    Event::new_scalar("after".into(), ScalarStyle::plain(), 0, None),
+                    Event::new_scalar(expected_first.into(), ScalarStyle::Plain, false, 0, None),
+                    Event::new_scalar("after".into(), ScalarStyle::Plain, false, 0, None),
                     Event::SequenceEnd,
                     Event::document_end(false),
                     Event::StreamEnd,
@@ -101,9 +101,9 @@ fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
                 [
                     TokenType::StreamStart,
                     TokenType::FlowSequenceStart,
-                    TokenType::scalar(ScalarStyle::plain(), first.into()),
+                    TokenType::scalar(ScalarStyle::Plain, first.into()),
                     TokenType::FlowEntry,
-                    TokenType::scalar(ScalarStyle::plain(), "after".into()),
+                    TokenType::scalar(ScalarStyle::Plain, "after".into()),
                     TokenType::FlowSequenceEnd,
                     TokenType::StreamEnd,
                 ],
@@ -123,7 +123,7 @@ fn plain_scalar_dash_before_closing_flow_delimiter() {
         ] {
             let events = result.unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"));
             assert!(events.iter().any(|(event, _)| {
-                matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "a -")
+                matches!(event, Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "a -")
             }));
         }
     }

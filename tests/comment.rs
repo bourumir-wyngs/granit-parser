@@ -105,7 +105,7 @@ fn first_empty_scalar_span(events: &[(Event<'_>, Span)]) -> Span {
         .find_map(|(event, span)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } if value.as_ref() == "~" => Some(*span),
             _ => None,
@@ -253,7 +253,7 @@ fn scanner_emits_trailing_comment_after_plain_scalar_token() {
     let value_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value")
+            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain, value, .. } if value == "value")
         })
         .expect("plain scalar token should be emitted");
     let comment_index = tokens
@@ -605,7 +605,7 @@ fn scanner_treats_unseparated_hash_after_plain_scalar_as_content() {
     let tokens = scanner_tokens("key: value#bad\n").expect("valid YAML should scan without errors");
 
     assert!(tokens.iter().any(|token| {
-        matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value#bad")
+        matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain, value, .. } if value == "value#bad")
     }));
     assert!(!tokens
         .iter()
@@ -644,7 +644,7 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
             .iter()
             .filter_map(|token| match token.token_type() {
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { .. },
+                    style: ScalarStyle::Plain,
                     value,
                     ..
                 } => Some(value.as_ref()),
@@ -875,7 +875,7 @@ fn parser_emits_trailing_comment_after_plain_scalar_event() {
     let value_index = events
         .iter()
         .position(|(event, _)| {
-            matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "value")
+            matches!(event, Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "value")
         })
         .expect("plain scalar event should be emitted");
     let comment_index = events
@@ -1133,7 +1133,7 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1166,7 +1166,7 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1199,7 +1199,7 @@ fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1231,7 +1231,7 @@ fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1262,7 +1262,7 @@ fn parser_handles_flow_mapping_value_after_comment() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1286,7 +1286,7 @@ fn parser_handles_implicit_flow_mapping_value_after_comment() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),

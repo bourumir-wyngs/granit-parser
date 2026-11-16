@@ -116,12 +116,12 @@ fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
 fn included_trailing_comments_are_emitted_before_parent_resumes() {
     // Keep the semantic oracle independent of the parser used by every backend.
     let expected = vec![
-        Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
+        Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
         Event::comment(" trailing".into(), Placement::Right),
         Event::comment(" after".into(), Placement::Last),
         Event::StreamStart,
         Event::document_start(false, None),
-        Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
+        Event::new_scalar("parent".into(), ScalarStyle::Plain, false, 0, None),
         Event::document_end(false),
         Event::StreamEnd,
     ];
@@ -168,7 +168,7 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
                 }
             };
             let expected = vec![
-                Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
+                Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
                 #[cfg(feature = "comments")]
                 Event::comment(" trailing".into(), Placement::Right),
                 #[cfg(feature = "comments")]
@@ -195,7 +195,7 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
 #[test]
 fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
     for unexpected in [
-        Event::new_scalar("extra".into(), ScalarStyle::plain(), 0, None),
+        Event::new_scalar("extra".into(), ScalarStyle::Plain, false, 0, None),
         Event::StreamStart,
         Event::document_end(false),
     ] {
@@ -212,7 +212,7 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
             stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".to_owned());
 
             let expected = [
-                Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
+                Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
                 #[cfg(feature = "comments")]
                 Event::comment(" trailing".into(), Placement::Right),
                 #[cfg(feature = "comments")]
@@ -242,7 +242,7 @@ fn nested_second_document_error_uses_its_own_pending_end_and_source() {
         let mut stack = stack_with_child(backend, CHILD, Options::default());
         assert_eq!(
             next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
-            Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None)
+            Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None)
         );
         assert_eq!(
             next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
@@ -255,7 +255,7 @@ fn nested_second_document_error_uses_its_own_pending_end_and_source() {
             "grandchild.yaml".to_owned(),
         );
         for expected in [
-            Event::new_scalar("grandchild".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("grandchild".into(), ScalarStyle::Plain, false, 0, None),
             Event::comment(" grandchild tail".into(), Placement::Right),
         ] {
             assert_eq!(

@@ -89,16 +89,13 @@ fn root_block_scalars_stop_at_document_markers() {
                     [
                         Event::StreamStart,
                         Event::document_start(false, None),
-                        Event::new_scalar(expected.into(), actual_style, 0, None),
+                        Event::new_scalar(expected.into(), actual_style, false, 0, None),
                         Event::document_end(!explicit),
                         Event::document_start(explicit, None),
                         Event::new_scalar(
                             second.into(),
-                            if second == "~" {
-                                ScalarStyle::implicit_plain()
-                            } else {
-                                ScalarStyle::plain()
-                            },
+                            ScalarStyle::Plain,
+                            second == "~",
                             0,
                             None
                         ),
@@ -135,12 +132,18 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                     [
                         Event::StreamStart,
                         Event::document_start(false, None),
-                        Event::new_scalar(format!("{body}{tail}").into(), actual_style, 0, None),
+                        Event::new_scalar(
+                            format!("{body}{tail}").into(),
+                            actual_style,
+                            false,
+                            0,
+                            None
+                        ),
                         Event::document_end(false),
                         Event::document_start(true, None),
                         #[cfg(feature = "comments")]
                         Event::comment(" next document".into(), Placement::Right),
-                        Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+                        Event::new_scalar("second".into(), ScalarStyle::Plain, false, 0, None),
                         Event::document_end(false),
                         Event::StreamEnd,
                     ]
@@ -195,7 +198,7 @@ fn block_scalars_preserve_content_resembling_document_markers() {
                 [
                     Event::StreamStart,
                     Event::document_start(false, None),
-                    Event::new_scalar(expected.into(), actual_style, 0, None),
+                    Event::new_scalar(expected.into(), actual_style, false, 0, None),
                     Event::document_end(false),
                     Event::StreamEnd,
                 ],

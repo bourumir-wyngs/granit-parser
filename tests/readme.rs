@@ -45,12 +45,14 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
             Event::UnresolvedAlias { name, .. } => {
                 lines.push(format!("undefined anchor: {name:?}"));
             }
-            Event::Scalar { value, style, .. } => {
+            Event::Scalar {
+                value,
+                style,
+                implicit,
+                ..
+            } => {
                 if style.is_plain() && value == "~" {
-                    lines.push(format!(
-                        "plain scalar: value={value:?} implicit={}",
-                        style.is_implicit()
-                    ));
+                    lines.push(format!("plain scalar: value={value:?} implicit={implicit}"));
                 }
                 if let Some(syntax) = style.block_syntax() {
                     lines.push(format!(

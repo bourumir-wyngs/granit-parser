@@ -132,10 +132,10 @@ last: value
                 // Still an invalid reference, with a span covering the *name token.
                 println!("undefined anchor: {name:?}");
             }
-            Event::Scalar { value, style, .. } => {
+            Event::Scalar { value, style, implicit, .. } => {
                 // The same decoded text can represent omitted or explicitly written input.
                 if style.is_plain() && value == "~" {
-                    println!("plain scalar: value={value:?} implicit={}", style.is_implicit());
+                    println!("plain scalar: value={value:?} implicit={implicit}");
                 }
                 if let Some(syntax) = style.block_syntax() {
                     // Pass the original companion span to resolve the compact offsets.
@@ -200,81 +200,81 @@ This prints an event stream like:
 StreamStart bytes=Some(0..0) source=Some("")
 DocumentStart { explicit: true, version: Some(YamlVersion { major: 1, minor: 2 }) } bytes=Some(80..83) source=Some("---")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(84..84) source=Some("")
-Scalar { value: "items", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(84..89) source=Some("items")
+Scalar { value: "items", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(84..89) source=Some("items")
 node tag: !shopping custom=true tag_start(line,col,byte)=Some((6, 7, Some(91)))
 SequenceStart { style: Block, anchor_id: 0, tag: Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" }) } bytes=Some(103..103) source=Some("")
-Scalar { value: "milk", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(105..109) source=Some("milk")
+Scalar { value: "milk", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(105..109) source=Some("milk")
 scalar tag: tag:example.com,2000:sliced core-suffix=None core-str=false tag_start(line,col,byte)=Some((8, 4, Some(114))) for "bread"
-Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" }) } bytes=Some(130..135) source=Some("bread")
+Scalar { value: "bread", style: Plain, implicit: false, anchor_id: 0, tag: Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" }) } bytes=Some(130..135) source=Some("bread")
 scalar tag: tag:yaml.org,2002:str core-suffix=Some("str") core-str=true tag_start(line,col,byte)=Some((9, 4, Some(140))) for "bread"
-Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" }) } bytes=Some(146..151) source=Some("bread")
+Scalar { value: "bread", style: Plain, implicit: false, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" }) } bytes=Some(146..151) source=Some("bread")
 scalar tag: tag:yaml.org,2002:int core-suffix=Some("int") core-str=false tag_start(line,col,byte)=Some((10, 4, Some(156))) for "1"
-Scalar { value: "1", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" }) } bytes=Some(165..166) source=Some("1")
+Scalar { value: "1", style: Plain, implicit: false, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" }) } bytes=Some(165..166) source=Some("1")
 SequenceEnd bytes=Some(167..167) source=Some("")
-Scalar { value: "locations", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(167..176) source=Some("locations")
+Scalar { value: "locations", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(167..176) source=Some("locations")
 Comment { value: " Example with composite keys", placement: Right } bytes=Some(178..207) source=Some("# Example with composite keys")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(210..210) source=Some("")
 SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(210..211) source=Some("[")
-Scalar { value: "47.3769", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(211..218) source=Some("47.3769")
-Scalar { value: "8.5417", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(220..226) source=Some("8.5417")
+Scalar { value: "47.3769", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(211..218) source=Some("47.3769")
+Scalar { value: "8.5417", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(220..226) source=Some("8.5417")
 SequenceEnd bytes=Some(226..227) source=Some("]")
-Scalar { value: "local", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(229..234) source=Some("local")
+Scalar { value: "local", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(229..234) source=Some("local")
 SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(237..238) source=Some("[")
-Scalar { value: "40.7128", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(238..245) source=Some("40.7128")
-Scalar { value: "-74.0060", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(247..255) source=Some("-74.0060")
+Scalar { value: "40.7128", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(238..245) source=Some("40.7128")
+Scalar { value: "-74.0060", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(247..255) source=Some("-74.0060")
 SequenceEnd bytes=Some(255..256) source=Some("]")
-Scalar { value: "remote", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(258..264) source=Some("remote")
+Scalar { value: "remote", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(258..264) source=Some("remote")
 Comment { value: " JSON-style \\uXXXX surrogate pairs:", placement: Above } bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
 MappingEnd bytes=Some(303..303) source=Some("")
-Scalar { value: "music", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(303..308) source=Some("music")
-Scalar { value: "𝄞🎵🎶", style: DoubleQuoted, anchor_id: 0, tag: None } bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-Scalar { value: "favorite", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(350..358) source=Some("favorite")
-Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 1, tag: None } bytes=Some(370..375) source=Some("bread")
+Scalar { value: "music", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(303..308) source=Some("music")
+Scalar { value: "𝄞🎵🎶", style: DoubleQuoted, implicit: false, anchor_id: 0, tag: None } bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
+Scalar { value: "favorite", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(350..358) source=Some("favorite")
+Scalar { value: "bread", style: Plain, implicit: false, anchor_id: 1, tag: None } bytes=Some(370..375) source=Some("bread")
 anchor: id=1 name="favorite"
 Anchor { anchor_id: 1, name: "favorite" } bytes=Some(360..369) source=Some("&favorite")
-Scalar { value: "order", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(376..381) source=Some("order")
+Scalar { value: "order", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(376..381) source=Some("order")
 alias: target id=1
 Alias { anchor_id: 1 } bytes=Some(383..392) source=Some("*favorite")
-Scalar { value: "unavailable", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(393..404) source=Some("unavailable")
+Scalar { value: "unavailable", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(393..404) source=Some("unavailable")
 undefined anchor: "missing"
 UnresolvedAlias { name: "missing" } bytes=Some(406..414) source=Some("*missing")
-Scalar { value: "dessert", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(415..422) source=Some("dessert")
-Scalar { value: "cake", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(424..428) source=Some("cake")
-Scalar { value: "literal", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(429..436) source=Some("literal")
+Scalar { value: "dessert", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(415..422) source=Some("dessert")
+Scalar { value: "cake", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(424..428) source=Some("cake")
+Scalar { value: "literal", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(429..436) source=Some("literal")
 block header: style=Literal text=Some("|") chars=Some(438..439) bytes=Some(438..439)
   chomping=Clip indentation_indicator=None content_indent=2
   chomping indicator: chars=None bytes=None
   indentation indicator: chars=None bytes=None
-Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
-Scalar { value: "folded", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
+Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 } }, implicit: false, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
+Scalar { value: "folded", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
 block header: style=Folded text=Some(">2-") chars=Some(475..478) bytes=Some(475..478)
   chomping=Strip indentation_indicator=Some(2) content_indent=2
   chomping indicator: chars=Some(477..478) bytes=Some(477..478)
   indentation indicator: chars=Some(476..477) bytes=Some(476..477)
-Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
+Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 } }, implicit: false, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
 Comment { value: " žąsis", placement: Right } bytes=Some(479..488) source=Some("# žąsis")
-Scalar { value: "nested", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
+Scalar { value: "nested", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(515..515) source=Some("")
-Scalar { value: "kept", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(515..519) source=Some("kept")
+Scalar { value: "kept", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(515..519) source=Some("kept")
 block header: style=Literal text=Some("|+2") chars=Some(519..522) bytes=Some(521..524)
   chomping=Keep indentation_indicator=Some(2) content_indent=4
   chomping indicator: chars=Some(520..521) bytes=Some(522..523)
   indentation indicator: chars=Some(521..522) bytes=Some(523..524)
-Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 } }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
+Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 } }, implicit: false, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
 MappingEnd bytes=Some(540..540) source=Some("")
-Scalar { value: "omitted", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
+Scalar { value: "omitted", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
 plain scalar: value="~" implicit=true
-Scalar { value: "~", style: Plain { implicit: true }, anchor_id: 0, tag: None } bytes=Some(547..547) source=Some("")
-Scalar { value: "written_null", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(549..561) source=Some("written_null")
+Scalar { value: "~", style: Plain, implicit: true, anchor_id: 0, tag: None } bytes=Some(547..547) source=Some("")
+Scalar { value: "written_null", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(549..561) source=Some("written_null")
 plain scalar: value="~" implicit=false
-Scalar { value: "~", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(563..564) source=Some("~")
+Scalar { value: "~", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(563..564) source=Some("~")
 MappingEnd bytes=Some(565..565) source=Some("")
 document end: explicit=true
 DocumentEnd { explicit: true } bytes=Some(565..568) source=Some("...")
 DocumentStart { explicit: true, version: None } bytes=Some(569..572) source=Some("---")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(573..573) source=Some("")
-Scalar { value: "last", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(573..577) source=Some("last")
-Scalar { value: "value", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(579..584) source=Some("value")
+Scalar { value: "last", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(573..577) source=Some("last")
+Scalar { value: "value", style: Plain, implicit: false, anchor_id: 0, tag: None } bytes=Some(579..584) source=Some("value")
 MappingEnd bytes=Some(585..585) source=Some("")
 document end: explicit=false
 DocumentEnd { explicit: false } bytes=Some(585..585) source=Some("")
@@ -284,26 +284,26 @@ StreamEnd bytes=Some(585..585) source=Some("")
 ## Migrating to 3.0
 
 `Event`, `TokenType`, and the syntax/style enums keep variants without data as ordinary unit
-variants, such as `Event::StreamEnd`, `Chomping::Keep`, and `StructureStyle::Block`.
+variants, such as `Event::StreamEnd`, `Chomping::Keep`, `ScalarStyle::Plain`, and `StructureStyle::Block`.
 Variants carrying data are non-exhaustive: match their named fields with `..`, and include
 a fallback arm when matching the entire enum. For example,
 `Event::Scalar(value, style, _, _)` becomes `Event::Scalar { value, style, .. }`.
 To construct values, use constructors for variants carrying data, such as `Event::new_scalar(...)`,
-`TokenType::scalar(...)`, and `ScalarStyle::plain()`.
+`TokenType::scalar(...)`, and `ScalarStyle::literal(...)`.
+`Event::new_scalar(value, style, implicit, anchor_id, tag)` accepts the scalar's omission flag;
+use `false` for written content and `true` for a synthesized omitted node.
 `Event::scalar()` remains the accessor for a scalar's decoded value and style.
 
-To compare notation categories, replace `style == ScalarStyle::Plain` with `style.is_plain()`.
-Do not replace it with `style == ScalarStyle::plain()`: equality now includes syntax metadata,
-and `plain()` constructs the style of explicitly written text. An omitted value (`key:`) has
-`implicit: true`, so it does not equal `plain()`, even though `is_plain()` is true for both.
-For example, the old check `value == "~" && style == ScalarStyle::Plain` becomes
-`value == "~" && style.is_plain()`, preserving its handling of both `key:` and `key: ~`.
-Likewise, use `is_literal()` or `is_folded()` to check block notation regardless of header
-metadata, or compare `style.kind()` with a `ScalarKind` variant.
+`ScalarStyle::Plain` remains a unit variant for both written and omitted plain scalars.
+Existing checks such as `value == "~" && style == ScalarStyle::Plain` keep their meaning;
+`style.is_plain()` is equivalent. Use `is_literal()` or `is_folded()` to check block notation
+regardless of header metadata, or compare `style.kind()` with a `ScalarKind` variant.
 
-`ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
-explicit text (`key: ~`). Decoded values retain their existing behavior. Document-end
-events expose `explicit`, which is true only for a written `...` marker.
+`Event::Scalar { implicit, .. }` distinguishes an omitted YAML node (`key:`) from written
+content (`key: ~`). The flag is `false` for written empty quoted or block scalars, and is
+independent of whether the node has an explicit tag or anchor. Decoded values retain their
+existing behavior. Document-end events expose `explicit`, which is true only for a written
+`...` marker.
 
 Literal and folded styles carry `BlockScalarSyntax`: chomping, an optional explicit
 indentation digit, their order (`digit_first`), and effective content indentation.

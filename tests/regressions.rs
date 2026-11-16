@@ -133,7 +133,7 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
             .collect();
         assert_eq!(
             scalars,
-            expected.map(|value| (value, ScalarStyle::plain())),
+            expected.map(|value| (value, ScalarStyle::Plain)),
             "input: {yaml:?}"
         );
     }

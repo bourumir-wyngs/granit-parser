@@ -22,7 +22,7 @@ fn test_span() -> Span {
 }
 
 fn plain_scalar(value: &'static str, anchor_id: usize) -> Event<'static> {
-    Event::new_scalar(value.into(), ScalarStyle::plain(), anchor_id, None)
+    Event::new_scalar(value.into(), ScalarStyle::Plain, false, anchor_id, None)
 }
 
 fn collect_events<'a, I, T>(stack: &mut ParserStack<'a, I, T>) -> Result<Vec<Event<'a>>, String>
@@ -655,7 +655,7 @@ fn replay_parser_moves_owned_event_text() {
     let value_ptr = value.as_ptr();
     let mut replay = ReplayParser::new(
         vec![(
-            Event::new_scalar(Cow::Owned(value), ScalarStyle::plain(), 0, None),
+            Event::new_scalar(Cow::Owned(value), ScalarStyle::Plain, false, 0, None),
             test_span(),
         )],
         1,
@@ -703,11 +703,23 @@ fn test_replay_parser_updates_anchor_offset() {
         (Event::document_start(false, None), span),
         (Event::mapping_start(StructureStyle::Block, 0, None), span),
         (
-            Event::new_scalar("k2".into(), granit_parser::ScalarStyle::plain(), 0, None),
+            Event::new_scalar(
+                "k2".into(),
+                granit_parser::ScalarStyle::Plain,
+                false,
+                0,
+                None,
+            ),
             span,
         ),
         (
-            Event::new_scalar("v2".into(), granit_parser::ScalarStyle::plain(), 2, None),
+            Event::new_scalar(
+                "v2".into(),
+                granit_parser::ScalarStyle::Plain,
+                false,
+                2,
+                None,
+            ),
             span,
         ),
         (Event::MappingEnd, span),
@@ -753,14 +765,21 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
         (
             Event::new_scalar(
                 "included".into(),
-                granit_parser::ScalarStyle::plain(),
+                granit_parser::ScalarStyle::Plain,
+                false,
                 0,
                 None,
             ),
             span,
         ),
         (
-            Event::new_scalar("value".into(), granit_parser::ScalarStyle::plain(), 0, None),
+            Event::new_scalar(
+                "value".into(),
+                granit_parser::ScalarStyle::Plain,
+                false,
+                0,
+                None,
+            ),
             span,
         ),
         (Event::MappingEnd, span),

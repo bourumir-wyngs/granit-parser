@@ -263,42 +263,37 @@ pub enum ScalarKind {
 /// The source notation and applicable syntax metadata of a YAML scalar.
 ///
 /// Match variants carrying data with `..`, and use their constructors for synthetic values.
-/// Quoted styles are ordinary unit variants and can be used directly. Equality includes
-/// syntax metadata; use [`Self::kind`] or the category predicates to compare notation alone.
+/// Plain and quoted styles are ordinary unit variants and can be used directly. Equality
+/// includes block-header metadata; use [`Self::kind`] or the category predicates to compare
+/// notation alone. Whether a scalar was omitted is recorded on [`crate::Event::Scalar`].
 ///
 /// ```
 /// use granit_parser::ScalarStyle;
-/// let style = ScalarStyle::plain();
-/// assert!(matches!(style, ScalarStyle::Plain { implicit: false, .. }));
-/// let omitted = ScalarStyle::implicit_plain();
-/// assert_ne!(style, omitted); // Equality includes whether the scalar was omitted.
-/// assert!(style.is_plain() && omitted.is_plain()); // Both use the plain category.
+/// let style = ScalarStyle::Plain;
+/// assert_eq!(style, ScalarStyle::Plain);
+/// assert!(style.is_plain());
 /// assert_eq!(ScalarStyle::DoubleQuoted.kind(), granit_parser::ScalarKind::DoubleQuoted);
 /// ```
 ///
 /// External callers cannot construct variants carrying data directly:
 ///
 /// ```compile_fail,E0639
-/// use granit_parser::ScalarStyle;
-/// let style = ScalarStyle::Plain { implicit: false };
+/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
+/// let style = ScalarStyle::Literal { syntax: BlockScalarSyntax::default() };
 /// ```
 ///
 /// Variant patterns must allow future fields:
 ///
 /// ```compile_fail,E0638
-/// use granit_parser::ScalarStyle;
-/// let style = ScalarStyle::plain();
-/// if let ScalarStyle::Plain { implicit } = style {}
+/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
+/// let style = ScalarStyle::literal(BlockScalarSyntax::default());
+/// if let ScalarStyle::Literal { syntax } = style {}
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[non_exhaustive]
 pub enum ScalarStyle {
     /// A plain scalar or a synthesized empty node.
-    #[non_exhaustive]
-    Plain {
-        /// Whether the parser synthesized an omitted node instead of reading scalar text.
-        implicit: bool,
-    },
+    Plain,
     /// A single-quoted scalar.
     SingleQuoted,
     /// A double-quoted scalar.
@@ -318,22 +313,6 @@ pub enum ScalarStyle {
 }
 
 impl ScalarStyle {
-    /// Return the style of explicitly written plain scalar text.
-    ///
-    /// This is a constructor, not a notation-category check. When migrating
-    /// `style == ScalarStyle::Plain`, use `style.is_plain()` instead of comparing with this
-    /// value: [`Self::implicit_plain`] is also plain, but has different syntax metadata.
-    #[must_use]
-    pub const fn plain() -> Self {
-        Self::Plain { implicit: false }
-    }
-
-    /// Return the style of an omitted scalar synthesized by the parser.
-    #[must_use]
-    pub const fn implicit_plain() -> Self {
-        Self::Plain { implicit: true }
-    }
-
     /// Return literal block style carrying `syntax`.
     #[must_use]
     pub const fn literal(syntax: BlockScalarSyntax) -> Self {
@@ -350,7 +329,7 @@ impl ScalarStyle {
     #[must_use]
     pub const fn kind(&self) -> ScalarKind {
         match self {
-            Self::Plain { .. } => ScalarKind::Plain,
+            Self::Plain => ScalarKind::Plain,
             Self::SingleQuoted => ScalarKind::SingleQuoted,
             Self::DoubleQuoted => ScalarKind::DoubleQuoted,
             Self::Literal { .. } => ScalarKind::Literal,
@@ -360,11 +339,10 @@ impl ScalarStyle {
 
     /// Return whether this is plain notation, including synthesized empty nodes.
     ///
-    /// Use this to replace pre-3.0 comparisons with the unit variant `ScalarStyle::Plain`.
-    /// Unlike `self == ScalarStyle::plain()`, it accepts both written and omitted scalars.
+    /// Equivalent to `self == ScalarStyle::Plain`; omission is metadata on the scalar event.
     #[must_use]
     pub const fn is_plain(&self) -> bool {
-        matches!(self, Self::Plain { .. })
+        matches!(self, Self::Plain)
     }
 
     /// Return whether this is single-quoted notation.
@@ -389,12 +367,6 @@ impl ScalarStyle {
     #[must_use]
     pub const fn is_folded(&self) -> bool {
         matches!(self, Self::Folded { .. })
-    }
-
-    /// Return whether this is a parser-synthesized omitted node.
-    #[must_use]
-    pub const fn is_implicit(&self) -> bool {
-        matches!(self, Self::Plain { implicit: true })
     }
 
     /// Return block-header syntax for literal and folded scalars, or `None` otherwise.

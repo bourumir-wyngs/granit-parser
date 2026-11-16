@@ -20,7 +20,7 @@ fn assert_empty_document(yaml: &str) {
         matches!(
             events.as_slice(),
             [Event::StreamStart, Event::DocumentStart { explicit: true, .. },
-             Event::Scalar { value, style: ScalarStyle::Plain { .. }, anchor_id: 0, tag: None, .. },
+             Event::Scalar { value, style: ScalarStyle::Plain, anchor_id: 0, tag: None, .. },
              Event::DocumentEnd { .. }, Event::StreamEnd] if value == "~"
         ),
         "unexpected events for {yaml:?}: {events:?}",

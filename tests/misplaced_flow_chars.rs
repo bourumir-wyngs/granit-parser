@@ -36,7 +36,7 @@ fn misplaced_closing_bracket_at_col_0() {
     ));
     if let Event::Scalar {
         value: ref v,
-        style: ScalarStyle::Plain { .. },
+        style: ScalarStyle::Plain,
         anchor_id: 0,
         tag: None,
         ..
@@ -97,7 +97,7 @@ fn misplaced_closing_brace_at_col_0() {
     ));
     if let Event::Scalar {
         value: ref v,
-        style: ScalarStyle::Plain { .. },
+        style: ScalarStyle::Plain,
         anchor_id: 0,
         tag: None,
         ..
@@ -158,7 +158,7 @@ fn misplaced_comma_at_col_0() {
     ));
     if let Event::Scalar {
         value: ref v,
-        style: ScalarStyle::Plain { .. },
+        style: ScalarStyle::Plain,
         anchor_id: 0,
         tag: None,
         ..
@@ -179,7 +179,7 @@ fn misplaced_comma_at_col_0() {
     ));
     if let Event::Scalar {
         value: ref v,
-        style: ScalarStyle::Plain { .. },
+        style: ScalarStyle::Plain,
         anchor_id: 0,
         tag: None,
         ..
@@ -191,7 +191,7 @@ fn misplaced_comma_at_col_0() {
     }
     if let Event::Scalar {
         value: ref v,
-        style: ScalarStyle::Plain { .. },
+        style: ScalarStyle::Plain,
         anchor_id: 0,
         tag: None,
         ..

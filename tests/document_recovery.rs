@@ -30,7 +30,7 @@ fn recover<'input, I: BorrowedInput<'input>>(
 fn scalar_document(value: &str, explicit: bool) -> Vec<Event<'_>> {
     vec![
         Event::document_start(explicit, None),
-        Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
+        Event::new_scalar(value.into(), ScalarStyle::Plain, false, 0, None),
         Event::document_end(false),
         Event::StreamEnd,
     ]
@@ -96,10 +96,10 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
         vec![
             Event::document_start(true, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("healthy".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("healthy".into(), ScalarStyle::Plain, false, 0, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("enabled".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("true".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("enabled".into(), ScalarStyle::Plain, false, 0, None),
+            Event::new_scalar("true".into(), ScalarStyle::Plain, false, 0, None),
             Event::MappingEnd,
             Event::MappingEnd,
             Event::document_end(false),

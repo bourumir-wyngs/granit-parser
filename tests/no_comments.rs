@@ -415,10 +415,11 @@ fn disabled_comments_preserve_non_comment_event_spans() {
 fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
     // YAML 1.2.2 §§6.6, 6.9 and 7.2 permit EOF-terminated comments and empty nodes
     // whose anchor/tag properties remain significant, including an empty explicit key.
-    let null = |anchor| Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), anchor, None);
+    let null = |anchor| Event::new_scalar("~".into(), ScalarStyle::Plain, true, anchor, None);
     let local_empty = Event::new_scalar(
         "".into(),
-        ScalarStyle::implicit_plain(),
+        ScalarStyle::Plain,
+        true,
         1,
         Some(Cow::Owned(Tag::new("!", "local"))),
     );
@@ -445,7 +446,8 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
             "!!str # café",
             vec![Event::new_scalar(
                 "".into(),
-                ScalarStyle::implicit_plain(),
+                ScalarStyle::Plain,
+                true,
                 0,
                 Some(Cow::Owned(Tag::with_original_handle(
                     "tag:yaml.org,2002:",
@@ -756,7 +758,7 @@ fn disabled_comments_preserve_non_comment_prefixes_before_errors() {
             "completed plain scalar",
             "foo\n# ignored\n@\n",
             ErrorKind::UnexpectedCharacter { character: '@' },
-            Some((ScalarStyle::plain(), "foo")),
+            Some((ScalarStyle::Plain, "foo")),
         ),
     ] {
         assert_scanner_prefix(
@@ -1008,7 +1010,7 @@ fn streaming_comment_failures_preserve_source_errors_in_all_emission_modes() {
 
 fn assert_literal_hash_scalars(events: &[Event<'_>]) {
     let expected = [
-        (ScalarStyle::plain(), "value#plain"),
+        (ScalarStyle::Plain, "value#plain"),
         (ScalarStyle::SingleQuoted, "# single"),
         (ScalarStyle::DoubleQuoted, "# double"),
         (
@@ -1069,7 +1071,7 @@ fn completed_plain_scalar_is_returned_before_long_suppressed_comment_tail_is_rea
             Event::Comment { .. } => panic!("disabled comments must not be emitted"),
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain { .. },
+                style: ScalarStyle::Plain,
                 ..
             } if value == "foo" => break,
             _ => {}
@@ -1103,7 +1105,7 @@ fn completed_plain_scalar_is_returned_before_fallible_suppressed_comment_tail_fa
             Ok((
                 Event::Scalar {
                     value,
-                    style: ScalarStyle::Plain { .. },
+                    style: ScalarStyle::Plain,
                     ..
                 },
                 _,

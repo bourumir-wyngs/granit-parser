@@ -171,7 +171,7 @@ pub fn check_input(data: &[u8]) {
 }
 
 fn scalar(value: &'static str) -> Event<'static> {
-    Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None)
+    Event::new_scalar(value.into(), ScalarStyle::Plain, false, 0, None)
 }
 
 fn parent_events() -> [Event<'static>; 5] {

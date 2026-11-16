@@ -4560,7 +4560,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             Ok(Token(
                 Span::new(start_mark, end_mark),
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::Plain,
                     value: contents,
                 },
             ))
@@ -5380,7 +5380,7 @@ mod test {
                     Token(
                         _,
                         TokenType::Scalar {
-                            style: ScalarStyle::Plain { implicit: false },
+                            style: ScalarStyle::Plain,
                             value,
                         },
                     ) => Some(value.into_owned()),
@@ -5525,7 +5525,7 @@ mod test {
             .all(|token| !matches!(token.1, TokenType::Comment { comment: _ })));
         assert!(tokens.iter().any(|token| matches!(
             token.1,
-            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, value: ref text } if text == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain, value: ref text } if text == "value"
         )));
     }
 
@@ -5692,7 +5692,7 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, ref value } if value == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain, ref value } if value == "value"
         ));
         #[cfg(feature = "comments")]
         assert!(scanner
@@ -6703,13 +6703,13 @@ mod test {
                 TokenType::BlockMappingStart,
                 TokenType::Key,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::Plain,
                     value: "a".into()
                 },
                 TokenType::Value,
                 TokenType::FlowSequenceStart,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::Plain,
                     value: "foo".into()
                 },
                 TokenType::FlowSequenceEnd,

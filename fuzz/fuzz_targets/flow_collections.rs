@@ -96,7 +96,7 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
             1 => (format!("{{key: {value}}}"), vec!["key", value.as_str()]),
             _ => (format!("{{{value}: tail}}"), vec![value.as_str(), "tail"]),
         };
-        assert_plain_scalars(&yaml, &expected, ScalarStyle::plain());
+        assert_plain_scalars(&yaml, &expected, ScalarStyle::Plain);
         return yaml;
     }
 
@@ -109,11 +109,11 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
     let (yaml, style) = match shape % 4 {
         0 => (
             format!("key:{separator}{value}\nnext:{separator}tail\n"),
-            ScalarStyle::plain(),
+            ScalarStyle::Plain,
         ),
         1 => (
             format!("{{key:{separator}{value}, next:{separator}tail}}"),
-            ScalarStyle::plain(),
+            ScalarStyle::Plain,
         ),
         2 => (
             format!("{{\"key\":{separator}\"{value}\", \"next\":{separator}\"tail\"}}"),
@@ -121,7 +121,7 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
         ),
         _ => (
             format!("? key\n:{separator}{value}\n? next\n:{separator}tail\n"),
-            ScalarStyle::plain(),
+            ScalarStyle::Plain,
         ),
     };
     assert_plain_scalars(&yaml, &["key", &value, "next", "tail"], style);

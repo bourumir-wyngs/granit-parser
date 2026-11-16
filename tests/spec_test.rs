@@ -2,7 +2,7 @@
 #![allow(non_upper_case_globals)]
 extern crate granit_parser;
 
-use granit_parser::{Event, EventReceiver, Parser};
+use granit_parser::{Event, EventReceiver, Parser, ScalarStyle};
 
 // These names match the names used in the C++ test suite.
 #[allow(clippy::enum_variant_names)]
@@ -37,7 +37,7 @@ impl EventReceiver<'_> for YamlChecker {
                 style,
                 ..
             } => {
-                if v == "~" && style.is_plain() {
+                if v == "~" && style == ScalarStyle::Plain {
                     TestEvent::OnNull
                 } else {
                     TestEvent::OnScalar

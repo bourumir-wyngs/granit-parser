@@ -147,10 +147,10 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
         [
             Event::StreamStart,
             Event::document_start(false, None),
-            Event::new_scalar(expected.into(), actual_style, 0, None),
+            Event::new_scalar(expected.into(), actual_style, false, 0, None),
             Event::document_end(false),
             Event::document_start(true, None),
-            Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("second".into(), ScalarStyle::Plain, false, 0, None),
             Event::document_end(false),
             Event::StreamEnd,
         ],
