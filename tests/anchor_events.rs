@@ -1,6 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 use std::borrow::Cow;
 
 use granit_parser::{
@@ -99,7 +96,7 @@ fn emission_is_opt_in_and_preserves_all_existing_events_and_spans() {
                     emit_anchor_events: false,
                 },
             );
-            assert_eq!(snapshot(&baseline), snapshot(&explicit_false), "{source:?}");
+            assert_eq!(baseline, explicit_false, "{source:?}");
             let mut enabled = options;
             enabled.emit_anchor_events = true;
             let events = parse(source, enabled);
@@ -108,7 +105,7 @@ fn emission_is_opt_in_and_preserves_all_existing_events_and_spans() {
                 .into_iter()
                 .filter(|(event, _)| !matches!(event, Event::Anchor { .. }))
                 .collect();
-            assert_eq!(snapshot(&filtered), snapshot(&baseline), "{source:?}");
+            assert_eq!(filtered, baseline, "{source:?}");
         }
     }
 }
@@ -477,7 +474,7 @@ fn zero_anchor_offset_preserves_empty_scalars_and_tags_across_comments() {
                 streamed.set_anchor_offset(0);
                 let expected = parser.collect::<Result<Vec<_>, _>>().expect(source);
                 let actual = streamed.collect::<Result<Vec<_>, _>>().expect(source);
-                assert_eq!(snapshot(&actual), snapshot(&expected), "{source:?}");
+                assert_eq!(actual, expected, "{source:?}");
                 let index = expected
                     .iter()
                     .position(|(event, _)| matches!(event, Event::Scalar { .. }))
@@ -513,10 +510,7 @@ fn zero_anchor_offset_preserves_empty_scalars_and_tags_across_comments() {
                     assert_eq!(anchors.len(), 1);
                     let (anchor_index, (event, span)) = anchors[0];
                     assert_eq!(anchor_index, index + 1);
-                    assert_eq!(
-                        snapshot(event),
-                        snapshot(&ExpectedEvent::anchor(0, "a".into()))
-                    );
+                    assert_eq!(*event, Event::anchor(0, "a".into()));
                     assert_eq!(span.slice(source), Some("&a"));
                 } else {
                     assert!(anchors.is_empty());
@@ -548,14 +542,14 @@ fn document_boundaries_clear_names_but_preserve_assigned_id_identity() {
         .map(|(event, _)| event.clone())
         .collect();
     assert_eq!(
-        snapshot(&references),
-        snapshot(&[
-            ExpectedEvent::anchor(1, "same".into()),
-            ExpectedEvent::alias(1),
-            ExpectedEvent::unresolved_alias("same".into()),
-            ExpectedEvent::anchor(2, "same".into()),
-            ExpectedEvent::alias(2),
-        ])
+        references,
+        [
+            Event::anchor(1, "same".into()),
+            Event::alias(1),
+            Event::unresolved_alias("same".into()),
+            Event::anchor(2, "same".into()),
+            Event::alias(2),
+        ]
     );
 }
 
@@ -588,7 +582,7 @@ fn streaming_peek_and_load_preserve_anchor_metadata_and_order() {
             .collect::<Result<Vec<_>, _>>()
             .unwrap(),
         ] {
-            assert_eq!(snapshot(&streamed), snapshot(&expected));
+            assert_eq!(streamed, expected);
             assert_anchor_follows_node(&streamed);
             for (event, span) in &streamed {
                 if let Event::Anchor { name, .. } = event {
@@ -602,14 +596,11 @@ fn streaming_peek_and_load_preserve_anchor_metadata_and_order() {
         let mut peeked = Vec::new();
         while let Some(event) = parser.peek() {
             let event = event.unwrap().clone();
-            assert_eq!(
-                snapshot(&parser.peek().unwrap().unwrap()),
-                snapshot(&&event)
-            );
-            assert_eq!(snapshot(&parser.next().unwrap().unwrap()), snapshot(&event));
+            assert_eq!(parser.peek().unwrap().unwrap(), &event);
+            assert_eq!(parser.next().unwrap().unwrap(), event);
             peeked.push(event);
         }
-        assert_eq!(snapshot(&peeked), snapshot(&expected));
+        assert_eq!(peeked, expected);
 
         let mut parser = Parser::new_from_str_with_options(source, options);
         let mut loaded = Events::default();
@@ -619,7 +610,7 @@ fn streaming_peek_and_load_preserve_anchor_metadata_and_order() {
             Some((Event::DocumentEnd { .. }, _))
         ));
         parser.load(&mut loaded, true).unwrap();
-        assert_eq!(snapshot(&loaded.0), snapshot(&expected));
+        assert_eq!(loaded.0, expected);
     }
 }
 
@@ -634,23 +625,17 @@ fn loading_documents_separately_delivers_each_anchor_once() {
             parser.load(&mut sink, false).unwrap();
             let id = offset + index;
             let mut expected = vec![
-                ExpectedEvent::document_start(true, None),
-                ExpectedEvent::new_scalar(
-                    value.into(),
-                    ExpectedStyle::Plain { implicit: false },
-                    false,
-                    id,
-                    None,
-                ),
-                ExpectedEvent::anchor(id, name.into()),
-                ExpectedEvent::document_end(false),
+                Event::document_start(true, None),
+                Event::new_scalar(value.into(), ScalarStyle::plain(), id, None),
+                Event::anchor(id, name.into()),
+                Event::document_end(false),
             ];
             if index == 0 {
-                expected.insert(0, ExpectedEvent::StreamStart);
+                expected.insert(0, Event::stream_start());
             }
             assert_eq!(
-                snapshot(&sink.0.iter().map(|(event, _)| event).collect::<Vec<_>>()),
-                snapshot(&expected.iter().collect::<Vec<_>>())
+                sink.0.iter().map(|(event, _)| event).collect::<Vec<_>>(),
+                expected.iter().collect::<Vec<_>>()
             );
             assert_anchor_follows_node(&sink.0);
             let (_, span) = sink
@@ -663,7 +648,7 @@ fn loading_documents_separately_delivers_each_anchor_once() {
         }
         parser.load(&mut sink, true).unwrap();
         assert_eq!(sink.0.len(), 1);
-        assert_eq!(snapshot(&sink.0[0].0), snapshot(&ExpectedEvent::StreamEnd));
+        assert_eq!(sink.0[0].0, Event::stream_end());
         assert!(parser.next().is_none());
     }
 }
@@ -678,39 +663,27 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
             let (event, _) = parser.next().unwrap().unwrap();
             if matches!(event, Event::Scalar { .. }) {
                 assert_eq!(
-                    snapshot(&event),
-                    snapshot(&ExpectedEvent::new_scalar(
-                        "x".into(),
-                        ExpectedStyle::Plain { implicit: false },
-                        false,
-                        offset,
-                        None
-                    ))
+                    event,
+                    Event::new_scalar("x".into(), ScalarStyle::plain(), offset, None)
                 );
                 break;
             }
         }
         let (event, span) = parser.peek().unwrap().unwrap();
-        assert_eq!(
-            snapshot(event),
-            snapshot(&ExpectedEvent::anchor(offset, "a".into()))
-        );
+        assert_eq!(*event, Event::anchor(offset, "a".into()));
         assert_eq!(span.slice(source), Some("&a"));
         let mut sink = Events::default();
         parser.load(&mut sink, true).unwrap();
         assert_eq!(
-            snapshot(
-                &sink
-                    .0
-                    .iter()
-                    .map(|(event, _)| event.clone())
-                    .collect::<Vec<_>>()
-            ),
-            snapshot(&[
-                ExpectedEvent::anchor(offset, "a".into()),
-                ExpectedEvent::document_end(false),
-                ExpectedEvent::StreamEnd
-            ])
+            sink.0
+                .iter()
+                .map(|(event, _)| event.clone())
+                .collect::<Vec<_>>(),
+            [
+                Event::anchor(offset, "a".into()),
+                Event::document_end(false),
+                Event::stream_end()
+            ]
         );
         assert_eq!(sink.0[0].1.slice(source), Some("&a"));
         assert!(parser.next().is_none());
@@ -760,7 +733,7 @@ fn receiver_failure_can_resume_before_or_after_anchor_metadata() {
         );
         sink.events
             .extend(parser.collect::<Result<Vec<_>, _>>().unwrap());
-        assert_eq!(snapshot(&sink.events), snapshot(&expected));
+        assert_eq!(sink.events, expected);
     }
 }
 
@@ -814,33 +787,25 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
             }
             if peek_metadata {
                 assert_eq!(
-                    snapshot(&parser.peek().unwrap().unwrap().0),
-                    snapshot(&ExpectedEvent::anchor(offset, "skipped".into()))
+                    parser.peek().unwrap().unwrap().0,
+                    Event::anchor(offset, "skipped".into())
                 );
             }
             parser.proceed_next_document().unwrap();
             let events = parser.collect::<Result<Vec<_>, _>>().unwrap();
             assert_anchor_follows_node(&events);
             assert_eq!(
-                snapshot(
-                    &events
-                        .iter()
-                        .map(|(event, _)| event.clone())
-                        .collect::<Vec<_>>()
-                ),
-                snapshot(&[
-                    ExpectedEvent::document_start(true, None),
-                    ExpectedEvent::new_scalar(
-                        "second".into(),
-                        ExpectedStyle::Plain { implicit: false },
-                        false,
-                        offset + 1,
-                        None
-                    ),
-                    ExpectedEvent::anchor(offset + 1, "kept".into()),
-                    ExpectedEvent::document_end(false),
-                    ExpectedEvent::StreamEnd,
-                ])
+                events
+                    .iter()
+                    .map(|(event, _)| event.clone())
+                    .collect::<Vec<_>>(),
+                [
+                    Event::document_start(true, None),
+                    Event::new_scalar("second".into(), ScalarStyle::plain(), offset + 1, None),
+                    Event::anchor(offset + 1, "kept".into()),
+                    Event::document_end(false),
+                    Event::stream_end(),
+                ]
             );
             assert_eq!(events[2].1.slice(source), Some("&kept"));
         }
@@ -877,10 +842,7 @@ fn anchored_collection_emits_metadata_before_an_unclosed_child_error() {
                 &[AnchoredNode::Sequence(StructureStyle::Block)],
                 offset,
             );
-            assert_eq!(
-                snapshot(&events.last().unwrap().0),
-                snapshot(&ExpectedEvent::anchor(offset, "a".into()))
-            );
+            assert_eq!(events.last().unwrap().0, Event::anchor(offset, "a".into()));
             assert!(parser.next().is_none());
         }
     }

@@ -1,6 +1,4 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+use granit_parser::ScalarStyle;
 use std::borrow::Cow;
 
 use granit_parser::{
@@ -49,59 +47,27 @@ fn unresolved_alias_preserves_name_span_and_following_structure() {
         .expect("unresolved references should not stop structural parsing");
 
     assert_eq!(
-        snapshot(
-            &events
-                .iter()
-                .map(|(event, _)| event.clone())
-                .collect::<Vec<_>>()
-        ),
-        snapshot(&[
-            ExpectedEvent::StreamStart,
-            ExpectedEvent::document_start(false, None),
-            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-            ExpectedEvent::new_scalar(
-                "first".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::unresolved_alias("míssing".into()),
-            ExpectedEvent::new_scalar(
-                "second".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
-            ExpectedEvent::new_scalar(
-                "one".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::new_scalar(
-                "two".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::SequenceEnd,
-            ExpectedEvent::new_scalar(
-                "third".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::new_scalar("hello".into(), ExpectedStyle::DoubleQuoted, false, 0, None),
-            ExpectedEvent::MappingEnd,
-            ExpectedEvent::document_end(false),
-            ExpectedEvent::StreamEnd,
-        ])
+        events
+            .iter()
+            .map(|(event, _)| event.clone())
+            .collect::<Vec<_>>(),
+        [
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
+            Event::new_scalar("first".into(), ScalarStyle::plain(), 0, None),
+            Event::unresolved_alias("míssing".into()),
+            Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_start(StructureStyle::Flow, 0, None),
+            Event::new_scalar("one".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("two".into(), ScalarStyle::plain(), 0, None),
+            Event::sequence_end(),
+            Event::new_scalar("third".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("hello".into(), ScalarStyle::double_quoted(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
+        ]
     );
     let (alias, span) = &events[4];
     assert!(matches!(
@@ -180,18 +146,16 @@ fn repeated_names_resolve_only_to_preceding_definitions_and_do_not_allocate_ids(
         .collect::<Vec<_>>();
 
     assert_eq!(
-        snapshot(
-            &aliases
-                .iter()
-                .map(|(event, _)| event.clone())
-                .collect::<Vec<_>>()
-        ),
-        snapshot(&[
-            ExpectedEvent::unresolved_alias("x".into()),
-            ExpectedEvent::unresolved_alias("x".into()),
-            ExpectedEvent::alias(23),
-            ExpectedEvent::alias(24),
-        ]),
+        aliases
+            .iter()
+            .map(|(event, _)| event.clone())
+            .collect::<Vec<_>>(),
+        [
+            Event::unresolved_alias("x".into()),
+            Event::unresolved_alias("x".into()),
+            Event::alias(23),
+            Event::alias(24),
+        ],
     );
     assert_ne!(aliases[0].1.start, aliases[1].1.start);
     assert_eq!(aliases[2].0.alias_id(), Some(23));
@@ -206,19 +170,17 @@ fn document_boundaries_clear_names_and_self_references_still_resolve() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(
-        snapshot(
-            &events
-                .into_iter()
-                .map(|(event, _)| event)
-                .filter(Event::is_alias)
-                .collect::<Vec<_>>()
-        ),
-        snapshot(&[
-            ExpectedEvent::alias(1),
-            ExpectedEvent::unresolved_alias("x".into()),
-            ExpectedEvent::alias(2),
-            ExpectedEvent::alias(2),
-        ]),
+        events
+            .into_iter()
+            .map(|(event, _)| event)
+            .filter(Event::is_alias)
+            .collect::<Vec<_>>(),
+        [
+            Event::alias(1),
+            Event::unresolved_alias("x".into()),
+            Event::alias(2),
+            Event::alias(2),
+        ],
     );
 }
 
@@ -250,7 +212,7 @@ fn input_backends_peek_and_load_preserve_the_event_stream() {
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
         ] {
-            assert_eq!(snapshot(&events), snapshot(&expected));
+            assert_eq!(events, expected);
             let (event, span) = events.iter().find(|(event, _)| event.is_alias()).unwrap();
             assert!(
                 matches!(event, Event::UnresolvedAlias { name: Cow::Owned(name), .. } if name == "missing")
@@ -262,10 +224,7 @@ fn input_backends_peek_and_load_preserve_the_event_stream() {
         let mut prefix = Vec::new();
         loop {
             let peeked = parser.peek().unwrap().unwrap().clone();
-            assert_eq!(
-                snapshot(&parser.peek().unwrap().unwrap()),
-                snapshot(&&peeked)
-            );
+            assert_eq!(parser.peek().unwrap().unwrap(), &peeked);
             if peeked.0.is_alias() {
                 break;
             }
@@ -275,8 +234,7 @@ fn input_backends_peek_and_load_preserve_the_event_stream() {
         parser.load(&mut sink, true).unwrap();
         prefix.extend(sink.0);
         assert_eq!(
-            snapshot(&prefix),
-            snapshot(&expected),
+            prefix, expected,
             "load must include the peeked unresolved alias once"
         );
         assert!(parser.next().is_none());
@@ -285,17 +243,11 @@ fn input_backends_peek_and_load_preserve_the_event_stream() {
         let mut through_peek = Vec::new();
         while let Some(result) = parser.peek() {
             let peeked = result.unwrap().clone();
-            assert_eq!(
-                snapshot(&parser.peek().unwrap().unwrap()),
-                snapshot(&&peeked)
-            );
-            assert_eq!(
-                snapshot(&parser.next().unwrap().unwrap()),
-                snapshot(&peeked)
-            );
+            assert_eq!(parser.peek().unwrap().unwrap(), &peeked);
+            assert_eq!(parser.next().unwrap().unwrap(), peeked);
             through_peek.push(peeked);
         }
-        assert_eq!(snapshot(&through_peek), snapshot(&expected));
+        assert_eq!(through_peek, expected);
     }
 }
 
@@ -393,17 +345,12 @@ fn include_options_preserve_unresolved_events_through_replay() {
         stack.push_include("included.yaml").unwrap();
         let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(
-            snapshot(
-                &events
-                    .iter()
-                    .map(|(event, _)| event.clone())
-                    .filter(Event::is_alias)
-                    .collect::<Vec<_>>()
-            ),
-            snapshot(&[
-                ExpectedEvent::unresolved_alias("missing".into()),
-                ExpectedEvent::alias(1)
-            ]),
+            events
+                .iter()
+                .map(|(event, _)| event.clone())
+                .filter(Event::is_alias)
+                .collect::<Vec<_>>(),
+            [Event::unresolved_alias("missing".into()), Event::alias(1)],
         );
         assert!(matches!(events.last(), Some((Event::StreamEnd { .. }, _))));
     }

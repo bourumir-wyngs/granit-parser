@@ -294,10 +294,25 @@ be added. For example, `Event::Scalar(value, style, _, _)` becomes
 
 Pattern matching checks the variant without constructing a value to compare against.
 Whole-value equality would also compare metadata and could change meaning when fields are
-added. These output enums therefore do not implement `PartialEq`, `Eq`, `Hash`, `PartialOrd`,
-or `Ord`; `Token` also has no whole-value equality. There are no public variant constructors.
-Read or clone values emitted by the parser/scanner, then match the variant and inspect only
-the fields relevant to your application. `Event::scalar()` remains a read accessor.
+added. Normal builds therefore provide no equality, hashing, or ordering for these output
+enums, `Token`, or `BlockScalarSyntax`. Inspect only the fields relevant to your application;
+`Event::scalar()` remains a read accessor.
+
+Constructors serve a different purpose: creating synthetic values for custom `ParserTrait`
+implementations, event transformations, ownership conversions, and `ReplayParser` streams.
+Use `Event::new_scalar(value, style, anchor_id, tag)`, `ScalarStyle::plain()` or
+`ScalarStyle::implicit_plain()`, and the corresponding constructors for other variants.
+Unit variants also have constructors, such as `Event::stream_end()`; every variant remains
+non-exhaustive. Construction is supported independently of whether comparison is enabled.
+
+The opt-in `test-equality` feature enables `PartialEq` and `Eq` for real output types in
+regression tests. Hashing and ordering remain unavailable. Equality includes all current
+fields, with the established exception that optional byte coordinates are ignored across
+input backends; block-header order is irrelevant when either indicator is absent. Derived
+enum equality includes future fields automatically, and the block-header comparator uses
+exhaustive destructuring so a new field requires an explicit comparison policy.
+Keep this feature in development dependencies: Cargo features are additive, so enabling it
+makes equality available throughout that build. Continue using patterns for classification.
 
 ```rust
 use granit_parser::{Event, ScalarStyle};
@@ -621,8 +636,26 @@ Run the tests from a repository checkout with the official YAML suite initialize
 
 ```sh
 git submodule update --init tests/yaml-test-suite
-cargo test
-cargo test --test yaml-test-suite -- ::strict
+cargo test --features test-equality
+cargo test --features test-equality --test yaml-test-suite -- ::strict
+```
+
+The repository enables `test-equality` through a development dependency so its unit and
+integration tests compare real parser values. When testing an extracted crate package,
+enable the feature explicitly; the YAML suite still requires a repository checkout.
+Downstream tests can enable it without changing ordinary dependency builds:
+
+```toml
+[dev-dependencies]
+granit-parser = { version = "3", features = ["test-equality"] }
+```
+
+An independent consumer fixture verifies that constructors work and equality remains
+unavailable without the feature, then checks the opt-in comparisons:
+
+```sh
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
 ```
 
 Strict mode runs every active upstream case without case-specific overrides. The

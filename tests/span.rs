@@ -1,9 +1,5 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent};
-
 use granit_parser::{ErrorKind, Event, Marker, Parser, ScanError, Span};
 
 /// Run the parser through the string, returning all the scalars, and collecting their spans to strings.
@@ -128,7 +124,7 @@ fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
             Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
                 .collect::<Result<Vec<_>, _>>(),
         ] {
-            assert_eq!(snapshot(&other.unwrap()), snapshot(&from_str), "{yaml:?}");
+            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
         }
         let ends: Vec<_> = from_str
             .iter()
@@ -169,11 +165,11 @@ fn stream_and_block_collection_end_spans_use_physical_eof() {
             Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
                 .collect::<Result<Vec<_>, _>>(),
         ] {
-            assert_eq!(snapshot(&other.unwrap()), snapshot(&from_str), "{yaml:?}");
+            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
         }
         let marker = Marker::new(yaml.chars().count(), line, col);
         let (last, stream_end) = from_str.last().expect("stream must have an end event");
-        assert_eq!(snapshot(&last), ExpectedEvent::StreamEnd);
+        assert_eq!(last, &Event::stream_end());
 
         // Flow endings cover their closing delimiter; block endings and StreamEnd
         // are empty spans at the actual end of the input, including its last line.
@@ -355,7 +351,7 @@ fn tag_spans_preserve_complete_source_tokens_and_unicode_positions() {
                 .collect::<Result<Vec<_>, _>>(),
         ] {
             let streamed = streamed.unwrap();
-            assert_eq!(snapshot(&streamed), snapshot(&events), "{yaml:?}");
+            assert_eq!(streamed, events, "{yaml:?}");
             let streamed_tag = streamed
                 .iter()
                 .find_map(|(_, span)| span.tag_span())
@@ -469,19 +465,13 @@ fn tag_spans_are_preserved_by_peeking_and_replay() {
     while let Some(peeked) = parser.peek() {
         let peeked = peeked.unwrap().clone();
         let next = parser.next().unwrap().unwrap();
-        assert_eq!(snapshot(&next), snapshot(&peeked));
+        assert_eq!(next, peeked);
         events.push(next);
     }
     let mut replay = ReplayParser::new(events.clone(), 1);
     for expected in events {
-        assert_eq!(
-            snapshot(&replay.peek().unwrap().unwrap()),
-            snapshot(&&expected)
-        );
-        assert_eq!(
-            snapshot(&replay.next().unwrap().unwrap()),
-            snapshot(&expected)
-        );
+        assert_eq!(replay.peek().unwrap().unwrap(), &expected);
+        assert_eq!(replay.next().unwrap().unwrap(), expected);
     }
     assert!(replay.next().is_none());
 }

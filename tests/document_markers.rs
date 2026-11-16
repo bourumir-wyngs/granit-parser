@@ -1,11 +1,7 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
-
 mod support;
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
-use granit_parser::{Event, Parser, ScalarKind, ScanError, Span};
+use granit_parser::{Event, Parser, ScalarKind, ScalarStyle, ScanError, Span};
 
 /// Run the parser through the string.
 ///
@@ -43,7 +39,7 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
         }
     }
 
-    assert_eq!(snapshot(&str_events), snapshot(&iter_events));
+    assert_eq!(str_events, iter_events);
     assert_eq!(str_error, iter_error);
 
     if let Some(err) = str_error {
@@ -76,7 +72,7 @@ fn root_block_scalars_stop_at_document_markers() {
                 let yaml = format!("{indicator}{chomping}\n{content}{next_document}");
                 let spanned_events = run_parser_with_span(&yaml).unwrap();
                 let actual_style = spanned_events[2].0.scalar().unwrap().1;
-                assert_eq!(snapshot(&actual_style.kind()), snapshot(&style));
+                assert_eq!(actual_style.kind(), style);
                 let marker_start = yaml.len() - next_document.len();
                 assert_eq!(
                     spanned_events[2].1.end.index(),
@@ -89,22 +85,25 @@ fn root_block_scalars_stop_at_document_markers() {
                 }
                 let events: Vec<_> = spanned_events.into_iter().map(|(event, _)| event).collect();
                 assert_eq!(
-                    snapshot(&events),
+                    events,
                     [
-                        ExpectedEvent::StreamStart,
-                        ExpectedEvent::document_start(false, None),
-                        ExpectedEvent::new_scalar(expected.into(), actual_style, false, 0, None),
-                        ExpectedEvent::document_end(!explicit),
-                        ExpectedEvent::document_start(explicit, None),
-                        ExpectedEvent::new_scalar(
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::new_scalar(expected.into(), actual_style, 0, None),
+                        Event::document_end(!explicit),
+                        Event::document_start(explicit, None),
+                        Event::new_scalar(
                             second.into(),
-                            ExpectedStyle::plain(),
-                            second == "~",
+                            if second == "~" {
+                                ScalarStyle::implicit_plain()
+                            } else {
+                                ScalarStyle::plain()
+                            },
                             0,
                             None
                         ),
-                        ExpectedEvent::document_end(false),
-                        ExpectedEvent::StreamEnd,
+                        Event::document_end(false),
+                        Event::stream_end(),
                     ],
                     "input: {yaml:?}",
                 );
@@ -126,40 +125,27 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                 let yaml = format!("{prefix}--- # next document{newline}second{newline}");
                 let events = run_parser_with_span(&yaml).unwrap();
                 let actual_style = events[2].0.scalar().unwrap().1;
-                assert_eq!(snapshot(&actual_style.kind()), snapshot(&style));
+                assert_eq!(actual_style.kind(), style);
 
                 assert_eq!(
-                    snapshot(
-                        &(events
-                            .iter()
-                            .map(|(event, _)| event.clone())
-                            .collect::<Vec<_>>())
-                    ),
+                    events
+                        .iter()
+                        .map(|(event, _)| event.clone())
+                        .collect::<Vec<_>>(),
                     [
-                        ExpectedEvent::StreamStart,
-                        ExpectedEvent::document_start(false, None),
-                        ExpectedEvent::new_scalar(
-                            format!("{body}{tail}").into(),
-                            actual_style,
-                            false,
-                            0,
-                            None
-                        ),
-                        ExpectedEvent::document_end(false),
-                        ExpectedEvent::document_start(true, None),
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::new_scalar(format!("{body}{tail}").into(), actual_style, 0, None),
+                        Event::document_end(false),
+                        Event::document_start(true, None),
                         #[cfg(feature = "comments")]
-                        ExpectedEvent::comment(" next document".into(), Placement::Right),
-                        ExpectedEvent::new_scalar(
-                            "second".into(),
-                            ExpectedStyle::plain(),
-                            false,
-                            0,
-                            None
-                        ),
-                        ExpectedEvent::document_end(false),
-                        ExpectedEvent::StreamEnd,
+                        Event::comment(" next document".into(), Placement::Right),
+                        Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
+                        Event::document_end(false),
+                        Event::stream_end(),
                     ]
                     .into_iter()
+                    .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
                     .collect::<Vec<_>>(),
                     "input: {yaml:?}",
                 );
@@ -203,15 +189,15 @@ fn block_scalars_preserve_content_resembling_document_markers() {
                 .map(|(event, _)| event)
                 .collect();
             let actual_style = events[2].scalar().unwrap().1;
-            assert_eq!(snapshot(&actual_style.kind()), snapshot(&style));
+            assert_eq!(actual_style.kind(), style);
             assert_eq!(
-                snapshot(&events),
+                events,
                 [
-                    ExpectedEvent::StreamStart,
-                    ExpectedEvent::document_start(false, None),
-                    ExpectedEvent::new_scalar(expected.into(), actual_style, false, 0, None),
-                    ExpectedEvent::document_end(false),
-                    ExpectedEvent::StreamEnd,
+                    Event::stream_start(),
+                    Event::document_start(false, None),
+                    Event::new_scalar(expected.into(), actual_style, 0, None),
+                    Event::document_end(false),
+                    Event::stream_end(),
                 ],
                 "input: {yaml:?}",
             );

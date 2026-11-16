@@ -67,16 +67,22 @@ jobs:
         run: cargo clippy  --offline --all-targets --all-features -- -D warnings -D clippy::pedantic
 
       - name: Run tests
-        run: cargo test  --offline
+        run: cargo test  --offline --features test-equality
 
       - name: Run tests with debug_prints
-        run: cargo test  --offline --features debug_prints
+        run: cargo test  --offline --features debug_prints,test-equality
 
       - name: Run no-default-features library tests
-        run: cargo test  --offline --lib --no-default-features
+        run: cargo test  --offline --lib --no-default-features --features test-equality
 
       - name: Run tests without parser comments
-        run: cargo test  --offline --no-default-features --features std,error_messages
+        run: cargo test  --offline --no-default-features --features std,error_messages,test-equality
+
+      - name: Check default consumer API
+        run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked
+
+      - name: Check opt-in consumer equality
+        run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
 
       - name: Check no_std target
         run: cargo check  --offline --lib --no-default-features --target wasm32v1-none

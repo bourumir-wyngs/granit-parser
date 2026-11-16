@@ -1,7 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
-
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
 extern crate alloc;
@@ -15,7 +11,7 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     BorrowedInput, ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser,
-    ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
+    ScalarStyle, ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
     TryLoadError,
 };
 
@@ -1228,8 +1224,8 @@ fn custom_parser_with_current_primes_next_event() {
 
     let (event, event_span) = stack.next_event().unwrap().unwrap();
     assert_eq!(
-        snapshot(&event),
-        ExpectedEvent::new_scalar("primed".into(), ExpectedStyle::plain(), false, 0, None),
+        event,
+        Event::new_scalar("primed".into(), ScalarStyle::plain(), 0, None),
     );
     assert_eq!(event_span, span);
 }
@@ -1465,12 +1461,12 @@ fn replay_child_propagates_anchor_offset_to_replay_parent() {
     );
 
     assert_eq!(
-        snapshot(&stack.next_event().unwrap().unwrap().0),
-        ExpectedEvent::new_scalar("child".into(), ExpectedStyle::plain(), false, 4, None)
+        stack.next_event().unwrap().unwrap().0,
+        Event::new_scalar("child".into(), ScalarStyle::plain(), 4, None)
     );
     assert_eq!(
-        snapshot(&stack.next_event().unwrap().unwrap().0),
-        ExpectedEvent::new_scalar("parent".into(), ExpectedStyle::plain(), false, 0, None)
+        stack.next_event().unwrap().unwrap().0,
+        Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None)
     );
     assert_eq!(stack.current_anchor_offset(), 5);
 }
@@ -1499,8 +1495,8 @@ fn custom_parser_with_current_inherits_parent_anchor_offset() {
 
     assert_eq!(stack.current_anchor_offset(), 2);
     assert_eq!(
-        snapshot(&stack.next_event().unwrap().unwrap().0),
-        ExpectedEvent::new_scalar("primed".into(), ExpectedStyle::plain(), false, 0, None)
+        stack.next_event().unwrap().unwrap().0,
+        Event::new_scalar("primed".into(), ScalarStyle::plain(), 0, None)
     );
 
     let events = collect_events(&mut stack).unwrap();

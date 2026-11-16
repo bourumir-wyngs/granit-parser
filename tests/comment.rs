@@ -1,6 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent};
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
@@ -157,10 +154,7 @@ fn event_comment_stores_raw_payload() {
         .find_map(|(event, _)| matches!(event, Event::Comment { .. }).then_some(event))
         .unwrap();
 
-    assert_eq!(
-        snapshot(&event),
-        snapshot(&ExpectedEvent::comment(" payload ".into(), Placement::Last))
-    );
+    assert_eq!(event, Event::comment(" payload ".into(), Placement::Last));
     assert!(!event.is_node());
     assert!(event.scalar().is_none());
     assert_eq!(event.tag(), None);
@@ -1342,8 +1336,8 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
     assert!(
         matches!(first_peek.0, Event::Comment { value: ref text, placement: Placement::Above, .. } if text == " first")
     );
-    assert_eq!(snapshot(&first_peek), snapshot(&second_peek));
-    assert_eq!(snapshot(&first_peek), snapshot(&next));
+    assert_eq!(first_peek, second_peek);
+    assert_eq!(first_peek, next);
 }
 
 #[derive(Default)]

@@ -1,6 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 mod support;
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
@@ -176,11 +173,7 @@ fn assert_scanner_prefix<'input, T>(
     assert_eq!(enabled_error.kind(), expected_error, "{context}");
     assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
     assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
-    assert_eq!(
-        snapshot(&(disabled_tokens)),
-        snapshot(&(enabled_tokens)),
-        "{context}"
-    );
+    assert_eq!(disabled_tokens, enabled_tokens, "{context}");
     assert_eq!(
         enabled_comments > 0,
         cfg!(feature = "comments"),
@@ -210,11 +203,7 @@ fn assert_parser_prefix<'input, T>(
     assert_eq!(enabled_error.kind(), expected_error, "{context}");
     assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
     assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
-    assert_eq!(
-        snapshot(&(disabled_events)),
-        snapshot(&(enabled_events)),
-        "{context}"
-    );
+    assert_eq!(disabled_events, enabled_events, "{context}");
     assert_eq!(
         enabled_comments > 0,
         cfg!(feature = "comments"),
@@ -305,14 +294,14 @@ fn disabled_comments_match_enabled_yaml_semantics_after_filtering_comments() {
     enabled_str.retain(|event| !support::is_comment_event(event));
     let disabled_str =
         parse_str(yaml, no_comments()).expect("disabled string parser should accept YAML");
-    assert_eq!(snapshot(&(disabled_str)), snapshot(&(enabled_str)));
+    assert_eq!(disabled_str, enabled_str);
 
     let mut enabled_iter =
         parse_iter(yaml, Options::default()).expect("enabled iterator parser should accept YAML");
     enabled_iter.retain(|event| !support::is_comment_event(event));
     let disabled_iter =
         parse_iter(yaml, no_comments()).expect("disabled iterator parser should accept YAML");
-    assert_eq!(snapshot(&(disabled_iter)), snapshot(&(enabled_iter)));
+    assert_eq!(disabled_iter, enabled_iter);
 }
 
 #[test]
@@ -335,16 +324,13 @@ fn comment_after_leading_document_end_does_not_start_implicit_document() {
         ));
     }
     #[cfg(not(feature = "comments"))]
-    assert_eq!(
-        snapshot(&(enabled)),
-        snapshot(&([ExpectedEvent::StreamStart, ExpectedEvent::StreamEnd]))
-    );
+    assert_eq!(enabled, [Event::stream_start(), Event::stream_end()]);
     enabled.retain(|event| !support::is_comment_event(event));
 
     let disabled = parse_str(yaml, no_comments())
         .expect("comment suppression should preserve the empty stream");
 
-    assert_eq!(snapshot(&(disabled)), snapshot(&(enabled)));
+    assert_eq!(disabled, enabled);
 }
 
 #[test]
@@ -367,11 +353,7 @@ fn disabled_comments_do_not_skip_document_end_after_directive_comment() {
             "{context}"
         );
         assert_eq!(disabled_comments, 0, "{context}");
-        assert_eq!(
-            snapshot(&(disabled_events)),
-            snapshot(&(enabled_events)),
-            "{context}"
-        );
+        assert_eq!(disabled_events, enabled_events, "{context}");
         assert!(
             matches!(enabled_events.as_slice(), [(Event::StreamStart { .. }, _)]),
             "unexpected parser prefix: {context}"
@@ -431,26 +413,17 @@ fn disabled_comments_preserve_non_comment_event_spans() {
             .collect::<Result<Vec<_>, _>>()
             .expect("disabled string parser should accept YAML");
 
-        assert_eq!(snapshot(&(disabled)), snapshot(&(enabled)), "{yaml:?}");
+        assert_eq!(disabled, enabled, "{yaml:?}");
     }
 }
 
-fn empty_node_comment_cases() -> [(&'static str, Vec<ExpectedEvent>); 5] {
+fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
     // YAML 1.2.2 §§6.6, 6.9 and 7.2 permit EOF-terminated comments and empty nodes
     // whose anchor/tag properties remain significant, including an empty explicit key.
-    let null = |anchor| {
-        ExpectedEvent::new_scalar(
-            "~".into(),
-            ExpectedStyle::Plain { implicit: false },
-            true,
-            anchor,
-            None,
-        )
-    };
-    let local_empty = ExpectedEvent::new_scalar(
+    let null = |anchor| Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), anchor, None);
+    let local_empty = Event::new_scalar(
         "".into(),
-        ExpectedStyle::Plain { implicit: false },
-        true,
+        ScalarStyle::implicit_plain(),
         1,
         Some(Cow::Owned(Tag::new("!", "local"))),
     );
@@ -458,27 +431,26 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<ExpectedEvent>); 5] {
         (
             "? # café",
             vec![
-                ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+                Event::mapping_start(StructureStyle::Block, 0, None),
                 null(0),
                 null(0),
-                ExpectedEvent::MappingEnd,
+                Event::mapping_end(),
             ],
         ),
         (
             "? &a # café",
             vec![
-                ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+                Event::mapping_start(StructureStyle::Block, 0, None),
                 null(1),
                 null(0),
-                ExpectedEvent::MappingEnd,
+                Event::mapping_end(),
             ],
         ),
         (
             "!!str # café",
-            vec![ExpectedEvent::new_scalar(
+            vec![Event::new_scalar(
                 "".into(),
-                ExpectedStyle::Plain { implicit: false },
-                true,
+                ScalarStyle::implicit_plain(),
                 0,
                 Some(Cow::Owned(Tag::with_original_handle(
                     "tag:yaml.org,2002:",
@@ -496,12 +468,9 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<ExpectedEvent>); 5] {
 #[allow(clippy::too_many_lines)]
 fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
     for (template, body) in empty_node_comment_cases() {
-        let mut expected_events = vec![
-            ExpectedEvent::StreamStart,
-            ExpectedEvent::document_start(false, None),
-        ];
+        let mut expected_events = vec![Event::stream_start(), Event::document_start(false, None)];
         expected_events.extend(body);
-        expected_events.extend([ExpectedEvent::document_end(false), ExpectedEvent::StreamEnd]);
+        expected_events.extend([Event::document_end(false), Event::stream_end()]);
         for line_break in ["\n", "\r", "\r\n"] {
             let yaml = format!("# pré{line_break}{}", template.replace('\n', line_break));
             let eof = Marker::new(
@@ -547,18 +516,16 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                         );
                         events.retain(|(event, _)| !support::is_comment_event(event));
                         assert_eq!(
-                            snapshot(
-                                &(events
-                                    .iter()
-                                    .map(|(event, _)| event.clone())
-                                    .collect::<Vec<_>>())
-                            ),
-                            snapshot(&(expected_events)),
+                            events
+                                .iter()
+                                .map(|(event, _)| event.clone())
+                                .collect::<Vec<_>>(),
+                            expected_events,
                             "{context}"
                         );
                         assert_eq!(events.last().unwrap().1, Span::empty(eof), "{context}");
                         if let Some(expected) = &reference_trace {
-                            assert_eq!(snapshot(&(&events)), snapshot(&(expected)), "{context}");
+                            assert_eq!(&events, expected, "{context}");
                         } else {
                             reference_trace = Some(events);
                         }
@@ -592,7 +559,7 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                         );
                         assert_eq!(stream_end.span(), Span::empty(eof), "{context}");
                         if let Some(expected) = &expected_tokens {
-                            assert_eq!(snapshot(&(&tokens)), snapshot(&(expected)), "{context}");
+                            assert_eq!(&tokens, expected, "{context}");
                         } else {
                             expected_tokens = Some(tokens);
                         }
@@ -656,18 +623,10 @@ fn invalid_controls_in_eof_comments_keep_exact_error_positions() {
                         assert_eq!(*error.marker(), marker, "{context}");
                     }
                     for trace in &parser_traces[1..] {
-                        assert_eq!(
-                            snapshot(&(trace)),
-                            snapshot(&(&parser_traces[0])),
-                            "{context}"
-                        );
+                        assert_eq!(trace, &parser_traces[0], "{context}");
                     }
                     for trace in &scanner_traces[1..] {
-                        assert_eq!(
-                            snapshot(&(trace)),
-                            snapshot(&(&scanner_traces[0])),
-                            "{context}"
-                        );
+                        assert_eq!(trace, &scanner_traces[0], "{context}");
                     }
                     assert_eq!(
                         parser_traces[0].2.marker().byte_offset(),
@@ -713,11 +672,7 @@ fn disabled_comments_preserve_events_and_errors_for_invalid_yaml() {
             "parser comment emission must match the compiled feature: {name}"
         );
         assert_eq!(disabled_comments, 0, "{name}");
-        assert_eq!(
-            snapshot(&(disabled_events)),
-            snapshot(&(enabled_events)),
-            "{name}"
-        );
+        assert_eq!(disabled_events, enabled_events, "{name}");
         assert_eq!(disabled_error.kind(), enabled_error.kind(), "{name}");
         assert_eq!(disabled_error.marker(), enabled_error.marker(), "{name}");
 
@@ -911,11 +866,7 @@ fn disabled_comments_preserve_required_block_scalar_error_prefix() {
         assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
         assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
         assert_eq!(disabled_comments, 0, "{context}");
-        assert_eq!(
-            snapshot(&(disabled_tokens)),
-            snapshot(&(enabled_tokens)),
-            "{context}"
-        );
+        assert_eq!(disabled_tokens, enabled_tokens, "{context}");
         assert!(
             enabled_tokens.iter().all(|token| !matches!(
                 token.token_type(),
@@ -948,11 +899,7 @@ fn disabled_comments_preserve_required_block_scalar_error_prefix() {
         assert_eq!(disabled_error.kind(), enabled_error.kind(), "{context}");
         assert_eq!(disabled_error.marker(), enabled_error.marker(), "{context}");
         assert_eq!(disabled_comments, 0, "{context}");
-        assert_eq!(
-            snapshot(&(disabled_events)),
-            snapshot(&(enabled_events)),
-            "{context}"
-        );
+        assert_eq!(disabled_events, enabled_events, "{context}");
         assert!(
             enabled_events.iter().all(|(event, _)| !matches!(
                 event,

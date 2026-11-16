@@ -1,10 +1,8 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
+use granit_parser::ScalarStyle;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, Options, Parser, ScalarKind, ScanError, Scanner, Span,
     StrInput, StructureStyle,
 };
-use snapshots::{snapshot, ExpectedStyle};
 use std::collections::BTreeSet;
 
 fn collect_ok_events(yaml: &str) -> Vec<(Event<'_>, Span)> {
@@ -125,16 +123,8 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
         let fallible_events = Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(
-            snapshot(&str_events),
-            snapshot(&iter_events),
-            "input: {yaml:?}"
-        );
-        assert_eq!(
-            snapshot(&str_events),
-            snapshot(&fallible_events),
-            "input: {yaml:?}"
-        );
+        assert_eq!(str_events, iter_events, "input: {yaml:?}");
+        assert_eq!(str_events, fallible_events, "input: {yaml:?}");
         let scalars: Vec<_> = str_events
             .iter()
             .filter_map(|(event, _)| match event {
@@ -143,8 +133,8 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
             })
             .collect();
         assert_eq!(
-            snapshot(&scalars),
-            snapshot(&expected.map(|value| (value, ExpectedStyle::Plain { implicit: false }))),
+            scalars,
+            expected.map(|value| (value, ScalarStyle::plain())),
             "input: {yaml:?}"
         );
     }
@@ -407,13 +397,11 @@ fn explicit_key_indicator_at_end_of_input() {
                 assert_eq!(span.start.index(), input.chars().count());
             }
             assert_eq!(
-                snapshot(
-                    &events
-                        .into_iter()
-                        .map(|(event, _)| event)
-                        .collect::<Vec<_>>()
-                ),
-                snapshot(&expected),
+                events
+                    .into_iter()
+                    .map(|(event, _)| event)
+                    .collect::<Vec<_>>(),
+                expected,
                 "{input:?}"
             );
         }
@@ -445,7 +433,7 @@ fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
                         .collect::<Result<Vec<_>, _>>(),
                         Parser::new_from_str(&input).collect::<Result<Vec<_>, _>>(),
                     ] {
-                        assert_eq!(snapshot(&other.unwrap()), snapshot(&from_str), "{input:?}");
+                        assert_eq!(other.unwrap(), from_str, "{input:?}");
                     }
                     let scalars: Vec<_> = from_str
                         .iter()

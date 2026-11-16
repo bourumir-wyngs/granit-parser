@@ -460,7 +460,8 @@ impl AsRef<str> for Comment<'_> {
 /// Use `matches!`, `if let`, or `match` with `{ .. }` to inspect a token variant. Every
 /// variant is non-exhaustive, even if it currently has no fields, so the library can add
 /// metadata without changing those patterns. A complete match also needs a fallback arm.
-/// Token payloads do not implement equality and cannot be constructed by callers.
+/// Normal builds provide no whole-token equality; the opt-in `test-equality` feature enables
+/// equality for tests. Constructors support synthetic token streams and scanner adapters.
 ///
 /// ```
 /// use granit_parser::{Scanner, StrInput, TokenType};
@@ -468,20 +469,26 @@ impl AsRef<str> for Comment<'_> {
 /// assert!(matches!(token.token_type(), TokenType::StreamStart { .. }));
 /// ```
 ///
-/// ```compile_fail,E0369
-/// use granit_parser::TokenType;
-/// fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
-///     left == right
-/// }
-/// ```
+#[cfg_attr(
+    not(feature = "test-equality"),
+    doc = r#"
+```compile_fail,E0369
+use granit_parser::TokenType;
+fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
+    left == right
+}
+```
+"#
+)]
 ///
-/// ```compile_fail,E0599
+/// ```
 /// use granit_parser::TokenType;
 /// let token = TokenType::alias("name".into());
+/// assert!(matches!(token, TokenType::Alias { name, .. } if name == "name"));
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
 pub enum TokenType<'input> {
     /// Start of the stream.
     #[non_exhaustive]
@@ -589,12 +596,180 @@ pub enum TokenType<'input> {
     },
 }
 
+impl<'input> TokenType<'input> {
+    /// Return a [`Self::StreamStart`] token payload.
+    #[must_use]
+    pub const fn stream_start() -> Self {
+        Self::StreamStart
+    }
+
+    /// Return a [`Self::StreamEnd`] token payload.
+    #[must_use]
+    pub const fn stream_end() -> Self {
+        Self::StreamEnd
+    }
+
+    /// Return a [`Self::DocumentStart`] token payload.
+    #[must_use]
+    pub const fn document_start() -> Self {
+        Self::DocumentStart
+    }
+
+    /// Return a [`Self::DocumentEnd`] token payload.
+    #[must_use]
+    pub const fn document_end() -> Self {
+        Self::DocumentEnd
+    }
+
+    /// Return a [`Self::BlockSequenceStart`] token payload.
+    #[must_use]
+    pub const fn block_sequence_start() -> Self {
+        Self::BlockSequenceStart
+    }
+
+    /// Return a [`Self::BlockMappingStart`] token payload.
+    #[must_use]
+    pub const fn block_mapping_start() -> Self {
+        Self::BlockMappingStart
+    }
+
+    /// Return a [`Self::BlockEnd`] token payload.
+    #[must_use]
+    pub const fn block_end() -> Self {
+        Self::BlockEnd
+    }
+
+    /// Return a [`Self::FlowSequenceStart`] token payload.
+    #[must_use]
+    pub const fn flow_sequence_start() -> Self {
+        Self::FlowSequenceStart
+    }
+
+    /// Return a [`Self::FlowSequenceEnd`] token payload.
+    #[must_use]
+    pub const fn flow_sequence_end() -> Self {
+        Self::FlowSequenceEnd
+    }
+
+    /// Return a [`Self::FlowMappingStart`] token payload.
+    #[must_use]
+    pub const fn flow_mapping_start() -> Self {
+        Self::FlowMappingStart
+    }
+
+    /// Return a [`Self::FlowMappingEnd`] token payload.
+    #[must_use]
+    pub const fn flow_mapping_end() -> Self {
+        Self::FlowMappingEnd
+    }
+
+    /// Return a [`Self::BlockEntry`] token payload.
+    #[must_use]
+    pub const fn block_entry() -> Self {
+        Self::BlockEntry
+    }
+
+    /// Return a [`Self::FlowEntry`] token payload.
+    #[must_use]
+    pub const fn flow_entry() -> Self {
+        Self::FlowEntry
+    }
+
+    /// Return a [`Self::Key`] token payload.
+    #[must_use]
+    pub const fn key() -> Self {
+        Self::Key
+    }
+
+    /// Return a [`Self::Value`] token payload.
+    #[must_use]
+    pub const fn value() -> Self {
+        Self::Value
+    }
+
+    /// Return a [`Self::VersionDirective`] token payload.
+    ///
+    /// * `major`: Major version number.
+    /// * `minor`: Minor version number.
+    #[must_use]
+    pub fn version_directive(major: u32, minor: u32) -> Self {
+        Self::VersionDirective { major, minor }
+    }
+
+    /// Return a [`Self::TagDirective`] token payload.
+    ///
+    /// * `handle`: Tag handle.
+    /// * `prefix`: Tag URI prefix.
+    #[must_use]
+    pub fn tag_directive(handle: Cow<'input, str>, prefix: Cow<'input, str>) -> Self {
+        Self::TagDirective { handle, prefix }
+    }
+
+    /// Return a [`Self::Alias`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    #[must_use]
+    pub fn alias(name: Cow<'input, str>) -> Self {
+        Self::Alias { name }
+    }
+
+    /// Return a [`Self::Anchor`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    #[must_use]
+    pub fn anchor(name: Cow<'input, str>) -> Self {
+        Self::Anchor { name }
+    }
+
+    /// Return a [`Self::Tag`] token payload.
+    ///
+    /// * `handle`: Tag handle.
+    /// * `suffix`: Tag suffix.
+    #[must_use]
+    pub fn tag(handle: Cow<'input, str>, suffix: Cow<'input, str>) -> Self {
+        Self::Tag { handle, suffix }
+    }
+
+    /// Return a [`Self::Scalar`] token payload.
+    ///
+    /// * `style`: Scalar source syntax.
+    /// * `value`: Decoded scalar value.
+    #[must_use]
+    pub fn scalar(style: ScalarStyle, value: Cow<'input, str>) -> Self {
+        Self::Scalar { style, value }
+    }
+
+    /// Return a [`Self::Comment`] token payload.
+    ///
+    /// * `comment`: Captured comment metadata.
+    #[cfg(feature = "comments")]
+    #[must_use]
+    pub fn comment(comment: Comment<'input>) -> Self {
+        Self::Comment { comment }
+    }
+
+    /// Return a [`Self::ReservedDirective`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    /// * `parameters`: Directive parameters split on YAML whitespace.
+    #[must_use]
+    pub fn reserved_directive(name: String, parameters: Vec<String>) -> Self {
+        Self::ReservedDirective { name, parameters }
+    }
+}
+
 /// A scanner token.
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
 pub struct Token<'input>(Span, TokenType<'input>);
 
 impl<'input> Token<'input> {
+    /// Create a scanner token from its source span and payload.
+    #[must_use]
+    pub const fn new(span: Span, token_type: TokenType<'input>) -> Self {
+        Self(span, token_type)
+    }
+
     /// Return the source span covered by this token.
     #[must_use]
     pub const fn span(&self) -> Span {
@@ -618,7 +793,7 @@ impl<'input> Token<'input> {
 ///
 /// Public [`Token`] values are reconstructed when the scanner emits them.
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
 pub(crate) enum QueuedTokenType<'input> {
     StreamStart,
     StreamEnd,
@@ -716,7 +891,7 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
 
 /// A compact token stored by the scanner before it is emitted publicly.
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
 pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenType<'input>);
 
 impl<'input> QueuedToken<'input> {

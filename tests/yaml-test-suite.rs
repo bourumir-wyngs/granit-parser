@@ -1,7 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::snapshot;
-
 mod support;
 use std::{
     borrow::Cow,
@@ -389,7 +385,7 @@ fn parse_to_events(source: &str, options: Options) -> Result<EventReporter<'_>, 
     }
 
     // No matter the input, we should parse into the same events.
-    assert_eq!(snapshot(&str_events), snapshot(&iter_events));
+    assert_eq!(str_events, iter_events);
     // Or the same error.
     assert_eq!(str_error, iter_error);
     // If we had an error, return it so the test fails.

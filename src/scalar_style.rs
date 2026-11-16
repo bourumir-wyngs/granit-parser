@@ -1,10 +1,6 @@
 //! Scalar notation and compact block-header source metadata.
 
-use core::{
-    cmp::Ordering,
-    hash::{Hash, Hasher},
-    ops::Range,
-};
+use core::ops::Range;
 
 use crate::Span;
 
@@ -35,10 +31,25 @@ impl Default for Chomping {
 ///
 /// The header ranges cover `|` or `>` and its adjacent indicators, excluding whitespace,
 /// comments, and the header line break. Character and byte distances differ when, for example,
-/// a header comment contains Unicode. Byte distances are an optional coordinate enhancement,
-/// like byte offsets on [`crate::Marker`], and do not participate in equality, ordering, or
-/// hashing. Use [`Self::header_byte_range`] to inspect them when available.
-/// Indicator offsets are computed from the chomping mode, indentation digit, and their order.
+/// a header comment contains Unicode. Use [`Self::header_byte_range`] to inspect byte distances
+/// when available. Indicator offsets are computed from the chomping mode, indentation digit,
+/// and their order.
+///
+/// Normal builds provide no equality, ordering, or hashing. Inspect the individual fields
+/// relevant to your use case. The opt-in `test-equality` feature enables equality for testing;
+/// it ignores optional byte distances, like [`crate::Marker`], and irrelevant indicator order.
+#[cfg_attr(
+    not(feature = "test-equality"),
+    doc = r#"
+Comparing synthetic syntax with parsed syntax is intentionally unavailable by default:
+
+```compile_fail,E0369
+use granit_parser::BlockScalarSyntax;
+let syntax = BlockScalarSyntax::default();
+let _ = syntax == BlockScalarSyntax::default();
+```
+"#
+)]
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct BlockScalarSyntax {
@@ -54,7 +65,7 @@ pub struct BlockScalarSyntax {
     pub indentation_indicator: Option<u8>,
     /// Whether the indentation digit precedes the chomping sign when both are present.
     ///
-    /// Ignored, including for equality, ordering, and hashing, when either indicator is absent.
+    /// Ignored when either indicator is absent, including by `test-equality` comparisons.
     /// Parsed headers set this to `false` in that case.
     pub digit_first: bool,
     /// Effective number of leading indentation spaces removed from content lines.
@@ -207,42 +218,36 @@ impl BlockScalarSyntax {
         (end <= header.end).then_some(start..end)
     }
 
+    #[cfg(feature = "test-equality")]
     fn identity(&self) -> (usize, Chomping, Option<u8>, bool, usize) {
+        // Exhaustive destructuring makes every added field require an explicit equality policy.
+        let Self {
+            header_chars_before_span,
+            header_bytes_before_span: _,
+            chomping,
+            indentation_indicator,
+            digit_first,
+            content_indent,
+        } = *self;
         (
-            self.header_chars_before_span,
-            self.chomping,
-            self.indentation_indicator,
-            self.chomping_offset() == Some(2),
-            self.content_indent,
+            header_chars_before_span,
+            chomping,
+            indentation_indicator,
+            digit_first && !matches!(chomping, Chomping::Clip) && indentation_indicator.is_some(),
+            content_indent,
         )
     }
 }
 
+#[cfg(feature = "test-equality")]
 impl PartialEq for BlockScalarSyntax {
     fn eq(&self, other: &Self) -> bool {
         self.identity() == other.identity()
     }
 }
 
+#[cfg(feature = "test-equality")]
 impl Eq for BlockScalarSyntax {}
-
-impl PartialOrd for BlockScalarSyntax {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for BlockScalarSyntax {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.identity().cmp(&other.identity())
-    }
-}
-
-impl Hash for BlockScalarSyntax {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.identity().hash(state);
-    }
-}
 
 /// A scalar's notation category, independent of source positions and header metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -267,10 +272,14 @@ pub enum ScalarKind {
 /// the library add fields later without changing your code. The enum and every variant are
 /// non-exhaustive, so a complete `match` also needs a fallback arm.
 ///
-/// Styles deliberately provide neither equality, ordering, hashing, nor constructors.
-/// Comparing whole style values would make classification depend on all present and future
-/// metadata. Match the variant instead, then inspect the fields relevant to your use case.
-/// [`Self::kind`] returns a comparable, fieldless category when a map key or ordering is needed.
+/// Normal builds provide no equality, ordering, or hashing. Comparing whole style values would
+/// make classification depend on all present and future metadata. Match the variant instead,
+/// then inspect the fields relevant to your use case. [`Self::kind`] returns a comparable,
+/// fieldless category when a map key or ordering is needed. The opt-in `test-equality` feature
+/// enables whole-value equality for tests.
+///
+/// Constructors create styles for synthetic events and alternative parser implementations.
+/// They are independent of classification: use patterns to inspect the resulting values.
 ///
 /// ```
 /// use granit_parser::{Parser, ScalarStyle};
@@ -283,15 +292,19 @@ pub enum ScalarKind {
 /// assert!(!matches!(style, ScalarStyle::SingleQuoted { .. }));
 /// ```
 ///
-/// Whole-style equality is intentionally unavailable:
-///
-/// ```compile_fail,E0369
-/// use granit_parser::ScalarStyle;
-/// fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
-///     left == right
-/// }
-/// ```
-///
+#[cfg_attr(
+    not(feature = "test-equality"),
+    doc = r#"
+Whole-style equality is intentionally unavailable by default:
+
+```compile_fail,E0369
+use granit_parser::ScalarStyle;
+fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
+    left == right
+}
+```
+"#
+)]
 /// Styles are not hash keys; use [`ScalarKind`] when only the notation category matters:
 ///
 /// ```compile_fail,E0277
@@ -300,18 +313,19 @@ pub enum ScalarKind {
 /// require_hash::<ScalarStyle>();
 /// ```
 ///
-/// Non-exhaustive variants cannot be constructed by callers:
+/// Non-exhaustive variants cannot be constructed with a struct literal outside this crate:
 ///
 /// ```compile_fail,E0639
 /// use granit_parser::{BlockScalarSyntax, ScalarStyle};
 /// let style = ScalarStyle::Literal { syntax: BlockScalarSyntax::default() };
 /// ```
 ///
-/// No constructor helper bypasses that restriction:
+/// Use a constructor to create synthetic style metadata:
 ///
-/// ```compile_fail,E0599
+/// ```
 /// use granit_parser::{BlockScalarSyntax, ScalarStyle};
 /// let style = ScalarStyle::literal(BlockScalarSyntax::default());
+/// assert!(matches!(style, ScalarStyle::Literal { .. }));
 /// ```
 ///
 /// Variant patterns must allow future fields:
@@ -323,8 +337,7 @@ pub enum ScalarKind {
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
-// In-crate regression tests compare every known field; downstream builds expose no equality.
-#[cfg_attr(test, derive(Eq, PartialEq))]
+#[cfg_attr(feature = "test-equality", derive(Eq, PartialEq))]
 #[non_exhaustive]
 pub enum ScalarStyle {
     /// A plain scalar or a synthesized empty node.
@@ -357,6 +370,42 @@ pub enum ScalarStyle {
 }
 
 impl ScalarStyle {
+    /// Return the style of explicitly written plain scalar text.
+    #[must_use]
+    pub const fn plain() -> Self {
+        Self::Plain { implicit: false }
+    }
+
+    /// Return the style of an omitted node synthesized by a parser.
+    #[must_use]
+    pub const fn implicit_plain() -> Self {
+        Self::Plain { implicit: true }
+    }
+
+    /// Return single-quoted notation.
+    #[must_use]
+    pub const fn single_quoted() -> Self {
+        Self::SingleQuoted
+    }
+
+    /// Return double-quoted notation.
+    #[must_use]
+    pub const fn double_quoted() -> Self {
+        Self::DoubleQuoted
+    }
+
+    /// Return literal block style carrying `syntax`.
+    #[must_use]
+    pub const fn literal(syntax: BlockScalarSyntax) -> Self {
+        Self::Literal { syntax }
+    }
+
+    /// Return folded block style carrying `syntax`.
+    #[must_use]
+    pub const fn folded(syntax: BlockScalarSyntax) -> Self {
+        Self::Folded { syntax }
+    }
+
     /// Return the notation category, ignoring source positions and all other metadata.
     #[must_use]
     pub const fn kind(&self) -> ScalarKind {

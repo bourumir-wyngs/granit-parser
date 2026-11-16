@@ -7,11 +7,8 @@ use crate::common;
 
 use std::str;
 
-use common::{
-    parse_with_both_inputs,
-    snapshots::{snapshot, ExpectedStyle},
-};
-use granit_parser::{ErrorKind, Parser};
+use common::parse_with_both_inputs;
+use granit_parser::{ErrorKind, Parser, ScalarStyle};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
@@ -99,7 +96,7 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
             1 => (format!("{{key: {value}}}"), vec!["key", value.as_str()]),
             _ => (format!("{{{value}: tail}}"), vec![value.as_str(), "tail"]),
         };
-        assert_plain_scalars(&yaml, &expected, ExpectedStyle::plain());
+        assert_plain_scalars(&yaml, &expected, ScalarStyle::plain());
         return yaml;
     }
 
@@ -112,36 +109,32 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
     let (yaml, style) = match shape % 4 {
         0 => (
             format!("key:{separator}{value}\nnext:{separator}tail\n"),
-            ExpectedStyle::plain(),
+            ScalarStyle::plain(),
         ),
         1 => (
             format!("{{key:{separator}{value}, next:{separator}tail}}"),
-            ExpectedStyle::plain(),
+            ScalarStyle::plain(),
         ),
         2 => (
             format!("{{\"key\":{separator}\"{value}\", \"next\":{separator}\"tail\"}}"),
-            ExpectedStyle::DoubleQuoted,
+            ScalarStyle::double_quoted(),
         ),
         _ => (
             format!("? key\n:{separator}{value}\n? next\n:{separator}tail\n"),
-            ExpectedStyle::plain(),
+            ScalarStyle::plain(),
         ),
     };
     assert_plain_scalars(&yaml, &["key", &value, "next", "tail"], style);
     yaml
 }
 
-fn assert_plain_scalars(yaml: &str, expected: &[&str], style: ExpectedStyle) {
+fn assert_plain_scalars(yaml: &str, expected: &[&str], style: ScalarStyle) {
     let events = Parser::new_from_str(yaml)
         .collect::<Result<Vec<_>, _>>()
         .expect("generated flow or mapping regression must parse");
     let scalars: Vec<_> = events
         .iter()
-        .filter_map(|(event, _)| {
-            event
-                .scalar()
-                .map(|(value, style)| (value, snapshot(&style)))
-        })
+        .filter_map(|(event, _)| event.scalar())
         .collect();
     let expected: Vec<_> = expected.iter().map(|value| (*value, style)).collect();
     assert_eq!(

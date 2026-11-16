@@ -94,9 +94,12 @@ impl YamlVersion {
 /// metadata to be added without breaking these patterns. A complete `match` needs a fallback
 /// arm because new event variants may also be added.
 ///
-/// Events deliberately have no equality implementation or public constructors. Classify a
-/// parser-produced event by its variant, then inspect only the fields you need. Parsed or
-/// cloned events can still be passed to [`crate::ReplayParser`].
+/// Normal builds provide no whole-event equality. Classify an event by its variant, then inspect
+/// only the fields you need. The opt-in `test-equality` feature enables equality for tests.
+///
+/// Constructors support synthetic events, [`ParserTrait`] implementations, and
+/// [`crate::ReplayParser`] streams. They also let adapters rebuild events while retaining a
+/// decoded value, style, anchor, and tag. Construction does not enable equality in normal builds.
 ///
 /// ```
 /// use granit_parser::{Event, Parser};
@@ -107,31 +110,39 @@ impl YamlVersion {
 /// }
 /// ```
 ///
-/// Equality cannot accidentally compare unrelated presentation metadata:
-///
-/// ```compile_fail,E0369
-/// use granit_parser::Event;
-/// fn equal_events(left: Event<'_>, right: Event<'_>) -> bool {
-///     left == right
-/// }
-/// ```
-///
-/// Direct construction of variants outside this crate is not supported:
+#[cfg_attr(
+    not(feature = "test-equality"),
+    doc = r#"
+Whole-event equality is intentionally unavailable by default:
+
+```compile_fail,E0369
+use granit_parser::Event;
+fn equal_events(left: Event<'_>, right: Event<'_>) -> bool {
+    left == right
+}
+```
+"#
+)]
+/// Direct struct-literal construction outside this crate is not supported:
 ///
 /// ```compile_fail,E0639
 /// use granit_parser::Event;
 /// let event = Event::Alias { anchor_id: 1 };
 /// ```
 ///
-/// Constructor helpers are not part of the output API:
+/// Use constructors to rebuild an event or provide synthetic parser input:
 ///
-/// ```compile_fail,E0599
-/// use granit_parser::Event;
-/// let event = Event::alias(1);
+/// ```
+/// use granit_parser::{Event, Marker, ParserTrait, ReplayParser, ScalarStyle, Span};
+/// let event = Event::new_scalar("generated".into(), ScalarStyle::plain(), 0, None);
+/// let span = Span::empty(Marker::new(0, 1, 0));
+/// let mut replay = ReplayParser::new(vec![(event, span)], 0);
+/// let (event, _) = replay.next_event().unwrap().unwrap();
+/// assert!(matches!(event, Event::Scalar { value, .. } if value == "generated"));
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
 pub enum Event<'input> {
     /// Event generated at the very beginning of parsing.
     #[non_exhaustive]
@@ -531,6 +542,136 @@ impl Display for Tag {
 }
 
 impl<'input> Event<'input> {
+    /// Create a stream-start event.
+    #[must_use]
+    pub const fn stream_start() -> Self {
+        Self::StreamStart
+    }
+
+    /// Create a stream-end event.
+    #[must_use]
+    pub const fn stream_end() -> Self {
+        Self::StreamEnd
+    }
+
+    /// Create a sequence-end event.
+    #[must_use]
+    pub const fn sequence_end() -> Self {
+        Self::SequenceEnd
+    }
+
+    /// Create a mapping-end event.
+    #[must_use]
+    pub const fn mapping_end() -> Self {
+        Self::MappingEnd
+    }
+
+    /// Create a document-start event with its explicit-marker flag and declared YAML version.
+    #[must_use]
+    pub const fn document_start(explicit: bool, version: Option<YamlVersion>) -> Self {
+        Self::DocumentStart { explicit, version }
+    }
+
+    /// Create a document-end event; `explicit` indicates a written `...` marker.
+    #[must_use]
+    pub const fn document_end(explicit: bool) -> Self {
+        Self::DocumentEnd { explicit }
+    }
+
+    /// Create a resolved alias referring to `anchor_id`.
+    #[must_use]
+    pub const fn alias(anchor_id: usize) -> Self {
+        Self::Alias { anchor_id }
+    }
+
+    /// Create anchor metadata with the assigned ID and original name (without `&`).
+    #[must_use]
+    pub fn anchor(anchor_id: usize, name: Cow<'input, str>) -> Self {
+        Self::Anchor { anchor_id, name }
+    }
+
+    /// Create an unresolved alias with its original name (without `*`).
+    #[must_use]
+    pub fn unresolved_alias(name: Cow<'input, str>) -> Self {
+        Self::UnresolvedAlias { name }
+    }
+
+    /// Create a comment with its raw text (without `#`) and placement hint.
+    #[cfg(feature = "comments")]
+    #[must_use]
+    pub fn comment(value: Cow<'input, str>, placement: Placement) -> Self {
+        Self::Comment { value, placement }
+    }
+
+    /// Create a scalar event.
+    ///
+    /// # Parameters
+    /// - `value`: decoded scalar content.
+    /// - `style`: source notation and its syntax metadata.
+    /// - `anchor_id`: anchor defined on this node, or zero for none.
+    /// - `tag`: resolved explicit tag, if present.
+    ///
+    /// # Returns
+    /// A scalar event containing the supplied value and properties.
+    #[must_use]
+    pub fn new_scalar(
+        value: Cow<'input, str>,
+        style: ScalarStyle,
+        anchor_id: usize,
+        tag: Option<Cow<'input, Tag>>,
+    ) -> Self {
+        Self::Scalar {
+            value,
+            style,
+            anchor_id,
+            tag,
+        }
+    }
+
+    /// Create a sequence-start event.
+    ///
+    /// # Parameters
+    /// - `style`: block or flow notation.
+    /// - `anchor_id`: anchor defined on this node, or zero for none.
+    /// - `tag`: resolved explicit tag, if present.
+    ///
+    /// # Returns
+    /// A sequence-start event containing the supplied properties.
+    #[must_use]
+    pub fn sequence_start(
+        style: StructureStyle,
+        anchor_id: usize,
+        tag: Option<Cow<'input, Tag>>,
+    ) -> Self {
+        Self::SequenceStart {
+            style,
+            anchor_id,
+            tag,
+        }
+    }
+
+    /// Create a mapping-start event.
+    ///
+    /// # Parameters
+    /// - `style`: block or flow notation.
+    /// - `anchor_id`: anchor defined on this node, or zero for none.
+    /// - `tag`: resolved explicit tag, if present.
+    ///
+    /// # Returns
+    /// A mapping-start event containing the supplied properties.
+    #[must_use]
+    pub fn mapping_start(
+        style: StructureStyle,
+        anchor_id: usize,
+        tag: Option<Cow<'input, Tag>>,
+    ) -> Self {
+        Self::MappingStart {
+            style,
+            anchor_id,
+            tag,
+        }
+    }
+
     /// Return the anchor ID defined by this event, if any.
     ///
     /// Returns `Some(id)` when this event defines an anchor on a scalar, sequence, or mapping

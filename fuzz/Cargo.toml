@@ -13,7 +13,7 @@ comments = ["granit-parser/comments"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
-granit-parser = { path = "..", default-features = false, features = ["std", "error_messages"] }
+granit-parser = { path = "..", default-features = false, features = ["std", "error_messages", "test-equality"] }
 
 [[bin]]
 name = "aliases_merges"

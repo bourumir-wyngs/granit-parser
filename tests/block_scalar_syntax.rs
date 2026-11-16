@@ -1,11 +1,7 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
 use granit_parser::{
     BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
-use snapshots::snapshot;
-use std::collections::{BTreeSet, HashSet};
 
 fn events(source: &str) -> Vec<(Event<'_>, Span)> {
     Parser::new_from_str(source)
@@ -279,7 +275,7 @@ fn scanner_and_parser_expose_identical_header_ranges() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(snapshot(&scanner_style), snapshot(&parser_style));
+    assert_eq!(scanner_style, parser_style);
     assert_eq!(scanner_syntax, parser_syntax);
     assert_eq!(
         scanner_syntax.header_byte_range(&scanner_span),
@@ -402,16 +398,10 @@ fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
     let mut other_bytes = original;
     other_bytes.header_bytes_before_span = 17;
     assert_eq!(original, other_bytes);
-    assert_eq!(original.cmp(&other_bytes), std::cmp::Ordering::Equal);
-    assert_eq!(HashSet::from([original, other_bytes]).len(), 1);
-    assert_eq!(BTreeSet::from([original, other_bytes]).len(), 1);
 
     let mut other_characters = original;
     other_characters.header_chars_before_span = 17;
     assert_ne!(original, other_characters);
-    assert_ne!(original.cmp(&other_characters), std::cmp::Ordering::Equal);
-    assert_eq!(HashSet::from([original, other_characters]).len(), 2);
-    assert_eq!(BTreeSet::from([original, other_characters]).len(), 2);
 }
 
 #[test]
@@ -423,13 +413,6 @@ fn indicator_order_affects_identity_only_when_both_indicators_are_present() {
             digit_first.digit_first = true;
             let order_matters = chomping != Chomping::Clip && digit.is_some();
             assert_eq!(sign_first == digit_first, !order_matters);
-            assert_eq!(
-                sign_first.cmp(&digit_first) == std::cmp::Ordering::Equal,
-                !order_matters
-            );
-            let distinct = if order_matters { 2 } else { 1 };
-            assert_eq!(HashSet::from([sign_first, digit_first]).len(), distinct);
-            assert_eq!(BTreeSet::from([sign_first, digit_first]).len(), distinct);
         }
     }
 }
@@ -470,7 +453,7 @@ fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
         let streaming = Parser::new_from_iter(source.chars())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(snapshot(&parsed), snapshot(&streaming), "{source:?}");
+        assert_eq!(parsed, streaming, "{source:?}");
     }
 }
 
@@ -533,7 +516,7 @@ fn plain_style_patterns_keep_matching_omitted_nulls() {
         scalars[0].0.scalar().unwrap().0,
         scalars[1].0.scalar().unwrap().0
     );
-    assert_ne!(snapshot(scalars[0].0), snapshot(scalars[1].0));
+    assert_ne!(*scalars[0].0, *scalars[1].0);
 
     let tokens = Scanner::new(StrInput::new(source))
         .collect::<Result<Vec<_>, _>>()
@@ -603,7 +586,7 @@ fn header_only_eof_uses_minimum_inferred_content_indent() {
                     let streaming = Parser::new_from_iter(source.chars())
                         .collect::<Result<Vec<_>, _>>()
                         .expect("valid header-only YAML");
-                    assert_eq!(snapshot(&parsed), snapshot(&streaming), "{source:?}");
+                    assert_eq!(parsed, streaming, "{source:?}");
                 }
             }
         }

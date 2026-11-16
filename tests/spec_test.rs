@@ -1,8 +1,5 @@
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::snapshot;
 extern crate granit_parser;
 
 use granit_parser::{Event, EventReceiver, Parser, ScalarStyle};
@@ -87,7 +84,7 @@ fn str_to_test_events(docs: &str) -> Vec<TestEvent> {
     //     eprintln!("\t{x:?}");
     // }
 
-    assert_eq!(snapshot(&(str_events)), snapshot(&(iter_events)));
+    assert_eq!(str_events, iter_events);
     assert_eq!(str_error, None);
     assert_eq!(iter_error, None);
 

@@ -1,10 +1,6 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle, ExpectedTokenType};
-
 use granit_parser::{
     BufferedInput, ErrorKind, Event, Parser, ScalarStyle, ScanError, Scanner, StrInput,
-    StructureStyle,
+    StructureStyle, TokenType,
 };
 
 // Regression guards for StrInput::next_can_be_plain_scalar simplification.
@@ -37,16 +33,16 @@ fn colon_without_space_is_part_of_scalar_value() {
     let s = "k: a:b\n";
     let events: Vec<_> = Parser::new_from_str(s).map(|r| r.unwrap().0).collect();
     assert_eq!(
-        snapshot(&events),
+        events,
         vec![
-            ExpectedEvent::StreamStart,
-            ExpectedEvent::document_start(false, None),
-            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-            ExpectedEvent::new_scalar("k".into(), ExpectedStyle::plain(), false, 0, None),
-            ExpectedEvent::new_scalar("a:b".into(), ExpectedStyle::plain(), false, 0, None),
-            ExpectedEvent::MappingEnd,
-            ExpectedEvent::document_end(false),
-            ExpectedEvent::StreamEnd,
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
+            Event::new_scalar("k".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a:b".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -70,28 +66,16 @@ fn plain_scalar_dash_before_flow_delimiter() {
                 .map(|(event, _)| event)
                 .collect();
             assert_eq!(
-                snapshot(&events),
+                events,
                 [
-                    ExpectedEvent::StreamStart,
-                    ExpectedEvent::document_start(false, None),
-                    ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
-                    ExpectedEvent::new_scalar(
-                        expected_first.into(),
-                        ExpectedStyle::plain(),
-                        false,
-                        0,
-                        None
-                    ),
-                    ExpectedEvent::new_scalar(
-                        "after".into(),
-                        ExpectedStyle::plain(),
-                        false,
-                        0,
-                        None
-                    ),
-                    ExpectedEvent::SequenceEnd,
-                    ExpectedEvent::document_end(false),
-                    ExpectedEvent::StreamEnd,
+                    Event::stream_start(),
+                    Event::document_start(false, None),
+                    Event::sequence_start(StructureStyle::Flow, 0, None),
+                    Event::new_scalar(expected_first.into(), ScalarStyle::plain(), 0, None),
+                    Event::new_scalar("after".into(), ScalarStyle::plain(), 0, None),
+                    Event::sequence_end(),
+                    Event::document_end(false),
+                    Event::stream_end(),
                 ],
                 "input: {yaml:?}",
             );
@@ -113,22 +97,19 @@ fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
                 .map(|token| token.token_type().clone())
                 .collect();
             assert_eq!(
-                snapshot(&types),
+                types,
                 [
-                    ExpectedTokenType::StreamStart,
-                    ExpectedTokenType::FlowSequenceStart,
-                    ExpectedTokenType::scalar(ExpectedStyle::plain(), first.into()),
-                    ExpectedTokenType::FlowEntry,
-                    ExpectedTokenType::scalar(ExpectedStyle::plain(), "after".into()),
-                    ExpectedTokenType::FlowSequenceEnd,
-                    ExpectedTokenType::StreamEnd,
+                    TokenType::stream_start(),
+                    TokenType::flow_sequence_start(),
+                    TokenType::scalar(ScalarStyle::plain(), first.into()),
+                    TokenType::flow_entry(),
+                    TokenType::scalar(ScalarStyle::plain(), "after".into()),
+                    TokenType::flow_sequence_end(),
+                    TokenType::stream_end(),
                 ],
                 "input: {yaml:?}",
             );
-            assert_eq!(
-                snapshot(&tokens[2].span().end),
-                snapshot(&tokens[3].span().start)
-            );
+            assert_eq!(tokens[2].span().end, tokens[3].span().start);
         }
     }
 }

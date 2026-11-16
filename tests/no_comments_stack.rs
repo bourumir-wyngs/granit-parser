@@ -1,7 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::snapshot;
-
 mod support;
 use granit_parser::{Event, Options, Parser, ParserStack, Span, StrInput};
 #[cfg(feature = "comments")]
@@ -143,13 +139,11 @@ fn no_comments_options_reach_borrowed_includes() {
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
     assert_eq!(
-        snapshot(
-            &(events
-                .iter()
-                .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
-                .collect::<Vec<_>>())
-        ),
-        snapshot(&["key", "~", "next", "value"]),
+        (events
+            .iter()
+            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+            .collect::<Vec<_>>()),
+        ["key", "~", "next", "value"],
     );
 }
 
@@ -163,13 +157,11 @@ fn no_comments_options_reach_owned_includes() {
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
     assert_eq!(
-        snapshot(
-            &(events
-                .iter()
-                .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
-                .collect::<Vec<_>>())
-        ),
-        snapshot(&["key", "~", "next", "value"]),
+        (events
+            .iter()
+            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+            .collect::<Vec<_>>()),
+        ["key", "~", "next", "value"],
     );
 }
 

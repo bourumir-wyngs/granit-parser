@@ -1,6 +1,3 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::snapshot;
 mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser, Scanner, StrInput,
@@ -136,7 +133,7 @@ fn new_uses_default_options() {
     let from_options: Vec<_> =
         Parser::with_options(StrInput::new(yaml), Options::default()).collect();
 
-    assert_eq!(snapshot(&from_new), snapshot(&from_options));
+    assert_eq!(from_new, from_options);
 }
 
 #[test]

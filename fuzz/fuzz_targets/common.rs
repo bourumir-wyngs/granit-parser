@@ -2,10 +2,6 @@
 
 use std::collections::BTreeSet;
 
-#[path = "../../tests/support/snapshots.rs"]
-pub mod snapshots;
-use snapshots::snapshot;
-
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser, ScanError,
     Scanner, Span, SpannedEventReceiver, StrInput, Token, TokenType,
@@ -43,8 +39,7 @@ pub fn parse_with_options(input: &str, options: Options) {
     validate_streaming_parser_trace(&fallible);
 
     assert_eq!(
-        snapshot(&string.items),
-        snapshot(&buffered.items),
+        string.items, buffered.items,
         "StrInput and BufferedInput emitted different parser events"
     );
     assert_eq!(
@@ -52,8 +47,7 @@ pub fn parse_with_options(input: &str, options: Options) {
         "StrInput and BufferedInput returned different parser errors"
     );
     assert_eq!(
-        snapshot(&string.items),
-        snapshot(&fallible.items),
+        string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different parser events"
     );
     assert_eq!(
@@ -84,8 +78,7 @@ pub fn scan_with_options(input: &str, options: Options) {
     validate_streaming_scanner_trace(&fallible);
 
     assert_eq!(
-        snapshot(&string.items),
-        snapshot(&buffered.items),
+        string.items, buffered.items,
         "StrInput and BufferedInput emitted different scanner tokens"
     );
     assert_eq!(
@@ -93,8 +86,7 @@ pub fn scan_with_options(input: &str, options: Options) {
         "StrInput and BufferedInput returned different scanner errors"
     );
     assert_eq!(
-        snapshot(&string.items),
-        snapshot(&fallible.items),
+        string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different scanner tokens"
     );
     assert_eq!(
@@ -138,8 +130,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         .filter(|(event, _)| !is_comment_event(event))
         .collect();
     assert_eq!(
-        snapshot(&parser_non_comments),
-        snapshot(&parser_without.items),
+        parser_non_comments, parser_without.items,
         "comment suppression changed non-comment parser events"
     );
     assert_eq!(
@@ -161,8 +152,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         .filter(|token| !is_comment_token(token.token_type()))
         .collect();
     assert_eq!(
-        snapshot(&scanner_non_comments),
-        snapshot(&scanner_without.items),
+        scanner_non_comments, scanner_without.items,
         "comment suppression changed non-comment scanner tokens"
     );
     assert_eq!(
@@ -196,8 +186,7 @@ fn check_load_matches_iterator<'input>(
     let mut sink = CollectSpanned::default();
     let error = parser.load(&mut sink, true).err();
     assert_eq!(
-        snapshot(&sink.items),
-        snapshot(&expected.items),
+        sink.items, expected.items,
         "`load` and the iterator emitted different parser events"
     );
     assert_eq!(

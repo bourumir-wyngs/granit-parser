@@ -1,10 +1,8 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
+use granit_parser::ScalarStyle;
 use granit_parser::{ErrorKind, Event, Options, Parser, ScanError, StructureStyle};
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 
-fn plain(value: &str) -> ExpectedEvent {
-    ExpectedEvent::new_scalar(value.into(), ExpectedStyle::plain(), false, 0, None)
+fn plain(value: &str) -> Event<'_> {
+    Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None)
 }
 
 fn collect_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -19,16 +17,8 @@ fn collect_events_with_options(input: &str, options: Options) -> Result<Vec<Even
     let fallible_events =
         Parser::new_from_fallible_iter_with_options(input.chars().map(Ok::<_, ErrorKind>), options)
             .collect::<Result<Vec<_>, _>>();
-    assert_eq!(
-        snapshot(&str_events),
-        snapshot(&iter_events),
-        "input: {input:?}"
-    );
-    assert_eq!(
-        snapshot(&str_events),
-        snapshot(&fallible_events),
-        "input: {input:?}"
-    );
+    assert_eq!(str_events, iter_events, "input: {input:?}");
+    assert_eq!(str_events, fallible_events, "input: {input:?}");
     Ok(str_events?.into_iter().map(|(event, _)| event).collect())
 }
 
@@ -59,7 +49,7 @@ fn collect_structural_events_with_options(
         .collect())
 }
 
-fn assert_structural_events_in_all_modes(input: &str, expected: &[ExpectedEvent]) {
+fn assert_structural_events_in_all_modes(input: &str, expected: &[Event<'_>]) {
     for emit_comments in [false, true] {
         for strict_indentation in [false, true] {
             let options = granit_parser::options! {
@@ -69,8 +59,7 @@ fn assert_structural_events_in_all_modes(input: &str, expected: &[ExpectedEvent]
             let events = collect_structural_events_with_options(input, options)
                 .unwrap_or_else(|error| panic!("{input:?}: {error}"));
             assert_eq!(
-                snapshot(&events),
-                snapshot(&expected),
+                events, expected,
                 "{input:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}"
             );
         }
@@ -87,37 +76,31 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
                 (
                     format!("{{\"key\":{separator}{value}}}"),
                     StructureStyle::Flow,
-                    ExpectedStyle::DoubleQuoted,
+                    ScalarStyle::double_quoted(),
                 ),
                 (
                     format!("key:{separator}{value}\n"),
                     StructureStyle::Block,
-                    ExpectedStyle::Plain { implicit: false },
+                    ScalarStyle::plain(),
                 ),
                 (
                     format!("? key\n:{separator}{value}\n"),
                     StructureStyle::Block,
-                    ExpectedStyle::Plain { implicit: false },
+                    ScalarStyle::plain(),
                 ),
             ] {
                 assert_eq!(
-                    snapshot(&collect_events(&yaml).unwrap()),
-                    snapshot(&[
-                        ExpectedEvent::StreamStart,
-                        ExpectedEvent::document_start(false, None),
-                        ExpectedEvent::mapping_start(mapping_style, 0, None),
-                        ExpectedEvent::new_scalar("key".into(), key_style, false, 0, None),
-                        ExpectedEvent::new_scalar(
-                            value.into(),
-                            ExpectedStyle::Plain { implicit: false },
-                            false,
-                            0,
-                            None
-                        ),
-                        ExpectedEvent::MappingEnd,
-                        ExpectedEvent::document_end(false),
-                        ExpectedEvent::StreamEnd,
-                    ]),
+                    collect_events(&yaml).unwrap(),
+                    [
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::mapping_start(mapping_style, 0, None),
+                        Event::new_scalar("key".into(), key_style, 0, None),
+                        Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
+                        Event::mapping_end(),
+                        Event::document_end(false),
+                        Event::stream_end(),
+                    ],
                     "input: {yaml:?}",
                 );
             }
@@ -161,11 +144,9 @@ fn tabs_separate_explicit_block_keys_without_becoming_indentation() {
             for strict_indentation in [false, true] {
                 let options = granit_parser::options! { strict_indentation: strict_indentation };
                 assert_eq!(
-                    snapshot(
-                        &collect_events_with_options(&yaml, options.clone())
-                            .unwrap_or_else(|error| panic!("{yaml:?}: {error}"))
-                    ),
-                    snapshot(&collect_events_with_options(&reference, options).unwrap()),
+                    collect_events_with_options(&yaml, options.clone())
+                        .unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
+                    collect_events_with_options(&reference, options).unwrap(),
                     "{yaml:?}"
                 );
             }
@@ -193,27 +174,27 @@ fn tabs_separate_explicit_block_keys_without_becoming_indentation() {
 #[test]
 fn explicit_key_tabs_after_comments_require_space_indentation() {
     let scalar_key_events = [
-        ExpectedEvent::StreamStart,
-        ExpectedEvent::document_start(false, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+        Event::stream_start(),
+        Event::document_start(false, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
         plain("key"),
         plain("value"),
-        ExpectedEvent::MappingEnd,
-        ExpectedEvent::document_end(false),
-        ExpectedEvent::StreamEnd,
+        Event::mapping_end(),
+        Event::document_end(false),
+        Event::stream_end(),
     ];
     let mapping_key_events = [
-        ExpectedEvent::StreamStart,
-        ExpectedEvent::document_start(false, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+        Event::stream_start(),
+        Event::document_start(false, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
         plain("key"),
         plain("nested"),
-        ExpectedEvent::MappingEnd,
+        Event::mapping_end(),
         plain("value"),
-        ExpectedEvent::MappingEnd,
-        ExpectedEvent::document_end(false),
-        ExpectedEvent::StreamEnd,
+        Event::mapping_end(),
+        Event::document_end(false),
+        Event::stream_end(),
     ];
     for (yaml, expected) in [
         ("?\t# key\n \tkey\n: value\n", scalar_key_events.as_slice()),
@@ -250,7 +231,7 @@ fn explicit_key_tabs_after_comments_require_space_indentation() {
                     })
                     .collect();
                 assert_eq!(
-                    snapshot(&events), snapshot(&expected),
+                    events, expected,
                     "{yaml:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}",
                 );
             }
@@ -287,10 +268,10 @@ fn explicit_key_properties_survive_tab_separation_and_comment_lines() {
     // The key node retains both properties across s-separate(1,FLOW-OUT); the next key
     // aliases that collection rather than defining a new anchor or losing its tag.
     let expected = [
-        ExpectedEvent::StreamStart,
-        ExpectedEvent::document_start(false, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-        ExpectedEvent::sequence_start(
+        Event::stream_start(),
+        Event::document_start(false, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
+        Event::sequence_start(
             StructureStyle::Flow,
             1,
             Some(std::borrow::Cow::Owned(granit_parser::Tag::new(
@@ -299,15 +280,15 @@ fn explicit_key_properties_survive_tab_separation_and_comment_lines() {
         ),
         plain("é"),
         plain("item"),
-        ExpectedEvent::SequenceEnd,
+        Event::sequence_end(),
         plain("first"),
-        ExpectedEvent::alias(1),
+        Event::alias(1),
         plain("second"),
         plain("next"),
         plain("done"),
-        ExpectedEvent::MappingEnd,
-        ExpectedEvent::document_end(false),
-        ExpectedEvent::StreamEnd,
+        Event::mapping_end(),
+        Event::document_end(false),
+        Event::stream_end(),
     ];
     for properties in [
         "&a !local # properties\n\t# comment",
@@ -327,22 +308,22 @@ fn explicit_key_tab_state_ends_at_a_line_break_and_respects_parent_dedents() {
     let yaml =
         "- ?\t# key follows\n\t# comment\n    inner: value\n  : selected\n  next: done\n- tail\n";
     let expected = [
-        ExpectedEvent::StreamStart,
-        ExpectedEvent::document_start(false, None),
-        ExpectedEvent::sequence_start(StructureStyle::Block, 0, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+        Event::stream_start(),
+        Event::document_start(false, None),
+        Event::sequence_start(StructureStyle::Block, 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
         plain("inner"),
         plain("value"),
-        ExpectedEvent::MappingEnd,
+        Event::mapping_end(),
         plain("selected"),
         plain("next"),
         plain("done"),
-        ExpectedEvent::MappingEnd,
+        Event::mapping_end(),
         plain("tail"),
-        ExpectedEvent::SequenceEnd,
-        ExpectedEvent::document_end(false),
-        ExpectedEvent::StreamEnd,
+        Event::sequence_end(),
+        Event::document_end(false),
+        Event::stream_end(),
     ];
     for line_break in ["\n", "\r", "\r\n"] {
         assert_structural_events_in_all_modes(&yaml.replace('\n', line_break), &expected);
@@ -376,33 +357,25 @@ fn explicit_key_property_indentation_is_strict_only() {
             false,
         ),
     ] {
-        let mut expected = vec![
-            ExpectedEvent::StreamStart,
-            ExpectedEvent::document_start(false, None),
-        ];
+        let mut expected = vec![Event::stream_start(), Event::document_start(false, None)];
         if in_sequence {
-            expected.push(ExpectedEvent::sequence_start(
-                StructureStyle::Block,
-                0,
-                None,
-            ));
+            expected.push(Event::sequence_start(StructureStyle::Block, 0, None));
         }
         expected.extend([
-            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-            ExpectedEvent::new_scalar(
+            Event::mapping_start(StructureStyle::Block, 0, None),
+            Event::new_scalar(
                 "key".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
+                ScalarStyle::plain(),
                 anchor,
                 tagged.then(|| std::borrow::Cow::Owned(granit_parser::Tag::new("!", "local"))),
             ),
             plain("value"),
-            ExpectedEvent::MappingEnd,
+            Event::mapping_end(),
         ]);
         if in_sequence {
-            expected.push(ExpectedEvent::SequenceEnd);
+            expected.push(Event::sequence_end());
         }
-        expected.extend([ExpectedEvent::document_end(false), ExpectedEvent::StreamEnd]);
+        expected.extend([Event::document_end(false), Event::stream_end()]);
 
         for emit_comments in [false, true] {
             let strict = granit_parser::options! {
@@ -417,8 +390,8 @@ fn explicit_key_property_indentation_is_strict_only() {
                 strict_indentation: false,
             };
             assert_eq!(
-                snapshot(&collect_structural_events_with_options(yaml, relaxed).unwrap()),
-                snapshot(&expected),
+                collect_structural_events_with_options(yaml, relaxed).unwrap(),
+                expected,
                 "{yaml:?}, emit_comments={emit_comments}"
             );
         }
@@ -459,31 +432,25 @@ fn tabs_after_flow_explicit_keys_preserve_collection_keys_and_alias_values() {
             })
             .collect();
         assert_eq!(
-            snapshot(&events),
-            snapshot(&[
-                ExpectedEvent::StreamStart,
-                ExpectedEvent::document_start(false, None),
-                ExpectedEvent::mapping_start(StructureStyle::Flow, 0, None),
-                ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
+            events,
+            [
+                Event::stream_start(),
+                Event::document_start(false, None),
+                Event::mapping_start(StructureStyle::Flow, 0, None),
+                Event::sequence_start(StructureStyle::Flow, 0, None),
                 plain("é"),
                 plain("b"),
-                ExpectedEvent::SequenceEnd,
-                ExpectedEvent::new_scalar(
-                    "value".into(),
-                    ExpectedStyle::Plain { implicit: false },
-                    false,
-                    1,
-                    None
-                ),
-                ExpectedEvent::mapping_start(StructureStyle::Flow, 0, None),
+                Event::sequence_end(),
+                Event::new_scalar("value".into(), ScalarStyle::plain(), 1, None),
+                Event::mapping_start(StructureStyle::Flow, 0, None),
                 plain("nested"),
                 plain("key"),
-                ExpectedEvent::MappingEnd,
-                ExpectedEvent::alias(1),
-                ExpectedEvent::MappingEnd,
-                ExpectedEvent::document_end(false),
-                ExpectedEvent::StreamEnd,
-            ]),
+                Event::mapping_end(),
+                Event::alias(1),
+                Event::mapping_end(),
+                Event::document_end(false),
+                Event::stream_end(),
+            ],
             "{yaml:?}"
         );
     }
@@ -556,27 +523,26 @@ fn tabs_after_colons_preserve_tagged_anchors_and_aliases() {
         ("{key:\t&a !local value, copy:\t*a}", StructureStyle::Flow),
     ] {
         assert_eq!(
-            snapshot(&collect_events(yaml).unwrap()),
-            snapshot(&[
-                ExpectedEvent::StreamStart,
-                ExpectedEvent::document_start(false, None),
-                ExpectedEvent::mapping_start(style, 0, None),
+            collect_events(yaml).unwrap(),
+            [
+                Event::stream_start(),
+                Event::document_start(false, None),
+                Event::mapping_start(style, 0, None),
                 plain("key"),
-                ExpectedEvent::new_scalar(
+                Event::new_scalar(
                     "value".into(),
-                    ExpectedStyle::Plain { implicit: false },
-                    false,
+                    ScalarStyle::plain(),
                     1,
                     Some(std::borrow::Cow::Owned(granit_parser::Tag::new(
                         "!", "local"
-                    ))),
+                    )))
                 ),
                 plain("copy"),
-                ExpectedEvent::alias(1),
-                ExpectedEvent::MappingEnd,
-                ExpectedEvent::document_end(false),
-                ExpectedEvent::StreamEnd,
-            ]),
+                Event::alias(1),
+                Event::mapping_end(),
+                Event::document_end(false),
+                Event::stream_end(),
+            ],
             "input: {yaml:?}",
         );
     }

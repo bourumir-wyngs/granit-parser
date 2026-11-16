@@ -16,9 +16,16 @@
 - Convert public `Event` and `TokenType` payloads to named fields. Make every variant of
   `Event`, `TokenType`, and `ScalarStyle` non-exhaustive, including variants currently without
   fields. Use `matches!`, `if let`, or `match` with `{ .. }` so future fields do not break
-  consumers. Remove whole-value comparison/hash/order traits and public variant constructors;
-  `Token` also loses equality and its public constructor. Keep `Event::scalar()` as an accessor.
+  consumers. Normal builds omit whole-value comparison/hash/order traits, including for
+  `Token` and `BlockScalarSyntax`. Keep constructors for synthetic styles, tokens, and events,
+  supporting custom parsers, ownership conversions, and replay. `Event::scalar()` remains an
+  accessor; construct a scalar with `Event::new_scalar(value, style, anchor_id, tag)`.
   Unit-only enums such as `Chomping`, `ScalarKind`, and `StructureStyle` remain comparable.
+- Add the opt-in `test-equality` feature for `PartialEq`/`Eq` on real output types, enabling
+  integration and downstream regression tests without mirrored test enums. Hashing and ordering
+  remain unavailable for these types. Block-header equality ignores optional byte coordinates
+  and irrelevant indicator order; exhaustive field destructuring requires an explicit equality
+  decision whenever new block-header fields are added.
 - Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.
   Replace `style == ScalarStyle::Plain` with `matches!(style, ScalarStyle::Plain { .. })`

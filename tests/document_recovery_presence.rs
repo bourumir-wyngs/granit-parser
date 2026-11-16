@@ -1,10 +1,7 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
 use granit_parser::{
     BorrowedInput, ErrorKind, Event, Parser, Span, SpannedEventReceiver, TryLoadError,
     TrySpannedEventReceiver,
 };
-use snapshots::snapshot;
 
 #[derive(Default)]
 struct Events<'input>(Vec<(Event<'input>, Span)>);
@@ -99,16 +96,10 @@ fn presence_after_document_end_preserves_the_entire_remaining_event_stream() {
             assert_eq!(parser.proceed_next_document().unwrap(), has_document);
             if !has_document {
                 assert!(!parser.proceed_next_document().unwrap());
-                assert_eq!(
-                    snapshot(&(parser.peek().unwrap().unwrap())),
-                    snapshot(&(&expected[0]))
-                );
+                assert_eq!(parser.peek().unwrap().unwrap(), &expected[0]);
                 assert!(!parser.proceed_next_document().unwrap());
             }
-            assert_eq!(
-                snapshot(&(parser.collect::<Result<Vec<_>, _>>().unwrap())),
-                snapshot(&(expected))
-            );
+            assert_eq!(parser.collect::<Result<Vec<_>, _>>().unwrap(), expected);
         }
     }
 }
@@ -197,7 +188,7 @@ fn load_and_try_load_preserve_buffered_comments_before_the_next_syntax_error() {
             } else {
                 parser.load(&mut events, true).unwrap_err()
             };
-            assert_eq!(snapshot(&(events.0)), snapshot(&(expected)));
+            assert_eq!(events.0, expected);
             assert_eq!(error.kind(), expected_error.kind());
             assert_eq!(error.marker(), expected_error.marker());
             assert!(parser.next().is_none());

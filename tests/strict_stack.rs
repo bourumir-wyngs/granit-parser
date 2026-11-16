@@ -1,7 +1,4 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
 use granit_parser::{ErrorKind, Parser, ParserStack, StrInput};
-use snapshots::snapshot;
 
 type Stack = ParserStack<'static, core::iter::Empty<char>, StrInput<'static>>;
 
@@ -30,24 +27,20 @@ fn strict_options_reach_owned_and_borrowed_includes() {
         assert_eq!(strict.stack(), ["parent.yaml"]);
         // Eager include validation must leave the parent available after failure.
         assert_eq!(
-            snapshot(&strict.collect::<Result<Vec<_>, _>>().unwrap()),
-            snapshot(
-                &Parser::new_from_str("parent\n")
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap()
-            )
+            strict.collect::<Result<Vec<_>, _>>().unwrap(),
+            Parser::new_from_str("parent\n")
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
         );
 
         for (strict, source) in [(false, RELAXED), (true, CONFORMING)] {
             let mut stack = stack_with_include(strict, borrowed, source);
             stack.push_include("child.yaml").unwrap();
             assert_eq!(
-                snapshot(&stack.collect::<Result<Vec<_>, _>>().unwrap()),
-                snapshot(
-                    &Parser::new_from_str(source)
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap()
-                )
+                stack.collect::<Result<Vec<_>, _>>().unwrap(),
+                Parser::new_from_str(source)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
             );
         }
     }
@@ -72,12 +65,10 @@ fn stack_keeps_caller_supplied_parser_indentation_options() {
             assert_eq!((error.marker().line(), error.marker().col()), (2, 0));
         } else {
             assert_eq!(
-                snapshot(&result.unwrap()),
-                snapshot(
-                    &Parser::new_from_str(RELAXED)
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap()
-                )
+                result.unwrap(),
+                Parser::new_from_str(RELAXED)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap()
             );
         }
         assert!(stack.next().is_none());

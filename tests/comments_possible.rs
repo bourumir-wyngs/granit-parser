@@ -1,10 +1,6 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
-use snapshots::snapshot;
-
 use granit_parser::{
     input::{SkipTabs, WhitespaceResult},
-    BorrowedInput, ErrorKind, Input, Parser, ScanError, Scanner, Span, StrInput, Token,
+    BorrowedInput, ErrorKind, Event, Input, Parser, ScanError, Scanner, Span, StrInput, Token,
 };
 
 struct CommentEnabledStrInput<'input> {
@@ -88,8 +84,8 @@ impl<'input> BorrowedInput<'input> for CommentEnabledStrInput<'input> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ParseTrace {
-    events: Vec<(snapshots::ExpectedEvent, Span)>,
+struct ParseTrace<'input> {
+    events: Vec<(Event<'input>, Span)>,
     error: Option<ScanError>,
 }
 
@@ -105,17 +101,17 @@ fn scanner_tokens_comment_enabled(source: &str) -> Vec<Token<'_>> {
         .expect("valid YAML should scan without errors")
 }
 
-fn parser_trace_fast_path(source: &str) -> ParseTrace {
+fn parser_trace_fast_path(source: &str) -> ParseTrace<'_> {
     let mut parser = Parser::new_from_str(source);
     parser_trace(&mut parser)
 }
 
-fn parser_trace_comment_enabled(source: &str) -> ParseTrace {
+fn parser_trace_comment_enabled(source: &str) -> ParseTrace<'_> {
     let mut parser = Parser::new(CommentEnabledStrInput::new(source));
     parser_trace(&mut parser)
 }
 
-fn parser_trace<'input, T>(parser: &mut Parser<'input, T>) -> ParseTrace
+fn parser_trace<'input, T>(parser: &mut Parser<'input, T>) -> ParseTrace<'input>
 where
     T: BorrowedInput<'input>,
 {
@@ -132,10 +128,7 @@ where
         }
     }
 
-    ParseTrace {
-        events: snapshot(&events),
-        error,
-    }
+    ParseTrace { events, error }
 }
 
 fn assert_no_hash(source: &str, name: &str) {
@@ -166,8 +159,8 @@ fn no_comment_fast_path_matches_comment_enabled_tokens_and_events() {
         assert_no_hash(source, name);
 
         assert_eq!(
-            snapshot(&scanner_tokens_fast_path(source)),
-            snapshot(&scanner_tokens_comment_enabled(source)),
+            scanner_tokens_fast_path(source),
+            scanner_tokens_comment_enabled(source),
             "{name} scanner token output differed"
         );
         assert_eq!(

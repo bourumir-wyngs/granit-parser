@@ -1,7 +1,5 @@
-#[path = "support/snapshots.rs"]
-mod snapshots;
+use granit_parser::ScalarStyle;
 use granit_parser::{Event, Parser, ScanError, StructureStyle};
-use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     Parser::new_from_str(input)
@@ -36,29 +34,17 @@ fn explicit_block_mapping_empty_key_is_null() {
     let events = parse_events("?\n: value\n").unwrap();
 
     assert_eq!(
-        snapshot(&events),
-        snapshot(&vec![
-            ExpectedEvent::StreamStart,
-            ExpectedEvent::document_start(false, None),
-            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
-            ExpectedEvent::new_scalar(
-                "~".into(),
-                ExpectedStyle::Plain { implicit: false },
-                true,
-                0,
-                None
-            ),
-            ExpectedEvent::new_scalar(
-                "value".into(),
-                ExpectedStyle::Plain { implicit: false },
-                false,
-                0,
-                None
-            ),
-            ExpectedEvent::MappingEnd,
-            ExpectedEvent::document_end(false),
-            ExpectedEvent::StreamEnd,
-        ])
+        events,
+        vec![
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("value".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            Event::document_end(false),
+            Event::stream_end(),
+        ]
     );
 }
 
@@ -108,10 +94,7 @@ fn flow_sequence_entry_requires_comma_before_next_collection() {
 fn repeated_document_end_markers_do_not_start_empty_documents() {
     let events = parse_events("...\n...\n").unwrap();
 
-    assert_eq!(
-        snapshot(&events),
-        snapshot(&vec![ExpectedEvent::StreamStart, ExpectedEvent::StreamEnd])
-    );
+    assert_eq!(events, vec![Event::stream_start(), Event::stream_end()]);
 }
 
 #[test]
