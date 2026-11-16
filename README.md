@@ -288,9 +288,18 @@ variants, such as `Event::StreamEnd`, `Chomping::Keep`, and `StructureStyle::Blo
 Variants carrying data are non-exhaustive: match their named fields with `..`, and include
 a fallback arm when matching the entire enum. For example,
 `Event::Scalar(value, style, _, _)` becomes `Event::Scalar { value, style, .. }`.
-Use constructors for variants carrying data, such as `Event::new_scalar(...)`,
+To construct values, use constructors for variants carrying data, such as `Event::new_scalar(...)`,
 `TokenType::scalar(...)`, and `ScalarStyle::plain()`.
 `Event::scalar()` remains the accessor for a scalar's decoded value and style.
+
+To compare notation categories, replace `style == ScalarStyle::Plain` with `style.is_plain()`.
+Do not replace it with `style == ScalarStyle::plain()`: equality now includes syntax metadata,
+and `plain()` constructs the style of explicitly written text. An omitted value (`key:`) has
+`implicit: true`, so it does not equal `plain()`, even though `is_plain()` is true for both.
+For example, the old check `value == "~" && style == ScalarStyle::Plain` becomes
+`value == "~" && style.is_plain()`, preserving its handling of both `key:` and `key: ~`.
+Likewise, use `is_literal()` or `is_folded()` to check block notation regardless of header
+metadata, or compare `style.kind()` with a `ScalarKind` variant.
 
 `ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
 explicit text (`key: ~`). Decoded values retain their existing behavior. Document-end

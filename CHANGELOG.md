@@ -22,6 +22,8 @@
 - Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.
   Add `ScalarKind` and style predicates for category comparisons independent of metadata.
+  Migrate `style == ScalarStyle::Plain` to `style.is_plain()`, not a comparison with
+  `ScalarStyle::plain()`: that constructor creates only the explicitly written style.
 - Add `Event::DocumentEnd { explicit }` to distinguish a written `...` marker from an
   implicit document end.
 

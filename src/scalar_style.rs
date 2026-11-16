@@ -270,6 +270,9 @@ pub enum ScalarKind {
 /// use granit_parser::ScalarStyle;
 /// let style = ScalarStyle::plain();
 /// assert!(matches!(style, ScalarStyle::Plain { implicit: false, .. }));
+/// let omitted = ScalarStyle::implicit_plain();
+/// assert_ne!(style, omitted); // Equality includes whether the scalar was omitted.
+/// assert!(style.is_plain() && omitted.is_plain()); // Both use the plain category.
 /// assert_eq!(ScalarStyle::DoubleQuoted.kind(), granit_parser::ScalarKind::DoubleQuoted);
 /// ```
 ///
@@ -316,6 +319,10 @@ pub enum ScalarStyle {
 
 impl ScalarStyle {
     /// Return the style of explicitly written plain scalar text.
+    ///
+    /// This is a constructor, not a notation-category check. When migrating
+    /// `style == ScalarStyle::Plain`, use `style.is_plain()` instead of comparing with this
+    /// value: [`Self::implicit_plain`] is also plain, but has different syntax metadata.
     #[must_use]
     pub const fn plain() -> Self {
         Self::Plain { implicit: false }
@@ -352,6 +359,9 @@ impl ScalarStyle {
     }
 
     /// Return whether this is plain notation, including synthesized empty nodes.
+    ///
+    /// Use this to replace pre-3.0 comparisons with the unit variant `ScalarStyle::Plain`.
+    /// Unlike `self == ScalarStyle::plain()`, it accepts both written and omitted scalars.
     #[must_use]
     pub const fn is_plain(&self) -> bool {
         matches!(self, Self::Plain { .. })
