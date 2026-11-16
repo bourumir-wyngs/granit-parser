@@ -33,7 +33,7 @@ Its primary goals are:
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
 `granit-parser` 3.0 exposes block-scalar header syntax and uses named, non-exhaustive
-syntax variants. See [Migrating to 3.0](#migrating-to-30) below and
+fields on variants carrying data. See [Migrating to 3.0](#migrating-to-30) below and
 [`CHANGELOG.md`](CHANGELOG.md) for earlier migrations.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
@@ -197,11 +197,13 @@ StreamEnd bytes=Some(429..429) source=Some("")
 
 ## Migrating to 3.0
 
-`Event`, `TokenType`, and the syntax/style enums use non-exhaustive variants. Match named
-fields with `..`, and include a fallback arm when matching the entire enum. For example,
+`Event`, `TokenType`, and the syntax/style enums keep variants without data as ordinary unit
+variants, such as `Event::StreamEnd`, `Chomping::Keep`, and `StructureStyle::Block`.
+Variants carrying data are non-exhaustive: match their named fields with `..`, and include
+a fallback arm when matching the entire enum. For example,
 `Event::Scalar(value, style, _, _)` becomes `Event::Scalar { value, style, .. }`.
-Use constructors for synthetic values, such as `Event::new_scalar(...)`,
-`TokenType::scalar(...)`, `ScalarStyle::plain()`, and `StructureStyle::block()`.
+Use constructors for variants carrying data, such as `Event::new_scalar(...)`,
+`TokenType::scalar(...)`, and `ScalarStyle::plain()`.
 `Event::scalar()` remains the accessor for a scalar's decoded value and style.
 
 `ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from

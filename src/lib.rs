@@ -45,8 +45,8 @@
 //! assert_eq!(
 //!     comments,
 //!     [
-//!         (" header".to_owned(), Placement::above(), "# header".to_owned()),
-//!         (" inline".to_owned(), Placement::right(), "# inline".to_owned()),
+//!         (" header".to_owned(), Placement::Above, "# header".to_owned()),
+//!         (" inline".to_owned(), Placement::Right, "# inline".to_owned()),
 //!     ]
 //! );
 //! # }

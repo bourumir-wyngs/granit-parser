@@ -582,24 +582,24 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
     // YAML 1.2.2 [112] discards the escaped break but retains each l-empty [70].
     // Empty lines may contain fewer spaces than the required flow prefix [69].
     let expected = vec![
-        Event::stream_start(),
+        Event::StreamStart,
         Event::document_start(false, None),
-        Event::mapping_start(StructureStyle::block(), 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
         Event::new_scalar("outer".into(), ScalarStyle::plain(), 0, None),
-        Event::mapping_start(StructureStyle::block(), 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
         Event::new_scalar("key".into(), ScalarStyle::plain(), 0, None),
         Event::new_scalar(
             "é\n字".into(),
-            ScalarStyle::double_quoted(),
+            ScalarStyle::DoubleQuoted,
             1,
             Some(Cow::Owned(Tag::new("!", "custom"))),
         ),
         Event::new_scalar("copy".into(), ScalarStyle::plain(), 0, None),
         Event::alias(1),
-        Event::mapping_end(),
-        Event::mapping_end(),
+        Event::MappingEnd,
+        Event::MappingEnd,
         Event::document_end(false),
-        Event::stream_end(),
+        Event::StreamEnd,
     ];
     for newline in ["\n", "\r\n"] {
         for empty_line in ["", " ", "   \t"] {

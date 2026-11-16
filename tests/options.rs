@@ -417,7 +417,7 @@ fn scanner_enforces_block_nesting_limit_for_compact_collections() {
                 Ok(token)
                     if matches!(
                         token.token_type(),
-                        TokenType::BlockSequenceStart { .. } | TokenType::BlockMappingStart { .. }
+                        TokenType::BlockSequenceStart | TokenType::BlockMappingStart
                     ) =>
                 {
                     starts += 1;

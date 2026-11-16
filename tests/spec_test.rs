@@ -29,9 +29,9 @@ impl EventReceiver<'_> for YamlChecker {
             Event::DocumentStart { .. } => TestEvent::OnDocumentStart,
             Event::DocumentEnd { .. } => TestEvent::OnDocumentEnd,
             Event::SequenceStart { .. } => TestEvent::OnSequenceStart,
-            Event::SequenceEnd { .. } => TestEvent::OnSequenceEnd,
+            Event::SequenceEnd => TestEvent::OnSequenceEnd,
             Event::MappingStart { .. } => TestEvent::OnMapStart,
-            Event::MappingEnd { .. } => TestEvent::OnMapEnd,
+            Event::MappingEnd => TestEvent::OnMapEnd,
             Event::Scalar {
                 value: ref v,
                 style,

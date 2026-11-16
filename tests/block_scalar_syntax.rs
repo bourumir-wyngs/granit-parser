@@ -32,14 +32,14 @@ fn block_scalar<'events>(
 fn headers_preserve_style_chomping_digits_and_both_indicator_orders() {
     for indicator in ['|', '>'] {
         for (suffix, chomping, digit, chomp_offset, indent_offset, tail) in [
-            ("", Chomping::clip(), None, None, None, "\n"),
-            ("-", Chomping::strip(), None, Some(1), None, ""),
-            ("+", Chomping::keep(), None, Some(1), None, "\n\n"),
-            ("2", Chomping::clip(), Some(2), None, Some(1), "\n"),
-            ("2-", Chomping::strip(), Some(2), Some(2), Some(1), ""),
-            ("-2", Chomping::strip(), Some(2), Some(1), Some(2), ""),
-            ("2+", Chomping::keep(), Some(2), Some(2), Some(1), "\n\n"),
-            ("+2", Chomping::keep(), Some(2), Some(1), Some(2), "\n\n"),
+            ("", Chomping::Clip, None, None, None, "\n"),
+            ("-", Chomping::Strip, None, Some(1), None, ""),
+            ("+", Chomping::Keep, None, Some(1), None, "\n\n"),
+            ("2", Chomping::Clip, Some(2), None, Some(1), "\n"),
+            ("2-", Chomping::Strip, Some(2), Some(2), Some(1), ""),
+            ("-2", Chomping::Strip, Some(2), Some(1), Some(2), ""),
+            ("2+", Chomping::Keep, Some(2), Some(2), Some(1), "\n\n"),
+            ("+2", Chomping::Keep, Some(2), Some(1), Some(2), "\n\n"),
         ] {
             let header = format!("{indicator}{suffix}");
             let source =
@@ -304,12 +304,12 @@ fn checked_ranges_reject_underflow_and_overflow() {
     assert_eq!(syntax.header_byte_range(&maximum), None);
 
     for offset in [0, 3, u8::MAX] {
-        let mut syntax = BlockScalarSyntax::new(Chomping::strip(), None, 0).unwrap();
+        let mut syntax = BlockScalarSyntax::new(Chomping::Strip, None, 0).unwrap();
         syntax.chomping_offset = Some(offset);
         assert_eq!(syntax.chomping_char_range(&zero), None);
         assert_eq!(syntax.chomping_byte_range(&zero), None);
 
-        let mut syntax = BlockScalarSyntax::new(Chomping::clip(), Some(2), 2).unwrap();
+        let mut syntax = BlockScalarSyntax::new(Chomping::Clip, Some(2), 2).unwrap();
         syntax.indentation_offset = Some(offset);
         assert_eq!(syntax.indentation_char_range(&zero), None);
         assert_eq!(syntax.indentation_byte_range(&zero), None);
@@ -325,19 +325,19 @@ fn checked_ranges_reject_underflow_and_overflow() {
 fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
     for invalid in [0, 10, u8::MAX] {
         assert_eq!(
-            BlockScalarSyntax::new(Chomping::clip(), Some(invalid), 0),
+            BlockScalarSyntax::new(Chomping::Clip, Some(invalid), 0),
             None
         );
     }
     for digit in [None, Some(1), Some(9)] {
-        let syntax = BlockScalarSyntax::new(Chomping::keep(), digit, 9).unwrap();
+        let syntax = BlockScalarSyntax::new(Chomping::Keep, digit, 9).unwrap();
         assert_eq!(syntax.indentation_indicator, digit);
         assert_eq!(syntax.chomping_offset, Some(1));
         assert_eq!(syntax.indentation_offset, digit.map(|_| 2));
         assert_eq!(syntax.header_len(), if digit.is_some() { 3 } else { 2 });
     }
 
-    let original = BlockScalarSyntax::new(Chomping::strip(), Some(2), 4).unwrap();
+    let original = BlockScalarSyntax::new(Chomping::Strip, Some(2), 4).unwrap();
     let mut other_bytes = original;
     other_bytes.header_bytes_before_span = 17;
     assert_eq!(original, other_bytes);
@@ -385,7 +385,7 @@ fn implicit_empty_plain_scalars_are_distinct_from_written_text() {
     }
     let parsed = events("key: \"\"\n");
     assert!(parsed.iter().any(|(event, _)| matches!(event,
-        Event::Scalar { value, style: ScalarStyle::DoubleQuoted { .. }, .. } if value.is_empty()
+        Event::Scalar { value, style: ScalarStyle::DoubleQuoted, .. } if value.is_empty()
     )));
 }
 

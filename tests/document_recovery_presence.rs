@@ -39,7 +39,7 @@ fn assert_presence<'input, I: BorrowedInput<'input>>(
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd))
             .count(),
         1,
     );
@@ -110,9 +110,9 @@ fn repeated_proceed_preserves_an_unread_or_peeked_stream_end() {
     for _ in 0..3 {
         assert!(!parser.proceed_next_document().unwrap());
     }
-    assert_eq!(parser.peek().unwrap().unwrap().0, Event::stream_end());
+    assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamEnd);
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
+    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
     assert!(!parser.proceed_next_document().unwrap());
     assert!(parser.next().is_none());
 }
@@ -197,7 +197,7 @@ fn incomplete_next_header_is_not_reported_as_clean_eof() {
     let error = parser.by_ref().find_map(Result::err).unwrap();
     assert_eq!(error.kind(), &ErrorKind::ExpectedDocumentStart);
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
+    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
 }
 
 #[cfg(feature = "comments")]
@@ -344,7 +344,7 @@ fn probing_respects_the_comment_buffer_limit_and_disabled_comments() {
             },
         );
         assert!(!parser.proceed_next_document().unwrap());
-        assert_eq!(parser.next().unwrap().unwrap().0, Event::stream_end());
+        assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
 
         let mut parser = Parser::new_from_str_with_options(
             "first\n...\n# one\n# two\n---\nhealthy\n",

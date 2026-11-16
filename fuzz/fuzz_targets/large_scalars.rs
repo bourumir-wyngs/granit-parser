@@ -40,13 +40,13 @@ pub fn check_input(data: &[u8]) {
         0 => {
             let scalar = expanded_scalar(&hex_seed(seed), target_len);
             let yaml = format!("value: {scalar}\n");
-            assert_generated_scalar(&yaml, ScalarKind::plain(), &scalar);
+            assert_generated_scalar(&yaml, ScalarKind::Plain, &scalar);
             yaml
         }
         1 => {
             let scalar = expanded_scalar(&hex_seed(seed), target_len);
             let yaml = format!("value: \"{scalar}\"\n");
-            assert_generated_scalar(&yaml, ScalarKind::double_quoted(), &scalar);
+            assert_generated_scalar(&yaml, ScalarKind::DoubleQuoted, &scalar);
             yaml
         }
         2 | 3 => {
@@ -57,11 +57,11 @@ pub fn check_input(data: &[u8]) {
             let header = if mode % 8 == 2 { "|" } else { ">-" };
             let yaml = block_document(header, &wrapped);
             let style = if mode % 8 == 2 {
-                ScalarKind::literal()
+                ScalarKind::Literal
             } else {
-                ScalarKind::folded()
+                ScalarKind::Folded
             };
-            let expected = if matches!(style, ScalarKind::Literal { .. }) {
+            let expected = if matches!(style, ScalarKind::Literal) {
                 wrapped
             } else {
                 wrapped.lines().collect::<Vec<_>>().join(" ")
@@ -103,9 +103,9 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
     wrapped.insert(0, 'λ');
     let folded = variant & 1 != 0;
     let (indicator, style) = if folded {
-        ('>', ScalarKind::folded())
+        ('>', ScalarKind::Folded)
     } else {
-        ('|', ScalarKind::literal())
+        ('|', ScalarKind::Literal)
     };
     let chomp = ["", "-", "+"][usize::from((variant >> 1) & 3) % 3];
     let newline = ["\n", "\r\n", "\r"][usize::from((variant >> 3) & 3) % 3];
@@ -145,14 +145,14 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar(expected.into(), actual_style, 0, None),
             Event::document_end(false),
             Event::document_start(true, None),
             Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ],
         "root block scalar folding, chomping, or document boundary changed",
     );

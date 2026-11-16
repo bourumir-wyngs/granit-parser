@@ -142,11 +142,11 @@ fn block_scalar_indicator_characters_remain_valid_in_scalar_content() {
 #[test]
 fn block_scalars_remain_valid_outside_flow_collections() {
     assert_eq!(
-        scalar_values_with_style("key: |\n  literal\n", ScalarKind::literal()),
+        scalar_values_with_style("key: |\n  literal\n", ScalarKind::Literal),
         ["literal\n"],
     );
     assert_eq!(
-        scalar_values_with_style("key: >\n  folded\n", ScalarKind::folded()),
+        scalar_values_with_style("key: >\n  folded\n", ScalarKind::Folded),
         ["folded\n"],
     );
 }
@@ -166,7 +166,7 @@ fn alias_anchor_edge_cases() {
     assert!(self_reference.iter().any(|(event, _)| matches!(
         event,
         Event::SequenceStart {
-            style: StructureStyle::Flow { .. },
+            style: StructureStyle::Flow,
             anchor_id: 1,
             tag: None,
             ..
@@ -316,11 +316,11 @@ fn crlf_and_wide_character_spans() {
     assert_eq!(scalar_values("a: 1\r\nb: 2\r\n"), ["a", "1", "b", "2"]);
     assert_eq!(scalar_values("a: 1\rb: 2\r"), ["a", "1", "b", "2"]);
     assert_eq!(
-        scalar_values_with_style("k: |\r\n  line1\r\n  line2\r\n", ScalarKind::literal()),
+        scalar_values_with_style("k: |\r\n  line1\r\n  line2\r\n", ScalarKind::Literal),
         ["line1\nline2\n"]
     );
     assert_eq!(
-        scalar_values_with_style("k: \"a\r\n  b\"\r\n", ScalarKind::double_quoted()),
+        scalar_values_with_style("k: \"a\r\n  b\"\r\n", ScalarKind::DoubleQuoted),
         ["a b"]
     );
 
@@ -410,8 +410,8 @@ fn explicit_key_indicator_at_end_of_input() {
 #[test]
 fn minimally_indented_quoted_continuations_preserve_folding_and_source_spans() {
     for (quote, style) in [
-        ('\'', ScalarStyle::single_quoted()),
-        ('"', ScalarStyle::double_quoted()),
+        ('\'', ScalarStyle::SingleQuoted),
+        ('"', ScalarStyle::DoubleQuoted),
     ] {
         for newline in ["\n", "\r\n"] {
             for (prefix, indent) in [("clé: ", " "), ("outer:\n  clé: ", "   ")] {

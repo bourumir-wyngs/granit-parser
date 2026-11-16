@@ -61,7 +61,7 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd))
             .count(),
         1
     );
@@ -75,10 +75,10 @@ fn default_stack_emits_replayed_comments() {
         ReplayParser::new(
             vec![
                 (
-                    Event::comment(Cow::Borrowed(" replay"), Placement::free()),
+                    Event::comment(Cow::Borrowed(" replay"), Placement::Free),
                     span(),
                 ),
-                (Event::stream_end(), span()),
+                (Event::StreamEnd, span()),
             ],
             1,
         ),
@@ -97,14 +97,14 @@ fn no_comments_stack_suppresses_replayed_events() {
         ReplayParser::new(
             vec![
                 (
-                    Event::comment(Cow::Borrowed(" replay"), Placement::free()),
+                    Event::comment(Cow::Borrowed(" replay"), Placement::Free),
                     span(),
                 ),
                 (
                     Event::new_scalar(Cow::Borrowed("value"), ScalarStyle::plain(), 0, None),
                     span(),
                 ),
-                (Event::stream_end(), span()),
+                (Event::StreamEnd, span()),
             ],
             1,
         ),
@@ -124,7 +124,7 @@ fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart { .. }
+        Event::StreamStart
     ));
     let current = parser.next_event().unwrap().unwrap();
     assert!(matches!(current.0, Event::Comment { .. }));
@@ -222,10 +222,10 @@ fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document(
                 ),
                 (Event::document_end(false), span()),
                 (
-                    Event::comment(Cow::Borrowed(" trailing"), Placement::last()),
+                    Event::comment(Cow::Borrowed(" trailing"), Placement::Last),
                     span(),
                 ),
-                (Event::stream_end(), span()),
+                (Event::StreamEnd, span()),
             ],
             1,
         ),

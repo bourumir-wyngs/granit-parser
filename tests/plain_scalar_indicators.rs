@@ -35,14 +35,14 @@ fn colon_without_space_is_part_of_scalar_value() {
     assert_eq!(
         events,
         vec![
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("k".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("a:b".into(), ScalarStyle::plain(), 0, None),
-            Event::mapping_end(),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -68,14 +68,14 @@ fn plain_scalar_dash_before_flow_delimiter() {
             assert_eq!(
                 events,
                 [
-                    Event::stream_start(),
+                    Event::StreamStart,
                     Event::document_start(false, None),
-                    Event::sequence_start(StructureStyle::flow(), 0, None),
+                    Event::sequence_start(StructureStyle::Flow, 0, None),
                     Event::new_scalar(expected_first.into(), ScalarStyle::plain(), 0, None),
                     Event::new_scalar("after".into(), ScalarStyle::plain(), 0, None),
-                    Event::sequence_end(),
+                    Event::SequenceEnd,
                     Event::document_end(false),
-                    Event::stream_end(),
+                    Event::StreamEnd,
                 ],
                 "input: {yaml:?}",
             );
@@ -99,13 +99,13 @@ fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
             assert_eq!(
                 types,
                 [
-                    TokenType::stream_start(),
-                    TokenType::flow_sequence_start(),
+                    TokenType::StreamStart,
+                    TokenType::FlowSequenceStart,
                     TokenType::scalar(ScalarStyle::plain(), first.into()),
-                    TokenType::flow_entry(),
+                    TokenType::FlowEntry,
                     TokenType::scalar(ScalarStyle::plain(), "after".into()),
-                    TokenType::flow_sequence_end(),
-                    TokenType::stream_end(),
+                    TokenType::FlowSequenceEnd,
+                    TokenType::StreamEnd,
                 ],
                 "input: {yaml:?}",
             );

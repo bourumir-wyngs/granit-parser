@@ -96,16 +96,16 @@ fn test_sequence_structure_styles() {
     assert_eq!(
         collection_styles("- block\n- [flow]\n"),
         vec![
-            ("sequence", StructureStyle::block()),
-            ("sequence", StructureStyle::flow()),
+            ("sequence", StructureStyle::Block),
+            ("sequence", StructureStyle::Flow),
         ]
     );
 
     assert_eq!(
         collection_styles("[flow, [nested]]\n"),
         vec![
-            ("sequence", StructureStyle::flow()),
-            ("sequence", StructureStyle::flow()),
+            ("sequence", StructureStyle::Flow),
+            ("sequence", StructureStyle::Flow),
         ]
     );
 }
@@ -115,17 +115,17 @@ fn test_mapping_structure_styles() {
     assert_eq!(
         collection_styles("block:\n  child: value\nflow: {child: value}\n"),
         vec![
-            ("mapping", StructureStyle::block()),
-            ("mapping", StructureStyle::block()),
-            ("mapping", StructureStyle::flow()),
+            ("mapping", StructureStyle::Block),
+            ("mapping", StructureStyle::Block),
+            ("mapping", StructureStyle::Flow),
         ]
     );
 
     assert_eq!(
         collection_styles("[implicit: flow]\n"),
         vec![
-            ("sequence", StructureStyle::flow()),
-            ("mapping", StructureStyle::flow()),
+            ("sequence", StructureStyle::Flow),
+            ("mapping", StructureStyle::Flow),
         ]
     );
 }
@@ -134,17 +134,17 @@ fn test_mapping_structure_styles() {
 fn test_empty_doc() {
     assert_eq!(
         run_parser("").unwrap(),
-        [Event::stream_start(), Event::stream_end()]
+        [Event::StreamStart, Event::StreamEnd]
     );
 
     assert_eq!(
         run_parser("---").unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(true, None),
             Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -154,14 +154,14 @@ fn test_utf() {
     assert_eq!(
         run_parser("a: \u{4F60}\u{5273}").unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("\u{4F60}\u{5273}".into(), ScalarStyle::plain(), 0, None),
-            Event::mapping_end(),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -178,22 +178,22 @@ a: b # This is another comment
     assert_eq!(
         run_parser(s).unwrap(),
         expected_events([
-            Event::stream_start(),
+            Event::StreamStart,
             #[cfg(feature = "comments")]
-            Event::comment(" This is a comment".into(), Placement::above()),
+            Event::comment(" This is a comment".into(), Placement::Above),
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
             #[cfg(feature = "comments")]
-            Event::comment(" This is another comment".into(), Placement::right()),
+            Event::comment(" This is another comment".into(), Placement::Right),
             #[cfg(feature = "comments")]
-            Event::comment("#".into(), Placement::above()),
+            Event::comment("#".into(), Placement::Above),
             #[cfg(feature = "comments")]
-            Event::comment("".into(), Placement::above()),
-            Event::mapping_end(),
+            Event::comment("".into(), Placement::Above),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ])
     );
 }
@@ -209,15 +209,15 @@ fn test_quoting() {
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::sequence_start(StructureStyle::block(), 0, None),
+            Event::sequence_start(StructureStyle::Block, 0, None),
             Event::new_scalar("plain".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("squote".into(), ScalarStyle::single_quoted(), 0, None),
-            Event::new_scalar("dquote".into(), ScalarStyle::double_quoted(), 0, None),
-            Event::sequence_end(),
+            Event::new_scalar("squote".into(), ScalarStyle::SingleQuoted, 0, None),
+            Event::new_scalar("dquote".into(), ScalarStyle::DoubleQuoted, 0, None),
+            Event::SequenceEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -234,7 +234,7 @@ a scalar
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
@@ -244,7 +244,7 @@ a scalar
             Event::document_start(true, None),
             Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -255,11 +255,11 @@ fn test_github_27() {
     assert_eq!(
         run_parser("&a").unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 1, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -342,15 +342,15 @@ foobar";
     assert_eq!(
         run_parser(s).unwrap(),
         expected_events([
-            Event::stream_start(),
+            Event::StreamStart,
             #[cfg(feature = "comments")]
-            Event::comment(" This is a comment".into(), Placement::above()),
+            Event::comment(" This is a comment".into(), Placement::Above),
             Event::document_start(true, Some(YamlVersion::new(1, 2))),
             #[cfg(feature = "comments")]
-            Event::comment("-------".into(), Placement::right()),
+            Event::comment("-------".into(), Placement::Right),
             Event::new_scalar("foobar".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ])
     );
 }
@@ -403,15 +403,15 @@ a: |-
     assert_eq!(
         run_parser(s).unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar(
                 "a\n    b".into(),
                 {
                     let mut syntax = granit_parser::BlockScalarSyntax::new(
-                        granit_parser::Chomping::strip(),
+                        granit_parser::Chomping::Strip,
                         None,
                         18,
                     )
@@ -423,9 +423,9 @@ a: |-
                 0,
                 None
             ),
-            Event::mapping_end(),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -436,37 +436,37 @@ fn test_bad_docstart() {
     assert_eq!(
         run_parser("----").unwrap(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 
     assert_eq!(
         run_parser("--- #comment").unwrap(),
         expected_events([
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(true, None),
             #[cfg(feature = "comments")]
-            Event::comment("comment".into(), Placement::right()),
+            Event::comment("comment".into(), Placement::Right),
             Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ])
     );
 
     assert_eq!(
         run_parser("---- #comment").unwrap(),
         expected_events([
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
             #[cfg(feature = "comments")]
-            Event::comment("comment".into(), Placement::right()),
+            Event::comment("comment".into(), Placement::Right),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ])
     );
 }

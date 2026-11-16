@@ -452,8 +452,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
         self.last_span = Some((ev.clone(), span));
 
         let line: String = match ev {
-            Event::StreamStart { .. } => "+STR".into(),
-            Event::StreamEnd { .. } => "-STR".into(),
+            Event::StreamStart => "+STR".into(),
+            Event::StreamEnd => "-STR".into(),
 
             Event::DocumentStart { explicit, .. } => {
                 if explicit { "+DOC ---" } else { "+DOC" }.into()
@@ -467,8 +467,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 ..
             } => {
                 let style = match style {
-                    StructureStyle::Block { .. } => "",
-                    StructureStyle::Flow { .. } => " []",
+                    StructureStyle::Block => "",
+                    StructureStyle::Flow => " []",
                     _ => panic!("unknown collection style"),
                 };
                 format!(
@@ -477,7 +477,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::SequenceEnd { .. } => "-SEQ".into(),
+            Event::SequenceEnd => "-SEQ".into(),
 
             Event::MappingStart {
                 style,
@@ -486,8 +486,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 ..
             } => {
                 let style = match style {
-                    StructureStyle::Block { .. } => "",
-                    StructureStyle::Flow { .. } => " {}",
+                    StructureStyle::Block => "",
+                    StructureStyle::Flow => " {}",
                     _ => panic!("unknown collection style"),
                 };
                 format!(
@@ -496,7 +496,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::MappingEnd { .. } => "-MAP".into(),
+            Event::MappingEnd => "-MAP".into(),
 
             Event::Scalar {
                 value: ref text,
@@ -507,8 +507,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
             } => {
                 let kind = match style {
                     ScalarStyle::Plain { .. } => ":",
-                    ScalarStyle::SingleQuoted { .. } => "'",
-                    ScalarStyle::DoubleQuoted { .. } => r#"""#,
+                    ScalarStyle::SingleQuoted => "'",
+                    ScalarStyle::DoubleQuoted => r#"""#,
                     ScalarStyle::Literal { .. } => "|",
                     ScalarStyle::Folded { .. } => ">",
                     _ => panic!("unknown scalar style"),

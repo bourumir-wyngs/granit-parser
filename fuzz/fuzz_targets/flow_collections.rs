@@ -117,7 +117,7 @@ fn generated_regression(mode: u8, shape: u8, payload: &[u8]) -> String {
         ),
         2 => (
             format!("{{\"key\":{separator}\"{value}\", \"next\":{separator}\"tail\"}}"),
-            ScalarStyle::double_quoted(),
+            ScalarStyle::DoubleQuoted,
         ),
         _ => (
             format!("? key\n:{separator}{value}\n? next\n:{separator}tail\n"),

@@ -12,10 +12,11 @@
   the accompanying span, rather than an additional `Marker`. Checked range accessors locate
   headers and individual indicators without rescanning; byte ranges are unavailable for
   character-iterator inputs. Existing event spans and decoded scalar values are preserved.
-- Convert public `Event` and `TokenType` variants to named fields and make all variants of
-  the public syntax enums non-exhaustive. Downstream patterns must use named fields and `..`;
-  use constructors for synthetic events, tokens, and styles. Enum-level non-exhaustiveness
-  also allows additional variants. `Event::scalar()` remains an accessor; construct a scalar
+- Convert public `Event` and `TokenType` payloads to named fields and make variants carrying
+  data non-exhaustive. Those patterns must use named fields and `..`; use constructors for
+  synthetic values carrying data. Variants without data remain ordinary unit variants, allowing
+  direct comparisons such as `chomping == Chomping::Keep`. Enum-level non-exhaustiveness
+  allows additional variants. `Event::scalar()` remains an accessor; construct a scalar
   event with `Event::new_scalar(...)`.
 - Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.

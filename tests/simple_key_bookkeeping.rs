@@ -32,14 +32,14 @@ fn outline(trace: &[Result<(Event<'_>, Span), ScanError>]) -> Vec<String> {
             Ok((Event::Scalar { value, .. }, _)) => format!("scalar:{value}"),
             #[cfg(feature = "comments")]
             Ok((Event::Comment { value, .. }, _)) => format!("comment:{value}"),
-            Ok((Event::StreamStart { .. }, _)) => "+STR".into(),
-            Ok((Event::StreamEnd { .. }, _)) => "-STR".into(),
+            Ok((Event::StreamStart, _)) => "+STR".into(),
+            Ok((Event::StreamEnd, _)) => "-STR".into(),
             Ok((Event::DocumentStart { .. }, _)) => "+DOC".into(),
             Ok((Event::DocumentEnd { .. }, _)) => "-DOC".into(),
             Ok((Event::SequenceStart { .. }, _)) => "+SEQ".into(),
-            Ok((Event::SequenceEnd { .. }, _)) => "-SEQ".into(),
+            Ok((Event::SequenceEnd, _)) => "-SEQ".into(),
             Ok((Event::MappingStart { .. }, _)) => "+MAP".into(),
-            Ok((Event::MappingEnd { .. }, _)) => "-MAP".into(),
+            Ok((Event::MappingEnd, _)) => "-MAP".into(),
             other => format!("{other:?}"),
         })
         .collect()
@@ -76,7 +76,7 @@ fn outer_key_remains_active_after_all_nested_candidates_are_removed() {
         assert!(matches!(&events[3 + depth].0, Event::Scalar { value, .. } if value == "leaf"));
         assert!(events[4 + depth..4 + 2 * depth]
             .iter()
-            .all(|(event, _)| matches!(event, Event::SequenceEnd { .. })));
+            .all(|(event, _)| matches!(event, Event::SequenceEnd)));
         assert!(
             matches!(&events[4 + 2 * depth].0, Event::Scalar { value, .. } if value == "value")
         );

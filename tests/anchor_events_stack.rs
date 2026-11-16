@@ -136,11 +136,11 @@ fn included_anchor_events_preserve_a_zero_offset_from_an_empty_replay() {
         assert_eq!(
             events.iter().map(|(event, _)| event).collect::<Vec<_>>(),
             [
-                &Event::sequence_start(StructureStyle::flow(), 0, None),
+                &Event::sequence_start(StructureStyle::Flow, 0, None),
                 &Event::anchor(0, "inc".into()),
                 &Event::alias(0),
-                &Event::sequence_end(),
-                &Event::stream_end(),
+                &Event::SequenceEnd,
+                &Event::StreamEnd,
             ]
         );
         assert_eq!((events[1].1.start.index(), events[1].1.end.index()), (0, 4));

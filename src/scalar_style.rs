@@ -13,39 +13,16 @@ use crate::Span;
 #[non_exhaustive]
 pub enum Chomping {
     /// No sign was written: preserve the final line break, but not trailing empty lines.
-    #[non_exhaustive]
-    Clip {},
+    Clip,
     /// A `-` was written: remove the final line break and trailing empty lines.
-    #[non_exhaustive]
-    Strip {},
+    Strip,
     /// A `+` was written: preserve the final line break and trailing empty lines.
-    #[non_exhaustive]
-    Keep {},
-}
-
-impl Chomping {
-    /// Return the default chomping mode, with no explicit sign.
-    #[must_use]
-    pub const fn clip() -> Self {
-        Self::Clip {}
-    }
-
-    /// Return the chomping mode selected by `-`.
-    #[must_use]
-    pub const fn strip() -> Self {
-        Self::Strip {}
-    }
-
-    /// Return the chomping mode selected by `+`.
-    #[must_use]
-    pub const fn keep() -> Self {
-        Self::Keep {}
-    }
+    Keep,
 }
 
 impl Default for Chomping {
     fn default() -> Self {
-        Self::clip()
+        Self::Clip
     }
 }
 
@@ -106,8 +83,8 @@ impl BlockScalarSyntax {
             return None;
         }
         let chomping_offset = match chomping {
-            Chomping::Clip {} => None,
-            Chomping::Strip {} | Chomping::Keep {} => Some(1),
+            Chomping::Clip => None,
+            Chomping::Strip | Chomping::Keep => Some(1),
         };
         let indentation_offset = match (indentation_indicator, chomping_offset) {
             (None, _) => None,
@@ -246,66 +223,31 @@ impl Hash for BlockScalarSyntax {
 #[non_exhaustive]
 pub enum ScalarKind {
     /// Plain notation.
-    #[non_exhaustive]
-    Plain {},
+    Plain,
     /// Single-quoted notation.
-    #[non_exhaustive]
-    SingleQuoted {},
+    SingleQuoted,
     /// Double-quoted notation.
-    #[non_exhaustive]
-    DoubleQuoted {},
+    DoubleQuoted,
     /// Literal block notation (`|`).
-    #[non_exhaustive]
-    Literal {},
+    Literal,
     /// Folded block notation (`>`).
-    #[non_exhaustive]
-    Folded {},
-}
-
-impl ScalarKind {
-    /// Return the [`Self::Plain`] notation category.
-    #[must_use]
-    pub const fn plain() -> Self {
-        Self::Plain {}
-    }
-
-    /// Return the [`Self::SingleQuoted`] notation category.
-    #[must_use]
-    pub const fn single_quoted() -> Self {
-        Self::SingleQuoted {}
-    }
-
-    /// Return the [`Self::DoubleQuoted`] notation category.
-    #[must_use]
-    pub const fn double_quoted() -> Self {
-        Self::DoubleQuoted {}
-    }
-
-    /// Return the [`Self::Literal`] notation category.
-    #[must_use]
-    pub const fn literal() -> Self {
-        Self::Literal {}
-    }
-
-    /// Return the [`Self::Folded`] notation category.
-    #[must_use]
-    pub const fn folded() -> Self {
-        Self::Folded {}
-    }
+    Folded,
 }
 
 /// The source notation and applicable syntax metadata of a YAML scalar.
 ///
-/// Match variants with `..`, and use the constructors for synthetic values. Equality includes
+/// Match variants carrying data with `..`, and use their constructors for synthetic values.
+/// Quoted styles are ordinary unit variants and can be used directly. Equality includes
 /// syntax metadata; use [`Self::kind`] or the category predicates to compare notation alone.
 ///
 /// ```
 /// use granit_parser::ScalarStyle;
 /// let style = ScalarStyle::plain();
 /// assert!(matches!(style, ScalarStyle::Plain { implicit: false, .. }));
+/// assert_eq!(ScalarStyle::DoubleQuoted.kind(), granit_parser::ScalarKind::DoubleQuoted);
 /// ```
 ///
-/// External callers cannot construct a variant directly:
+/// External callers cannot construct variants carrying data directly:
 ///
 /// ```compile_fail,E0639
 /// use granit_parser::ScalarStyle;
@@ -329,11 +271,9 @@ pub enum ScalarStyle {
         implicit: bool,
     },
     /// A single-quoted scalar.
-    #[non_exhaustive]
-    SingleQuoted {},
+    SingleQuoted,
     /// A double-quoted scalar.
-    #[non_exhaustive]
-    DoubleQuoted {},
+    DoubleQuoted,
     /// A literal block, with no escape processing or line folding.
     #[non_exhaustive]
     Literal {
@@ -361,18 +301,6 @@ impl ScalarStyle {
         Self::Plain { implicit: true }
     }
 
-    /// Return single-quoted scalar style.
-    #[must_use]
-    pub const fn single_quoted() -> Self {
-        Self::SingleQuoted {}
-    }
-
-    /// Return double-quoted scalar style.
-    #[must_use]
-    pub const fn double_quoted() -> Self {
-        Self::DoubleQuoted {}
-    }
-
     /// Return literal block style carrying `syntax`.
     #[must_use]
     pub const fn literal(syntax: BlockScalarSyntax) -> Self {
@@ -389,11 +317,11 @@ impl ScalarStyle {
     #[must_use]
     pub const fn kind(&self) -> ScalarKind {
         match self {
-            Self::Plain { .. } => ScalarKind::Plain {},
-            Self::SingleQuoted {} => ScalarKind::SingleQuoted {},
-            Self::DoubleQuoted {} => ScalarKind::DoubleQuoted {},
-            Self::Literal { .. } => ScalarKind::Literal {},
-            Self::Folded { .. } => ScalarKind::Folded {},
+            Self::Plain { .. } => ScalarKind::Plain,
+            Self::SingleQuoted => ScalarKind::SingleQuoted,
+            Self::DoubleQuoted => ScalarKind::DoubleQuoted,
+            Self::Literal { .. } => ScalarKind::Literal,
+            Self::Folded { .. } => ScalarKind::Folded,
         }
     }
 
@@ -406,13 +334,13 @@ impl ScalarStyle {
     /// Return whether this is single-quoted notation.
     #[must_use]
     pub const fn is_single_quoted(&self) -> bool {
-        matches!(self, Self::SingleQuoted {})
+        matches!(self, Self::SingleQuoted)
     }
 
     /// Return whether this is double-quoted notation.
     #[must_use]
     pub const fn is_double_quoted(&self) -> bool {
-        matches!(self, Self::DoubleQuoted {})
+        matches!(self, Self::DoubleQuoted)
     }
 
     /// Return whether this is literal block notation.

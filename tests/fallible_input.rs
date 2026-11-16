@@ -16,7 +16,7 @@ fn fallible_iterator_clean_eof_emits_stream_end() {
         .collect::<Result<Vec<_>, _>>()
         .expect("clean EOF should finish parsing");
 
-    assert!(matches!(events.last(), Some((Event::StreamEnd { .. }, _))));
+    assert!(matches!(events.last(), Some((Event::StreamEnd, _))));
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn source_error_cannot_be_mistaken_for_clean_eof() {
 
     let error = loop {
         match parser.next() {
-            Some(Ok((event, _))) => emitted_stream_end |= matches!(event, Event::StreamEnd { .. }),
+            Some(Ok((event, _))) => emitted_stream_end |= matches!(event, Event::StreamEnd),
             Some(Err(error)) => break error,
             None => panic!("source failure was silently treated as EOF"),
         }

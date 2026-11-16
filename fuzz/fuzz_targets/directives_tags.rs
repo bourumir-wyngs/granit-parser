@@ -143,7 +143,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
         assert_eq!(comments.len(), usize::from(options.emit_comments));
         if options.emit_comments {
             assert_eq!(comments[0].0.text(), comment);
-            assert_eq!(comments[0].0.placement(), Placement::right());
+            assert_eq!(comments[0].0.placement(), Placement::Right);
             assert_eq!(
                 comments[0].1.slice(&yaml),
                 Some(format!("#{comment}").as_str())

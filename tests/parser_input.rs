@@ -34,7 +34,7 @@ impl<'input> TryEventReceiver<'input> for RejectStreamEnd {
     type Error = &'static str;
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        if matches!(ev, Event::StreamEnd { .. }) {
+        if matches!(ev, Event::StreamEnd) {
             Err("stream end rejected")
         } else {
             Ok(())
@@ -181,7 +181,7 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
     #[cfg(not(feature = "comments"))]
     assert!(events.windows(3).any(|events| matches!(
         events,
-        [Event::MappingStart { style: granit_parser::StructureStyle::Flow { .. }, anchor_id: 0, tag: None, .. }, Event::Scalar { value: key, .. }, Event::Scalar { value, .. }]
+        [Event::MappingStart { style: granit_parser::StructureStyle::Flow, anchor_id: 0, tag: None, .. }, Event::Scalar { value: key, .. }, Event::Scalar { value, .. }]
             if key == "a" && value == "b"
     )));
     #[cfg(feature = "comments")]
@@ -195,7 +195,7 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
         assert!(matches!(
             events[comment_pos - 2],
             Event::MappingStart {
-                style: granit_parser::StructureStyle::Flow { .. },
+                style: granit_parser::StructureStyle::Flow,
                 anchor_id: 0,
                 tag: None,
                 ..
@@ -212,7 +212,7 @@ fn comment_after_value_in_flow_sequence_explicit_pair_is_emitted() {
         assert!(matches!(
             events[comment_pos],
             Event::Comment {
-                placement: Placement::Right { .. },
+                placement: Placement::Right,
                 ..
             }
         ));
@@ -395,7 +395,7 @@ fn next_event_after_receiver_error_on_stream_end_returns_stream_end() {
     // The parser already reached its terminal state; asking for another event
     // re-emits `StreamEnd` instead of scanning further.
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::stream_end());
+    assert_eq!(event, Event::StreamEnd);
     assert!(parser.next_event().is_none());
 }
 
@@ -408,6 +408,6 @@ fn next_event_after_receiver_error_on_stream_end_with_comments_returns_stream_en
     assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
 
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::stream_end());
+    assert_eq!(event, Event::StreamEnd);
     assert!(parser.next_event().is_none());
 }

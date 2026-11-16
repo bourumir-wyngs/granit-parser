@@ -69,9 +69,9 @@ fn load_first_document(contents: &str) -> Result<WalkNode> {
     while let Some(event) = parser.next() {
         let (event, span) = event.map_err(|err| miette!("{err}"))?;
         match event {
-            Event::StreamStart { .. } | Event::Comment { .. } => {}
+            Event::StreamStart | Event::Comment { .. } => {}
             Event::DocumentStart { .. } => return load_document_node(&mut parser, span),
-            Event::StreamEnd { .. } => bail!("No YAML document found"),
+            Event::StreamEnd => bail!("No YAML document found"),
             event => return build_node(&event, span, &mut parser),
         }
     }
@@ -86,13 +86,13 @@ fn load_document_node<'input>(
     while let Some(event) = parser.next() {
         let (event, span) = event.map_err(|err| miette!("{err}"))?;
         match event {
-            Event::DocumentEnd { .. } | Event::StreamEnd { .. } => {
+            Event::DocumentEnd { .. } | Event::StreamEnd => {
                 return Ok(WalkNode {
                     span: Span::empty(document_span.end),
                     data: WalkData::Scalar,
                 });
             }
-            Event::StreamStart { .. } | Event::DocumentStart { .. } | Event::Comment { .. } => {}
+            Event::StreamStart | Event::DocumentStart { .. } | Event::Comment { .. } => {}
             event => return build_node(&event, span, parser),
         }
     }
@@ -113,12 +113,12 @@ fn build_node<'input>(
         Event::SequenceStart { .. } => build_sequence(span, parser),
         Event::MappingStart { .. } => build_mapping(span, parser),
         Event::Comment { .. } => bail!("Unexpected comment while building node"),
-        Event::StreamStart { .. }
-        | Event::StreamEnd { .. }
+        Event::StreamStart
+        | Event::StreamEnd
         | Event::DocumentStart { .. }
         | Event::DocumentEnd { .. }
-        | Event::SequenceEnd { .. }
-        | Event::MappingEnd { .. } => bail!("Unexpected event while building node: {event:?}"),
+        | Event::SequenceEnd
+        | Event::MappingEnd => bail!("Unexpected event while building node: {event:?}"),
         _ => bail!("Unsupported event while building node: {event:?}"),
     }
 }
@@ -131,13 +131,13 @@ fn build_sequence<'input>(
 
     loop {
         let (event, span) = next_data_event(parser)?;
-        if matches!(event, Event::SequenceEnd { .. }) {
+        if matches!(event, Event::SequenceEnd) {
             return Ok(WalkNode {
                 span: span_from_bounds(start_span, span),
                 data: WalkData::Sequence(items),
             });
         }
-        if matches!(event, Event::DocumentEnd { .. } | Event::StreamEnd { .. }) {
+        if matches!(event, Event::DocumentEnd { .. } | Event::StreamEnd) {
             bail!("Sequence ended before SequenceEnd was emitted");
         }
         items.push(build_node(&event, span, parser)?);
@@ -152,13 +152,13 @@ fn build_mapping<'input>(
 
     loop {
         let (event, span) = next_data_event(parser)?;
-        if matches!(event, Event::MappingEnd { .. }) {
+        if matches!(event, Event::MappingEnd) {
             return Ok(WalkNode {
                 span: span_from_bounds(start_span, span),
                 data: WalkData::Mapping(items),
             });
         }
-        if matches!(event, Event::DocumentEnd { .. } | Event::StreamEnd { .. }) {
+        if matches!(event, Event::DocumentEnd { .. } | Event::StreamEnd) {
             bail!("Mapping ended before MappingEnd was emitted");
         }
 
@@ -166,7 +166,7 @@ fn build_mapping<'input>(
         let (event, span) = next_data_event(parser)?;
         if matches!(
             event,
-            Event::MappingEnd { .. } | Event::DocumentEnd { .. } | Event::StreamEnd { .. }
+            Event::MappingEnd | Event::DocumentEnd { .. } | Event::StreamEnd
         ) {
             bail!("Mapping key was not followed by a value");
         }

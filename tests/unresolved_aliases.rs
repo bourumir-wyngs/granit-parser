@@ -51,21 +51,21 @@ fn unresolved_alias_preserves_name_span_and_following_structure() {
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
         [
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("first".into(), ScalarStyle::plain(), 0, None),
             Event::unresolved_alias("míssing".into()),
             Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
-            Event::sequence_start(StructureStyle::flow(), 0, None),
+            Event::sequence_start(StructureStyle::Flow, 0, None),
             Event::new_scalar("one".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("two".into(), ScalarStyle::plain(), 0, None),
-            Event::sequence_end(),
+            Event::SequenceEnd,
             Event::new_scalar("third".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("hello".into(), ScalarStyle::double_quoted(), 0, None),
-            Event::mapping_end(),
+            Event::new_scalar("hello".into(), ScalarStyle::DoubleQuoted, 0, None),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
     let (alias, span) = &events[4];
@@ -111,7 +111,7 @@ fn unresolved_aliases_complete_nodes_in_all_grammar_positions() {
             "{yaml:?}",
         );
         assert!(
-            matches!(events.last(), Some((Event::StreamEnd { .. }, _))),
+            matches!(events.last(), Some((Event::StreamEnd, _))),
             "{yaml:?}"
         );
     }
@@ -302,7 +302,7 @@ fn later_scanner_errors_remain_terminal() {
     assert!(!sink
         .0
         .iter()
-        .any(|(event, _)| matches!(event, Event::StreamEnd { .. })));
+        .any(|(event, _)| matches!(event, Event::StreamEnd)));
 }
 
 #[test]
@@ -351,7 +351,7 @@ fn include_options_preserve_unresolved_events_through_replay() {
                 .collect::<Vec<_>>(),
             [Event::unresolved_alias("missing".into()), Event::alias(1)],
         );
-        assert!(matches!(events.last(), Some((Event::StreamEnd { .. }, _))));
+        assert!(matches!(events.last(), Some((Event::StreamEnd, _))));
     }
 
     let mut strict: ParserStack<'_> = ParserStack::new();

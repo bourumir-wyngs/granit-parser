@@ -134,7 +134,7 @@ fn comment_type_is_a_convenience_container() {
     let comment = Comment::new(" payload ");
 
     assert_eq!(comment.text(), " payload ");
-    assert_eq!(comment.placement(), Placement::free());
+    assert_eq!(comment.placement(), Placement::Free);
     assert_eq!(comment.as_ref(), " payload ");
     assert_eq!(comment.trimmed_text(), "payload");
 }
@@ -149,9 +149,9 @@ fn comment_type_preserves_single_space_payload() {
 
 #[test]
 fn event_comment_stores_raw_payload() {
-    let event = Event::comment(" payload ".into(), Placement::free());
+    let event = Event::comment(" payload ".into(), Placement::Free);
 
-    assert_eq!(event, Event::comment(" payload ".into(), Placement::free()));
+    assert_eq!(event, Event::comment(" payload ".into(), Placement::Free));
     assert!(!event.is_node());
     assert_eq!(event.scalar(), None);
     assert_eq!(event.tag(), None);
@@ -168,13 +168,13 @@ fn token_comment_uses_span_for_full_source_comment() {
     );
     let token = Token::new(
         span,
-        TokenType::comment(Comment::new(" payload").with_placement(Placement::right())),
+        TokenType::comment(Comment::new(" payload").with_placement(Placement::Right)),
     );
 
     assert_eq!(token.span().slice(yaml), Some("# payload"));
     assert!(
         matches!(token.token_type(), TokenType::Comment { comment, .. }
-        if comment.text() == " payload" && comment.placement() == Placement::right())
+        if comment.text() == " payload" && comment.placement() == Placement::Right)
     );
 }
 
@@ -217,10 +217,7 @@ fn scanner_assigns_initial_comment_placements() {
 
     assert_eq!(
         comments,
-        vec![
-            (" own line", Placement::free()),
-            (" right", Placement::right())
-        ]
+        vec![(" own line", Placement::Free), (" right", Placement::Right)]
     );
 }
 
@@ -244,7 +241,7 @@ fn scanner_marks_same_line_comments_after_syntax_as_right() {
             .expect("comment token should be emitted");
 
         assert_eq!(comment.text(), expected_text, "{yaml:?}");
-        assert_eq!(comment.placement(), Placement::right(), "{yaml:?}");
+        assert_eq!(comment.placement(), Placement::Right, "{yaml:?}");
     }
 }
 
@@ -303,32 +300,32 @@ fn scanner_emits_comments_after_syntax_tokens() {
         },
         Case {
             yaml: "---\nkey: value\n... # document end\n",
-            syntax_matches: |token| matches!(token, TokenType::DocumentEnd { .. }),
+            syntax_matches: |token| matches!(token, TokenType::DocumentEnd),
             expected_comment: " document end",
         },
         Case {
             yaml: "[ # flow start\n]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart { .. }),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart),
             expected_comment: " flow start",
         },
         Case {
             yaml: "[a] # flow end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd { .. }),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd),
             expected_comment: " flow end",
         },
         Case {
             yaml: "{a: b} # flow mapping end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd { .. }),
+            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd),
             expected_comment: " flow mapping end",
         },
         Case {
             yaml: "[a, # flow entry\nb]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowEntry { .. }),
+            syntax_matches: |token| matches!(token, TokenType::FlowEntry),
             expected_comment: " flow entry",
         },
         Case {
             yaml: "? # explicit key\n: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Key { .. }),
+            syntax_matches: |token| matches!(token, TokenType::Key),
             expected_comment: " explicit key",
         },
         Case {
@@ -351,12 +348,12 @@ fn scanner_emits_comments_after_syntax_tokens() {
         },
         Case {
             yaml: "key: \"value\" # quoted\n",
-            syntax_matches: |token| matches!(token, TokenType::Scalar { style: ScalarStyle::DoubleQuoted { .. }, value, .. } if value == "value"),
+            syntax_matches: |token| matches!(token, TokenType::Scalar { style: ScalarStyle::DoubleQuoted, value, .. } if value == "value"),
             expected_comment: " quoted",
         },
         Case {
             yaml: "key:\t# mapping value\n  nested: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Value { .. }),
+            syntax_matches: |token| matches!(token, TokenType::Value),
             expected_comment: " mapping value",
         },
     ];
@@ -549,12 +546,12 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
     let cases = [
         (
             "key: \"# not a comment\"\n",
-            ScalarStyle::double_quoted(),
+            ScalarStyle::DoubleQuoted,
             "# not a comment",
         ),
         (
             "key: '# not a comment'\n",
-            ScalarStyle::single_quoted(),
+            ScalarStyle::SingleQuoted,
             "# not a comment",
         ),
         (
@@ -672,7 +669,7 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
             Some((text, slice)) => {
                 assert_eq!(
                     comments,
-                    vec![(text, Placement::right(), Some(slice))],
+                    vec![(text, Placement::Right, Some(slice))],
                     "{:?}",
                     case.yaml
                 );
@@ -708,7 +705,7 @@ fn scanner_accepts_tab_separated_explicit_key_with_comment() {
         .collect();
     assert_eq!(
         comments,
-        [(" key comment", Placement::right(), Some("# key comment"))]
+        [(" key comment", Placement::Right, Some("# key comment"))]
     );
 }
 
@@ -756,10 +753,10 @@ fn parser_refines_comment_placements() {
     assert_eq!(
         comments,
         vec![
-            (" above", Placement::above()),
-            (" right", Placement::right()),
-            (" free", Placement::free()),
-            (" last", Placement::last()),
+            (" above", Placement::Above),
+            (" right", Placement::Right),
+            (" free", Placement::Free),
+            (" last", Placement::Last),
         ]
     );
 }
@@ -770,7 +767,7 @@ fn own_line_comment_before_invalid_token_is_emitted_before_error() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart { .. }
+        Event::StreamStart
     ));
 
     assert!(matches!(
@@ -839,11 +836,11 @@ next: value
     assert_eq!(
         comments,
         vec![
-            (" root", Placement::above(), Some("# root")),
-            (" child", Placement::above(), Some("# child")),
-            (" inline", Placement::right(), Some("# inline")),
-            (" detached", Placement::free(), Some("# detached")),
-            (" eof", Placement::last(), Some("# eof")),
+            (" root", Placement::Above, Some("# root")),
+            (" child", Placement::Above, Some("# child")),
+            (" inline", Placement::Right, Some("# inline")),
+            (" detached", Placement::Free, Some("# detached")),
+            (" eof", Placement::Last, Some("# eof")),
         ]
     );
 }
@@ -867,10 +864,7 @@ fn parser_marks_consecutive_own_line_comments_as_above() {
 
     assert_eq!(
         comments,
-        vec![
-            (" first", Placement::above()),
-            (" second", Placement::above()),
-        ]
+        vec![(" first", Placement::Above), (" second", Placement::Above),]
     );
 }
 
@@ -1143,7 +1137,7 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1176,7 +1170,7 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1209,7 +1203,7 @@ fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1328,7 +1322,7 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart { .. }
+        Event::StreamStart
     ));
 
     let first_peek = parser.peek().unwrap().unwrap().clone();
@@ -1336,7 +1330,7 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
     let next = parser.next_event().unwrap().unwrap();
 
     assert!(
-        matches!(first_peek.0, Event::Comment { value: ref text, placement: Placement::Above { .. }, .. } if text == " first")
+        matches!(first_peek.0, Event::Comment { value: ref text, placement: Placement::Above, .. } if text == " first")
     );
     assert_eq!(first_peek, second_peek);
     assert_eq!(first_peek, next);
@@ -1392,12 +1386,12 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
     let names: Vec<String> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::StreamStart { .. } => Some("StreamStart".into()),
+            Event::StreamStart => Some("StreamStart".into()),
             Event::DocumentStart { .. } => Some("DocumentStart".into()),
             Event::SequenceStart { .. } => Some("SequenceStart".into()),
-            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
+            Event::SequenceEnd => Some("SequenceEnd".into()),
             Event::DocumentEnd { .. } => Some("DocumentEnd".into()),
-            Event::StreamEnd { .. } => Some("StreamEnd".into()),
+            Event::StreamEnd => Some("StreamEnd".into()),
             Event::Scalar { value, .. } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,

@@ -62,7 +62,7 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
                 panic!("expected a comment after the directive: {yaml:?}");
             };
             assert_eq!(comment.text(), comment_text);
-            assert_eq!(comment.placement(), Placement::right());
+            assert_eq!(comment.placement(), Placement::Right);
             assert_eq!(tokens[1].span().end, tokens[2].span().start);
             let comment_source = format!("#{comment_text}");
             assert_eq!(tokens[2].span().slice(yaml), Some(comment_source.as_str()));
@@ -178,17 +178,14 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
                     &TokenType::reserved_directive("FUTURE".into(), params.clone()),
                 );
                 assert_eq!(tokens.len(), 3 + usize::from(emit_comments));
-                assert_eq!(
-                    tokens.last().unwrap().token_type(),
-                    &TokenType::stream_end()
-                );
+                assert_eq!(tokens.last().unwrap().token_type(), &TokenType::StreamEnd);
                 #[cfg(feature = "comments")]
                 if emit_comments {
                     let TokenType::Comment { comment, .. } = tokens[2].token_type() else {
                         panic!("expected EOF comment: {yaml:?}");
                     };
                     assert_eq!(comment.text(), comment_text);
-                    assert_eq!(comment.placement(), Placement::right());
+                    assert_eq!(comment.placement(), Placement::Right);
                     assert_eq!(
                         tokens[2].span().slice(&yaml),
                         Some(&yaml[1 + directive.len() + 1..])

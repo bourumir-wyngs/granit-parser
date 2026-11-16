@@ -253,7 +253,7 @@ fn block_scalar_line_longer_than_lookahead_window_is_read_completely() {
         scalars_of(&events),
         vec![(
             "abcdefghijklmnopqrstuvwxyz 0123456789\n".to_owned(),
-            ScalarKind::literal()
+            ScalarKind::Literal
         )]
     );
 }
@@ -273,7 +273,7 @@ fn folded_scalar_long_lines_with_windowed_input_fold_to_spaces() {
         scalars_of(&events),
         vec![(
             "the quick brown fox jumps over the lazy dog and runs away\n".to_owned(),
-            ScalarKind::folded()
+            ScalarKind::Folded
         )]
     );
 }
@@ -295,8 +295,8 @@ fn deeply_indented_block_scalar_with_buffered_input() {
     assert_eq!(
         scalars_of(&events),
         vec![
-            ("k".to_owned(), ScalarKind::plain()),
-            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::literal()),
+            ("k".to_owned(), ScalarKind::Plain),
+            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::Literal),
         ]
     );
 }
@@ -318,8 +318,8 @@ fn deeply_indented_block_scalar_with_windowed_input() {
     assert_eq!(
         scalars_of(&events),
         vec![
-            ("k".to_owned(), ScalarKind::plain()),
-            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::literal()),
+            ("k".to_owned(), ScalarKind::Plain),
+            ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::Literal),
         ]
     );
 }
@@ -337,7 +337,7 @@ fn double_quoted_trailing_blank_before_break_folds_to_space() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("a b".to_owned(), ScalarKind::double_quoted())]
+        vec![("a b".to_owned(), ScalarKind::DoubleQuoted)]
     );
 }
 
@@ -348,7 +348,7 @@ fn single_quoted_trailing_blanks_before_break_fold_to_space() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("a b".to_owned(), ScalarKind::single_quoted())]
+        vec![("a b".to_owned(), ScalarKind::SingleQuoted)]
     );
 }
 
@@ -365,7 +365,7 @@ fn quoted_scalar_from_offsets_without_borrowing_is_copied() {
 
     assert_eq!(
         scalars_of(&events),
-        vec![("hello world".to_owned(), ScalarKind::double_quoted())]
+        vec![("hello world".to_owned(), ScalarKind::DoubleQuoted)]
     );
 }
 
@@ -417,17 +417,17 @@ fn empty_flow_sequence_key_in_existing_block_mapping() {
     assert_eq!(
         events,
         vec![
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("x".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("y".into(), ScalarStyle::plain(), 0, None),
-            Event::sequence_start(StructureStyle::flow(), 0, None),
-            Event::sequence_end(),
+            Event::sequence_start(StructureStyle::Flow, 0, None),
+            Event::SequenceEnd,
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
-            Event::mapping_end(),
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }
@@ -442,16 +442,16 @@ fn sequence_indented_one_column_under_mapping_key() {
     assert_eq!(
         events,
         vec![
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
-            Event::sequence_start(StructureStyle::block(), 0, None),
+            Event::sequence_start(StructureStyle::Block, 0, None),
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
-            Event::sequence_end(),
-            Event::mapping_end(),
+            Event::SequenceEnd,
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ]
     );
 }

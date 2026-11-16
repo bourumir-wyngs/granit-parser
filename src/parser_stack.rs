@@ -60,7 +60,7 @@ impl<'input> ParserTrait<'input> for ReplayParser<'input> {
         while let Some(res) = self.next_event() {
             let (ev, span) = res?;
             let is_doc_end = matches!(ev, Event::DocumentEnd { .. });
-            let is_stream_end = matches!(ev, Event::StreamEnd { .. });
+            let is_stream_end = matches!(ev, Event::StreamEnd);
             recv.on_event(ev, span);
             if is_stream_end {
                 break;
@@ -321,7 +321,7 @@ where
     }
 
     fn prepare_for_push(&mut self) {
-        if matches!(self.current.as_ref(), Some((Event::StreamEnd { .. }, _))) {
+        if matches!(self.current.as_ref(), Some((Event::StreamEnd, _))) {
             self.current = None;
         }
     }
@@ -469,7 +469,7 @@ where
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
                 return Ok((
-                    Event::stream_end(),
+                    Event::StreamEnd,
                     Span::empty(crate::scanner::Marker::new(0, 1, 0)),
                 ));
             };
@@ -485,7 +485,7 @@ where
             if let Some(&(depth, span)) = self.pending_document_ends.last() {
                 if depth == self.parsers.len()
                     && matches!(&res, Some(Ok((event, _)))
-                        if !matches!(event, Event::Comment { .. } | Event::StreamEnd { .. }))
+                        if !matches!(event, Event::Comment { .. } | Event::StreamEnd))
                 {
                     let error = self.contextualize_error(ScanError::from_kind(
                         span.start,
@@ -497,7 +497,7 @@ where
             }
 
             match res {
-                Some(Ok((event @ Event::StreamEnd { .. }, span))) => {
+                Some(Ok((event @ Event::StreamEnd, span))) => {
                     if self.parsers.len() == 1 {
                         self.parsers.pop();
                         return Ok((event, span));
@@ -508,7 +508,7 @@ where
                     if self.parsers.len() == 1 {
                         self.parsers.pop();
                         return Ok((
-                            Event::stream_end(),
+                            Event::StreamEnd,
                             Span::empty(crate::scanner::Marker::new(0, 1, 0)),
                         ));
                     }
@@ -541,7 +541,7 @@ where
                             AnyParser::Replay { parser, .. } => parser.next_event(),
                         };
                         match next {
-                            Some(Ok((Event::StreamEnd { .. }, _))) | None => {
+                            Some(Ok((Event::StreamEnd, _))) | None => {
                                 self.pop_parser_and_propagate_anchor_offset();
                             }
                             Some(Err(error)) => {
@@ -566,10 +566,7 @@ where
                         continue;
                     }
                     if self.parsers.len() > 1
-                        && matches!(
-                            event.0,
-                            Event::StreamStart { .. } | Event::DocumentStart { .. }
-                        )
+                        && matches!(event.0, Event::StreamStart | Event::DocumentStart { .. })
                     {
                         continue;
                     }
@@ -624,7 +621,7 @@ where
         }
 
         if let Some(token) = self.current.take() {
-            if let Event::StreamEnd { .. } = token.0 {
+            if let Event::StreamEnd = token.0 {
                 self.stream_end_emitted = true;
             }
             return Some(Ok(token));
@@ -634,7 +631,7 @@ where
         }
         match self.next_event_impl() {
             Ok(token) => {
-                if let Event::StreamEnd { .. } = token.0 {
+                if let Event::StreamEnd = token.0 {
                     self.stream_end_emitted = true;
                 }
                 Some(Ok(token))
@@ -657,7 +654,7 @@ where
 
             // Track whether to stop based on `multi`.
             let is_doc_end = matches!(ev, Event::DocumentEnd { .. });
-            let is_stream_end = matches!(ev, Event::StreamEnd { .. });
+            let is_stream_end = matches!(ev, Event::StreamEnd);
 
             recv.on_event(ev, span);
 

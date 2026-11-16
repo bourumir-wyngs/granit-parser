@@ -361,55 +361,27 @@ pub enum Placement {
     /// This usually means the comment visually describes the following node.
     /// Consecutive own-line comments without blank lines between them are also considered
     /// `Above`, so a comment block can attach to the next YAML element as a group.
-    #[non_exhaustive]
-    Above {},
+    Above,
     /// A same-line comment after YAML content or syntax. Examples include `key: value # Right`
     /// and `- # Right` for an empty sequence entry.
-    #[non_exhaustive]
-    Right {},
+    Right,
     /// A standalone own-line comment that is separated from nearby YAML tokens.
     ///
     /// This is the fallback for comments that are neither same-line comments, immediately above a
     /// following token, nor the final comment in the stream. Consumers should treat `Free` as not
     /// having an obvious neighboring node.
-    #[non_exhaustive]
-    Free {},
+    Free,
     /// An own-line comment at the end of the input stream.
     ///
     /// A `Last` comment may be followed by blank lines, but no further YAML token appears before
     /// `StreamEnd`.
-    #[non_exhaustive]
-    Last {},
+    Last,
 }
 
 #[cfg(feature = "comments")]
 impl Default for Placement {
     fn default() -> Self {
-        Self::Free {}
-    }
-}
-
-#[cfg(feature = "comments")]
-impl Placement {
-    /// Return the [`Self::Above`] placement hint.
-    #[must_use]
-    pub const fn above() -> Self {
-        Self::Above {}
-    }
-    /// Return the [`Self::Right`] placement hint.
-    #[must_use]
-    pub const fn right() -> Self {
-        Self::Right {}
-    }
-    /// Return the [`Self::Free`] placement hint.
-    #[must_use]
-    pub const fn free() -> Self {
-        Self::Free {}
-    }
-    /// Return the [`Self::Last`] placement hint.
-    #[must_use]
-    pub const fn last() -> Self {
-        Self::Last {}
+        Self::Free
     }
 }
 
@@ -438,7 +410,7 @@ impl<'input> Comment<'input> {
     pub fn new(text: impl Into<Cow<'input, str>>) -> Self {
         Self {
             text: text.into(),
-            placement: Placement::Free {},
+            placement: Placement::Free,
         }
     }
 
@@ -488,11 +460,9 @@ impl AsRef<str> for Comment<'_> {
 #[derive(Clone, PartialEq, Debug, Eq)]
 pub enum TokenType<'input> {
     /// Start of the stream.
-    #[non_exhaustive]
-    StreamStart {},
+    StreamStart,
     /// End of the stream.
-    #[non_exhaustive]
-    StreamEnd {},
+    StreamEnd,
     /// A YAML version directive.
     #[non_exhaustive]
     VersionDirective {
@@ -510,44 +480,31 @@ pub enum TokenType<'input> {
         prefix: Cow<'input, str>,
     },
     /// Explicit document start marker (`---`).
-    #[non_exhaustive]
-    DocumentStart {},
+    DocumentStart,
     /// Explicit document end marker (`...`).
-    #[non_exhaustive]
-    DocumentEnd {},
+    DocumentEnd,
     /// Start of a block sequence.
-    #[non_exhaustive]
-    BlockSequenceStart {},
+    BlockSequenceStart,
     /// Start of a block mapping.
-    #[non_exhaustive]
-    BlockMappingStart {},
+    BlockMappingStart,
     /// End of a block collection.
-    #[non_exhaustive]
-    BlockEnd {},
+    BlockEnd,
     /// Opening `[` of a flow sequence.
-    #[non_exhaustive]
-    FlowSequenceStart {},
+    FlowSequenceStart,
     /// Closing `]` of a flow sequence.
-    #[non_exhaustive]
-    FlowSequenceEnd {},
+    FlowSequenceEnd,
     /// Opening `{` of a flow mapping.
-    #[non_exhaustive]
-    FlowMappingStart {},
+    FlowMappingStart,
     /// Closing `}` of a flow mapping.
-    #[non_exhaustive]
-    FlowMappingEnd {},
+    FlowMappingEnd,
     /// Block sequence entry indicator.
-    #[non_exhaustive]
-    BlockEntry {},
+    BlockEntry,
     /// Flow collection entry separator.
-    #[non_exhaustive]
-    FlowEntry {},
+    FlowEntry,
     /// Mapping key indicator.
-    #[non_exhaustive]
-    Key {},
+    Key,
     /// Mapping value indicator.
-    #[non_exhaustive]
-    Value {},
+    Value,
     /// Alias name without the leading `*`.
     #[non_exhaustive]
     Alias {
@@ -594,18 +551,6 @@ pub enum TokenType<'input> {
 }
 
 impl<'input> TokenType<'input> {
-    /// Return a [`Self::StreamStart`] token payload.
-    #[must_use]
-    pub fn stream_start() -> Self {
-        Self::StreamStart {}
-    }
-
-    /// Return a [`Self::StreamEnd`] token payload.
-    #[must_use]
-    pub fn stream_end() -> Self {
-        Self::StreamEnd {}
-    }
-
     /// Return a [`Self::VersionDirective`] token payload.
     ///
     /// * `major`: Major version number.
@@ -622,84 +567,6 @@ impl<'input> TokenType<'input> {
     #[must_use]
     pub fn tag_directive(handle: Cow<'input, str>, prefix: Cow<'input, str>) -> Self {
         Self::TagDirective { handle, prefix }
-    }
-
-    /// Return a [`Self::DocumentStart`] token payload.
-    #[must_use]
-    pub fn document_start() -> Self {
-        Self::DocumentStart {}
-    }
-
-    /// Return a [`Self::DocumentEnd`] token payload.
-    #[must_use]
-    pub fn document_end() -> Self {
-        Self::DocumentEnd {}
-    }
-
-    /// Return a [`Self::BlockSequenceStart`] token payload.
-    #[must_use]
-    pub fn block_sequence_start() -> Self {
-        Self::BlockSequenceStart {}
-    }
-
-    /// Return a [`Self::BlockMappingStart`] token payload.
-    #[must_use]
-    pub fn block_mapping_start() -> Self {
-        Self::BlockMappingStart {}
-    }
-
-    /// Return a [`Self::BlockEnd`] token payload.
-    #[must_use]
-    pub fn block_end() -> Self {
-        Self::BlockEnd {}
-    }
-
-    /// Return a [`Self::FlowSequenceStart`] token payload.
-    #[must_use]
-    pub fn flow_sequence_start() -> Self {
-        Self::FlowSequenceStart {}
-    }
-
-    /// Return a [`Self::FlowSequenceEnd`] token payload.
-    #[must_use]
-    pub fn flow_sequence_end() -> Self {
-        Self::FlowSequenceEnd {}
-    }
-
-    /// Return a [`Self::FlowMappingStart`] token payload.
-    #[must_use]
-    pub fn flow_mapping_start() -> Self {
-        Self::FlowMappingStart {}
-    }
-
-    /// Return a [`Self::FlowMappingEnd`] token payload.
-    #[must_use]
-    pub fn flow_mapping_end() -> Self {
-        Self::FlowMappingEnd {}
-    }
-
-    /// Return a [`Self::BlockEntry`] token payload.
-    #[must_use]
-    pub fn block_entry() -> Self {
-        Self::BlockEntry {}
-    }
-
-    /// Return a [`Self::FlowEntry`] token payload.
-    #[must_use]
-    pub fn flow_entry() -> Self {
-        Self::FlowEntry {}
-    }
-
-    /// Return a [`Self::Key`] token payload.
-    #[must_use]
-    pub fn key() -> Self {
-        Self::Key {}
-    }
-
-    /// Return a [`Self::Value`] token payload.
-    #[must_use]
-    pub fn value() -> Self {
-        Self::Value {}
     }
 
     /// Return a [`Self::Alias`] token payload.
@@ -819,23 +686,23 @@ pub(crate) enum QueuedTokenType<'input> {
 impl<'input> QueuedTokenType<'input> {
     fn into_public(self) -> TokenType<'input> {
         match self {
-            Self::StreamStart => TokenType::StreamStart {},
-            Self::StreamEnd => TokenType::StreamEnd {},
+            Self::StreamStart => TokenType::StreamStart,
+            Self::StreamEnd => TokenType::StreamEnd,
             Self::VersionDirective(major, minor) => TokenType::VersionDirective { major, minor },
             Self::TagDirective(handle, prefix) => TokenType::TagDirective { handle, prefix },
-            Self::DocumentStart => TokenType::DocumentStart {},
-            Self::DocumentEnd => TokenType::DocumentEnd {},
-            Self::BlockSequenceStart => TokenType::BlockSequenceStart {},
-            Self::BlockMappingStart => TokenType::BlockMappingStart {},
-            Self::BlockEnd => TokenType::BlockEnd {},
-            Self::FlowSequenceStart => TokenType::FlowSequenceStart {},
-            Self::FlowSequenceEnd => TokenType::FlowSequenceEnd {},
-            Self::FlowMappingStart => TokenType::FlowMappingStart {},
-            Self::FlowMappingEnd => TokenType::FlowMappingEnd {},
-            Self::BlockEntry => TokenType::BlockEntry {},
-            Self::FlowEntry => TokenType::FlowEntry {},
-            Self::Key => TokenType::Key {},
-            Self::Value => TokenType::Value {},
+            Self::DocumentStart => TokenType::DocumentStart,
+            Self::DocumentEnd => TokenType::DocumentEnd,
+            Self::BlockSequenceStart => TokenType::BlockSequenceStart,
+            Self::BlockMappingStart => TokenType::BlockMappingStart,
+            Self::BlockEnd => TokenType::BlockEnd,
+            Self::FlowSequenceStart => TokenType::FlowSequenceStart,
+            Self::FlowSequenceEnd => TokenType::FlowSequenceEnd,
+            Self::FlowMappingStart => TokenType::FlowMappingStart,
+            Self::FlowMappingEnd => TokenType::FlowMappingEnd,
+            Self::BlockEntry => TokenType::BlockEntry,
+            Self::FlowEntry => TokenType::FlowEntry,
+            Self::Key => TokenType::Key,
+            Self::Value => TokenType::Value,
             Self::Alias(name) => TokenType::Alias { name },
             Self::Anchor(name) => TokenType::Anchor { name },
             Self::Tag(handle, suffix) => TokenType::Tag { handle, suffix },
@@ -853,23 +720,23 @@ impl<'input> QueuedTokenType<'input> {
 impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
     fn from(token: TokenType<'input>) -> Self {
         match token {
-            TokenType::StreamStart {} => Self::StreamStart,
-            TokenType::StreamEnd {} => Self::StreamEnd,
+            TokenType::StreamStart => Self::StreamStart,
+            TokenType::StreamEnd => Self::StreamEnd,
             TokenType::VersionDirective { major, minor } => Self::VersionDirective(major, minor),
             TokenType::TagDirective { handle, prefix } => Self::TagDirective(handle, prefix),
-            TokenType::DocumentStart {} => Self::DocumentStart,
-            TokenType::DocumentEnd {} => Self::DocumentEnd,
-            TokenType::BlockSequenceStart {} => Self::BlockSequenceStart,
-            TokenType::BlockMappingStart {} => Self::BlockMappingStart,
-            TokenType::BlockEnd {} => Self::BlockEnd,
-            TokenType::FlowSequenceStart {} => Self::FlowSequenceStart,
-            TokenType::FlowSequenceEnd {} => Self::FlowSequenceEnd,
-            TokenType::FlowMappingStart {} => Self::FlowMappingStart,
-            TokenType::FlowMappingEnd {} => Self::FlowMappingEnd,
-            TokenType::BlockEntry {} => Self::BlockEntry,
-            TokenType::FlowEntry {} => Self::FlowEntry,
-            TokenType::Key {} => Self::Key,
-            TokenType::Value {} => Self::Value,
+            TokenType::DocumentStart => Self::DocumentStart,
+            TokenType::DocumentEnd => Self::DocumentEnd,
+            TokenType::BlockSequenceStart => Self::BlockSequenceStart,
+            TokenType::BlockMappingStart => Self::BlockMappingStart,
+            TokenType::BlockEnd => Self::BlockEnd,
+            TokenType::FlowSequenceStart => Self::FlowSequenceStart,
+            TokenType::FlowSequenceEnd => Self::FlowSequenceEnd,
+            TokenType::FlowMappingStart => Self::FlowMappingStart,
+            TokenType::FlowMappingEnd => Self::FlowMappingEnd,
+            TokenType::BlockEntry => Self::BlockEntry,
+            TokenType::FlowEntry => Self::FlowEntry,
+            TokenType::Key => Self::Key,
+            TokenType::Value => Self::Value,
             TokenType::Alias { name } => Self::Alias(name),
             TokenType::Anchor { name } => Self::Anchor(name),
             TokenType::Tag { handle, suffix } => Self::Tag(handle, suffix),
@@ -1730,9 +1597,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let start_mark = self.mark;
         debug_assert_eq!(self.input.peek(), '#');
         let placement = if self.leading_whitespace {
-            Placement::Free {}
+            Placement::Free
         } else {
-            Placement::Right {}
+            Placement::Right
         };
 
         self.skip_comment_char();
@@ -2132,9 +1999,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.in_directive_prefix = true;
                 return self.fetch_directive();
             } else if self.input.next_is_document_start() {
-                return self.fetch_document_indicator(TokenType::DocumentStart {});
+                return self.fetch_document_indicator(TokenType::DocumentStart);
             } else if self.input.next_is_document_end() {
-                self.fetch_document_indicator(TokenType::DocumentEnd {})?;
+                self.fetch_document_indicator(TokenType::DocumentEnd)?;
                 self.skip_ws_to_eol(SkipTabs::Yes)?;
                 if !self.input.next_is_breakz() {
                     return Err(self.scan_error(ErrorKind::InvalidDocumentEnd));
@@ -2160,10 +2027,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let c = self.input.peek();
         let nc = self.input.peek_nth(1);
         match c {
-            '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart {}),
-            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart {}),
-            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd {}, '[', ']'),
-            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd {}, '{', '}'),
+            '[' => self.fetch_flow_collection_start(TokenType::FlowSequenceStart),
+            '{' => self.fetch_flow_collection_start(TokenType::FlowMappingStart),
+            ']' => self.fetch_flow_collection_end(TokenType::FlowSequenceEnd, '[', ']'),
+            '}' => self.fetch_flow_collection_end(TokenType::FlowMappingEnd, '{', '}'),
             ',' => self.fetch_flow_entry(),
             '-' if is_blank_or_breakz(nc) => self.fetch_block_entry(),
             '?' if is_blank_or_breakz(nc) => self.fetch_key(),
@@ -2596,7 +2463,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.stream_start_produced = true;
         self.allow_simple_key();
         self.tokens
-            .push_back(Token(Span::empty(mark), TokenType::StreamStart {}).into());
+            .push_back(Token(Span::empty(mark), TokenType::StreamStart).into());
         self.simple_keys.push(SimpleKey::new(Marker::new(0, 0, 0)));
     }
 
@@ -2622,7 +2489,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.disallow_simple_key();
 
         self.tokens
-            .push_back(Token(Span::empty(self.mark), TokenType::StreamEnd {}).into());
+            .push_back(Token(Span::empty(self.mark), TokenType::StreamEnd).into());
         Ok(())
     }
 
@@ -3412,7 +3279,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
         let end_mark = self.mark;
 
-        if tok == TokenType::flow_mapping_start() {
+        if tok == TokenType::FlowMappingStart {
             self.flow_mapping_started.push(true);
         } else {
             self.flow_mapping_started.push(false);
@@ -3456,7 +3323,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.remove_simple_key()?;
 
-        if matches!(tok, TokenType::FlowSequenceEnd {}) {
+        if matches!(tok, TokenType::FlowSequenceEnd) {
             self.end_implicit_mapping(self.mark, flow_level);
             // We are out exiting the flow sequence, nesting goes down 1 level.
             self.implicit_flow_mapping_states.pop();
@@ -3504,7 +3371,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, end_mark), TokenType::FlowEntry {}),
+            Token(Span::new(start_mark, end_mark), TokenType::FlowEntry),
         );
         Ok(())
     }
@@ -3549,7 +3416,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
 
         // generate BLOCK-SEQUENCE-START if indented
-        self.roll_indent(mark.col, None, TokenType::BlockSequenceStart {}, mark)?;
+        self.roll_indent(mark.col, None, TokenType::BlockSequenceStart, mark)?;
         let token_index = self.tokens.len();
         let found_tabs = self.skip_ws_to_eol(SkipTabs::Yes)?.found_tabs();
         self.input.lookahead(2);
@@ -3569,7 +3436,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.insert_token(
             token_index,
-            Token(Span::empty(self.mark), TokenType::BlockEntry {}),
+            Token(Span::empty(self.mark), TokenType::BlockEntry),
         );
 
         Ok(())
@@ -3592,7 +3459,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         self.skip_n_non_blank(3);
 
-        self.document_prefix_allowed = matches!(t, TokenType::DocumentEnd {});
+        self.document_prefix_allowed = matches!(t, TokenType::DocumentEnd);
         self.tokens
             .push_back(Token(Span::new(mark, self.mark), t).into());
         Ok(())
@@ -3613,7 +3480,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         let start_mark = self.mark;
         let header_start = start_mark;
         let mut syntax = BlockScalarSyntax::default();
-        let mut chomping = Chomping::Clip {};
+        let mut chomping = Chomping::Clip;
         let mut increment: u8 = 0;
         let mut indent: usize = 0;
         let mut trailing_blank: bool;
@@ -3631,9 +3498,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.look_ch() == '+' || self.input.peek() == '-' {
             syntax.chomping_offset = Some(1);
             if self.input.peek() == '+' {
-                chomping = Chomping::Keep {};
+                chomping = Chomping::Keep;
             } else {
-                chomping = Chomping::Strip {};
+                chomping = Chomping::Strip;
             }
             self.skip_non_blank();
             self.input.lookahead(1);
@@ -3663,9 +3530,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.input.peek() == '+' || self.input.peek() == '-' {
                 syntax.chomping_offset = Some(2);
                 if self.input.peek() == '+' {
-                    chomping = Chomping::Keep {};
+                    chomping = Chomping::Keep;
                 } else {
-                    chomping = Chomping::Strip {};
+                    chomping = Chomping::Strip;
                 }
                 self.skip_non_blank();
             }
@@ -3732,13 +3599,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.next_is_z() {
             let contents = match chomping {
                 // We strip trailing line breaks. Nothing remains.
-                Chomping::Strip {} => String::new(),
+                Chomping::Strip => String::new(),
                 // There was no newline after the chomping indicator.
                 _ if self.mark.line == start_mark.line() => String::new(),
                 // With no content lines, the header break is not scalar content.
-                Chomping::Clip {} => String::new(),
+                Chomping::Clip => String::new(),
                 // An indented whitespace-only line at EOF is an empty content line.
-                Chomping::Keep {} if trailing_breaks == 0 && self.mark.col > 0 => {
+                Chomping::Keep if trailing_breaks == 0 && self.mark.col > 0 => {
                     if chomping_break {
                         "\n".into()
                     } else {
@@ -3746,7 +3613,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                     }
                 }
                 // Keep actual empty content lines, if any, but not the header break.
-                Chomping::Keep {} => "\n".repeat(trailing_breaks),
+                Chomping::Keep => "\n".repeat(trailing_breaks),
             };
 
             let style = if literal {
@@ -3836,7 +3703,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.ensure_current_char_is_printable()?;
 
         // Chomp the tail.
-        if chomping != Chomping::strip() {
+        if chomping != Chomping::Strip {
             // If we had reached an eof but the last content line wasn't terminated by a line
             // break, check if the last line was indented at least as the rest of the scalar, then
             // we need to consider there is a newline. When that line already ended with a break
@@ -3850,7 +3717,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        if chomping == Chomping::keep() {
+        if chomping == Chomping::Keep {
             string.extend(core::iter::repeat('\n').take(trailing_breaks));
         }
 
@@ -4209,9 +4076,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let style = if single {
-            ScalarStyle::SingleQuoted {}
+            ScalarStyle::SingleQuoted
         } else {
-            ScalarStyle::DoubleQuoted {}
+            ScalarStyle::DoubleQuoted
         };
 
         let contents = match buf {
@@ -4721,7 +4588,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.roll_indent(
                 start_mark.col,
                 None,
-                TokenType::BlockMappingStart {},
+                TokenType::BlockMappingStart,
                 start_mark,
             )?;
         } else {
@@ -4752,7 +4619,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
         self.insert_token(
             token_index,
-            Token(Span::new(start_mark, end_mark), TokenType::Key {}),
+            Token(Span::new(start_mark, end_mark), TokenType::Key),
         );
         Ok(())
     }
@@ -4830,7 +4697,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             let token_index = self.simple_key_token_index(&sk, start_mark)?;
             self.validate_flow_key_indentation(&sk, token_index, start_mark)?;
             // insert simple key
-            let tok = Token(Span::empty(sk.mark), TokenType::Key {});
+            let tok = Token(Span::empty(sk.mark), TokenType::Key);
             self.insert_token(token_index, tok);
             if is_implicit_flow_mapping {
                 if sk.mark.line < start_mark.line {
@@ -4841,7 +4708,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 }
                 self.insert_token(
                     token_index,
-                    Token(Span::empty(sk.mark), TokenType::FlowMappingStart {}),
+                    Token(Span::empty(sk.mark), TokenType::FlowMappingStart),
                 );
             }
 
@@ -4849,7 +4716,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.roll_indent(
                 sk.mark.col,
                 Some(sk.token_number),
-                TokenType::BlockMappingStart {},
+                TokenType::BlockMappingStart,
                 sk.mark,
             )?;
             self.roll_one_col_indent();
@@ -4858,9 +4725,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.disallow_simple_key();
         } else {
             if is_implicit_flow_mapping {
-                self.tokens.push_back(
-                    Token(Span::empty(start_mark), TokenType::FlowMappingStart {}).into(),
-                );
+                self.tokens
+                    .push_back(Token(Span::empty(start_mark), TokenType::FlowMappingStart).into());
             }
             // The ':' indicator follows a complex key.
             if self.flow_level == 0 {
@@ -4874,7 +4740,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 self.roll_indent(
                     start_mark.col,
                     None,
-                    TokenType::BlockMappingStart {},
+                    TokenType::BlockMappingStart,
                     start_mark,
                 )?;
             }
@@ -4889,7 +4755,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
         self.tokens
-            .push_back(Token(Span::empty(start_mark), TokenType::Value {}).into());
+            .push_back(Token(Span::empty(start_mark), TokenType::Value).into());
         if let Some(comment) = trailing_comment {
             self.tokens.push_back(comment);
         }
@@ -5011,7 +4877,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 debug_assert!(self.block_level > 0);
                 self.block_level -= 1;
                 self.tokens
-                    .push_back(Token(Span::empty(self.mark), TokenType::BlockEnd {}).into());
+                    .push_back(Token(Span::empty(self.mark), TokenType::BlockEnd).into());
             }
         }
     }
@@ -5099,7 +4965,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             *self.implicit_flow_mapping_states.last_mut().unwrap() = ImplicitMappingState::Possible;
             self.set_current_flow_mapping_started(false);
             self.tokens
-                .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd {}).into());
+                .push_back(Token(Span::empty(mark), TokenType::FlowMappingEnd).into());
         }
     }
 
@@ -5172,13 +5038,13 @@ mod test {
         let mut scanner = Scanner::new(StrInput::new(input));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
         assert!(scanner.next_token().is_err());
 
         scanner.proceed_next_document(None).unwrap();
         let token = scanner.next_token().unwrap().unwrap();
-        assert_eq!(token.1, TokenType::DocumentStart {});
+        assert_eq!(token.1, TokenType::DocumentStart);
         assert_eq!(token.0.start.line(), 6);
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -5202,7 +5068,7 @@ mod test {
 
         scanner.proceed_next_document(None).unwrap();
         let token = scanner.next_token().unwrap().unwrap();
-        assert_eq!(token.1, TokenType::DocumentStart {});
+        assert_eq!(token.1, TokenType::DocumentStart);
         assert_eq!(token.0.start.line(), 3);
     }
 
@@ -5219,7 +5085,7 @@ mod test {
         scanner.proceed_next_document(Some(boundary)).unwrap();
         assert_eq!(
             scanner.next_token().unwrap().unwrap(),
-            Token(span, TokenType::DocumentStart {})
+            Token(span, TokenType::DocumentStart)
         );
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -5463,11 +5329,11 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();
-        assert!(matches!(token.1, TokenType::FlowSequenceStart {}));
+        assert!(matches!(token.1, TokenType::FlowSequenceStart));
 
         let token = scanner.next_token().unwrap().unwrap();
         assert!(matches!(
@@ -5550,7 +5416,7 @@ mod test {
         assert_eq!(
             first_token_slice("[ # c\n  a]\n", |token| matches!(
                 token,
-                TokenType::FlowSequenceStart {}
+                TokenType::FlowSequenceStart
             ))
             .as_deref(),
             Some("[")
@@ -5558,7 +5424,7 @@ mod test {
         assert_eq!(
             first_token_slice("{ # c\n  a: b}\n", |token| matches!(
                 token,
-                TokenType::FlowMappingStart {}
+                TokenType::FlowMappingStart
             ))
             .as_deref(),
             Some("{")
@@ -5566,7 +5432,7 @@ mod test {
         assert_eq!(
             first_token_slice("[a] # c\n", |token| matches!(
                 token,
-                TokenType::FlowSequenceEnd {}
+                TokenType::FlowSequenceEnd
             ))
             .as_deref(),
             Some("]")
@@ -5574,7 +5440,7 @@ mod test {
         assert_eq!(
             first_token_slice("{a: b} # c\n", |token| matches!(
                 token,
-                TokenType::FlowMappingEnd {}
+                TokenType::FlowMappingEnd
             ))
             .as_deref(),
             Some("}")
@@ -5582,7 +5448,7 @@ mod test {
         assert_eq!(
             first_token_slice("[a, # c\nb]\n", |token| matches!(
                 token,
-                TokenType::FlowEntry {}
+                TokenType::FlowEntry
             ))
             .as_deref(),
             Some(",")
@@ -5592,11 +5458,8 @@ mod test {
     #[test]
     fn explicit_key_token_span_covers_only_the_indicator() {
         assert_eq!(
-            first_token_slice("? # c\n: value\n", |token| matches!(
-                token,
-                TokenType::Key {}
-            ))
-            .as_deref(),
+            first_token_slice("? # c\n: value\n", |token| matches!(token, TokenType::Key))
+                .as_deref(),
             Some("?")
         );
     }
@@ -5673,8 +5536,8 @@ mod test {
     fn queued_token_roundtrips_public_token_variants() {
         let span = Span::new(Marker::new(0, 1, 0), Marker::new(7, 1, 7));
         let tokens = [
-            Token(span, TokenType::StreamStart {}),
-            Token(span, TokenType::StreamEnd {}),
+            Token(span, TokenType::StreamStart),
+            Token(span, TokenType::StreamEnd),
             Token(span, TokenType::VersionDirective { major: 1, minor: 2 }),
             Token(
                 span,
@@ -5683,19 +5546,19 @@ mod test {
                     prefix: Cow::Borrowed("tag:app.example,"),
                 },
             ),
-            Token(span, TokenType::DocumentStart {}),
-            Token(span, TokenType::DocumentEnd {}),
-            Token(span, TokenType::BlockSequenceStart {}),
-            Token(span, TokenType::BlockMappingStart {}),
-            Token(span, TokenType::BlockEnd {}),
-            Token(span, TokenType::FlowSequenceStart {}),
-            Token(span, TokenType::FlowSequenceEnd {}),
-            Token(span, TokenType::FlowMappingStart {}),
-            Token(span, TokenType::FlowMappingEnd {}),
-            Token(span, TokenType::BlockEntry {}),
-            Token(span, TokenType::FlowEntry {}),
-            Token(span, TokenType::Key {}),
-            Token(span, TokenType::Value {}),
+            Token(span, TokenType::DocumentStart),
+            Token(span, TokenType::DocumentEnd),
+            Token(span, TokenType::BlockSequenceStart),
+            Token(span, TokenType::BlockMappingStart),
+            Token(span, TokenType::BlockEnd),
+            Token(span, TokenType::FlowSequenceStart),
+            Token(span, TokenType::FlowSequenceEnd),
+            Token(span, TokenType::FlowMappingStart),
+            Token(span, TokenType::FlowMappingEnd),
+            Token(span, TokenType::BlockEntry),
+            Token(span, TokenType::FlowEntry),
+            Token(span, TokenType::Key),
+            Token(span, TokenType::Value),
             Token(
                 span,
                 TokenType::Alias {
@@ -5729,7 +5592,7 @@ mod test {
                 span,
                 TokenType::Comment {
                     comment: Comment::new(Cow::Borrowed(" comment"))
-                        .with_placement(Placement::Right {}),
+                        .with_placement(Placement::Right),
                 },
             ),
             Token(
@@ -5828,7 +5691,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -5848,7 +5711,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -5868,11 +5731,11 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar { style: ScalarStyle::DoubleQuoted {}, ref value } if value == "key"
+            TokenType::Scalar { style: ScalarStyle::DoubleQuoted, ref value } if value == "key"
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -5890,7 +5753,7 @@ mod test {
         assert_eq!(scanner.adjacent_value_allowed_at, usize::MAX);
         assert!(matches!(
             scanner.tokens.front().unwrap().1,
-            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted {}, ref value) if value == "key"
+            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
         ));
         assert!(scanner.tokens.iter().any(|QueuedToken(_, token)| matches!(
             token,
@@ -5910,7 +5773,7 @@ mod test {
         assert_eq!(scanner.tokens.len(), 1);
         assert!(matches!(
             scanner.tokens.front().unwrap().1,
-            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted {}, ref value) if value == "key"
+            QueuedTokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
         ));
     }
 
@@ -5921,7 +5784,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
@@ -6234,7 +6097,7 @@ mod test {
                 .expect("valid YAML must scan without errors");
             let Some(tok) = tok else { break };
 
-            if matches!(tok.1, TokenType::Key {}) {
+            if matches!(tok.1, TokenType::Key) {
                 found_key = true;
             } else if found_key {
                 if let TokenType::Scalar { style: _, value } = tok.1 {
@@ -6265,7 +6128,7 @@ mod test {
                 .expect("valid YAML must scan without errors");
             let Some(tok) = tok else { break };
 
-            if matches!(tok.1, TokenType::Key {}) {
+            if matches!(tok.1, TokenType::Key) {
                 found_key = true;
             } else if found_key {
                 if let TokenType::Scalar { style: _, value } = tok.1 {
@@ -6472,7 +6335,7 @@ mod test {
         let mut scanner = Scanner::new(StrInput::new(""));
 
         while let Some(token) = scanner.next_token().unwrap() {
-            if matches!(token.1, TokenType::StreamEnd {}) {
+            if matches!(token.1, TokenType::StreamEnd) {
                 break;
             }
         }
@@ -6839,22 +6702,22 @@ mod test {
         assert_eq!(
             tokens,
             [
-                TokenType::StreamStart {},
-                TokenType::BlockMappingStart {},
-                TokenType::Key {},
+                TokenType::StreamStart,
+                TokenType::BlockMappingStart,
+                TokenType::Key,
                 TokenType::Scalar {
                     style: ScalarStyle::Plain { implicit: false },
                     value: "a".into()
                 },
-                TokenType::Value {},
-                TokenType::FlowSequenceStart {},
+                TokenType::Value,
+                TokenType::FlowSequenceStart,
                 TokenType::Scalar {
                     style: ScalarStyle::Plain { implicit: false },
                     value: "foo".into()
                 },
-                TokenType::FlowSequenceEnd {},
-                TokenType::BlockEnd {},
-                TokenType::StreamEnd {},
+                TokenType::FlowSequenceEnd,
+                TokenType::BlockEnd,
+                TokenType::StreamEnd,
             ]
         );
     }
@@ -6988,7 +6851,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();
@@ -7005,7 +6868,7 @@ mod test {
 
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::StreamStart {}
+            TokenType::StreamStart
         ));
 
         let token = scanner.next_token().unwrap().unwrap();

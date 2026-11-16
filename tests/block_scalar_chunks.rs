@@ -69,8 +69,8 @@ fn error_all_inputs(source: &str) -> ScanError {
 fn long_lines_preserve_folding_chomping_indentation_and_line_breaks() {
     let run = "abcdefgh01234567".repeat(256);
     for (indicator, style, separator) in [
-        ('|', ScalarKind::literal(), "\n"),
-        ('>', ScalarKind::folded(), " "),
+        ('|', ScalarKind::Literal, "\n"),
+        ('>', ScalarKind::Folded, " "),
     ] {
         for newline in ["\n", "\r", "\r\n"] {
             for indent in ["", "2"] {
@@ -184,7 +184,7 @@ fn eof_indentation_preserves_real_blank_lines_and_more_indented_content() {
 fn empty_block_scalar_at_eof_preserves_yaml_suite_chomping() {
     // JEF9-02 expects keep chomping to retain one newline for a whitespace-only scalar
     // at EOF, even when the final spaces have no terminating line break.
-    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for newline in ["\n", "\r", "\r\n"] {
             for (empty_lines, kept) in [(0, "\n"), (1, "\n"), (2, "\n\n")] {
                 for (header, expected) in [
@@ -308,7 +308,7 @@ fn source_failures_during_long_block_lines_remain_terminal() {
 
 #[test]
 fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof() {
-    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for newline in ["\n", "\r\n"] {
             for (chomp, expected_value) in [("-", "é"), ("", "é\n"), ("+", "é\n")] {
                 let source = format!("- !custom &a {indicator}2{chomp}{newline}  é{newline}  ");
@@ -321,18 +321,18 @@ fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof()
                         .map(|(event, _)| event.clone())
                         .collect::<Vec<_>>(),
                     vec![
-                        Event::stream_start(),
+                        Event::StreamStart,
                         Event::document_start(false, None),
-                        Event::sequence_start(StructureStyle::block(), 0, None),
+                        Event::sequence_start(StructureStyle::Block, 0, None),
                         Event::new_scalar(
                             expected_value.into(),
                             actual_style,
                             1,
                             Some(Cow::Owned(Tag::new("!", "custom"))),
                         ),
-                        Event::sequence_end(),
+                        Event::SequenceEnd,
                         Event::document_end(false),
-                        Event::stream_end(),
+                        Event::StreamEnd,
                     ],
                     "{source:?}"
                 );

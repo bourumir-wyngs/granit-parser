@@ -212,7 +212,7 @@ fn check_load_matches_iterator<'input>(
         );
     } else {
         assert!(
-            matches!(repeated, [(Event::StreamEnd { .. }, _)]),
+            matches!(repeated, [(Event::StreamEnd, _)]),
             "expected only a repeated StreamEnd after a clean end: {repeated:?}"
         );
     }
@@ -350,13 +350,13 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     if complete || !events.is_empty() {
         assert!(
-            matches!(events.first(), Some((Event::StreamStart { .. }, _))),
+            matches!(events.first(), Some((Event::StreamStart, _))),
             "parser trace does not start with StreamStart"
         );
     }
     if complete {
         assert!(
-            matches!(events.last(), Some((Event::StreamEnd { .. }, _))),
+            matches!(events.last(), Some((Event::StreamEnd, _))),
             "successful parser trace does not end with StreamEnd"
         );
     }
@@ -367,8 +367,8 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     for (index, (event, _)) in events.iter().enumerate() {
         match event {
-            Event::StreamStart { .. } => assert_eq!(index, 0, "duplicate StreamStart event"),
-            Event::StreamEnd { .. } => {
+            Event::StreamStart => assert_eq!(index, 0, "duplicate StreamStart event"),
+            Event::StreamEnd => {
                 assert!(complete, "StreamEnd preceded a parser error");
                 assert_eq!(index + 1, events.len(), "early StreamEnd event");
                 assert!(!document_open, "StreamEnd occurred inside a document");
@@ -395,7 +395,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Sequence);
             }
-            Event::SequenceEnd { .. } => {
+            Event::SequenceEnd => {
                 assert_eq!(collections.pop(), Some(Collection::Sequence));
             }
             Event::MappingStart {
@@ -405,7 +405,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Mapping);
             }
-            Event::MappingEnd { .. } => {
+            Event::MappingEnd => {
                 assert_eq!(collections.pop(), Some(Collection::Mapping));
             }
             Event::Scalar {
@@ -464,7 +464,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.first().map(Token::token_type),
-                Some(TokenType::StreamStart { .. })
+                Some(TokenType::StreamStart)
             ),
             "scanner trace does not start with StreamStart"
         );
@@ -473,7 +473,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.last().map(Token::token_type),
-                Some(TokenType::StreamEnd { .. })
+                Some(TokenType::StreamEnd)
             ),
             "successful scanner trace does not end with StreamEnd"
         );
@@ -481,7 +481,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamStart { .. }))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamStart))
             .count(),
         usize::from(!tokens.is_empty()),
         "scanner emitted multiple StreamStart tokens"
@@ -489,7 +489,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd { .. }))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd))
             .count(),
         usize::from(complete),
         "scanner must emit StreamEnd exactly once on success and never before an error"

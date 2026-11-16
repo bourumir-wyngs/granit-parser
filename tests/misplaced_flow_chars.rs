@@ -16,7 +16,7 @@ fn misplaced_closing_bracket_at_col_0() {
     }
 
     assert_eq!(events.len(), 9);
-    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(
         events[1],
         Event::DocumentStart {
@@ -28,7 +28,7 @@ fn misplaced_closing_bracket_at_col_0() {
     assert!(matches!(
         events[2],
         Event::MappingStart {
-            style: StructureStyle::Block { .. },
+            style: StructureStyle::Block,
             anchor_id: 0,
             tag: None,
             ..
@@ -49,16 +49,16 @@ fn misplaced_closing_bracket_at_col_0() {
     assert!(matches!(
         events[4],
         Event::SequenceStart {
-            style: StructureStyle::Flow { .. },
+            style: StructureStyle::Flow,
             anchor_id: 0,
             tag: None,
             ..
         }
     ));
-    assert!(matches!(events[5], Event::SequenceEnd { .. }));
-    assert!(matches!(events[6], Event::MappingEnd { .. }));
+    assert!(matches!(events[5], Event::SequenceEnd));
+    assert!(matches!(events[6], Event::MappingEnd));
     assert!(matches!(events[7], Event::DocumentEnd { .. }));
-    assert!(matches!(events[8], Event::StreamEnd { .. }));
+    assert!(matches!(events[8], Event::StreamEnd));
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn misplaced_closing_brace_at_col_0() {
     }
 
     assert_eq!(events.len(), 9);
-    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(
         events[1],
         Event::DocumentStart {
@@ -89,7 +89,7 @@ fn misplaced_closing_brace_at_col_0() {
     assert!(matches!(
         events[2],
         Event::MappingStart {
-            style: StructureStyle::Block { .. },
+            style: StructureStyle::Block,
             anchor_id: 0,
             tag: None,
             ..
@@ -110,16 +110,16 @@ fn misplaced_closing_brace_at_col_0() {
     assert!(matches!(
         events[4],
         Event::MappingStart {
-            style: StructureStyle::Flow { .. },
+            style: StructureStyle::Flow,
             anchor_id: 0,
             tag: None,
             ..
         }
     ));
-    assert!(matches!(events[5], Event::MappingEnd { .. }));
-    assert!(matches!(events[6], Event::MappingEnd { .. }));
+    assert!(matches!(events[5], Event::MappingEnd));
+    assert!(matches!(events[6], Event::MappingEnd));
     assert!(matches!(events[7], Event::DocumentEnd { .. }));
-    assert!(matches!(events[8], Event::StreamEnd { .. }));
+    assert!(matches!(events[8], Event::StreamEnd));
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn misplaced_comma_at_col_0() {
     }
 
     assert_eq!(events.len(), 11);
-    assert!(matches!(events[0], Event::StreamStart { .. }));
+    assert!(matches!(events[0], Event::StreamStart));
     assert!(matches!(
         events[1],
         Event::DocumentStart {
@@ -150,7 +150,7 @@ fn misplaced_comma_at_col_0() {
     assert!(matches!(
         events[2],
         Event::MappingStart {
-            style: StructureStyle::Block { .. },
+            style: StructureStyle::Block,
             anchor_id: 0,
             tag: None,
             ..
@@ -171,7 +171,7 @@ fn misplaced_comma_at_col_0() {
     assert!(matches!(
         events[4],
         Event::SequenceStart {
-            style: StructureStyle::Flow { .. },
+            style: StructureStyle::Flow,
             anchor_id: 0,
             tag: None,
             ..
@@ -201,8 +201,8 @@ fn misplaced_comma_at_col_0() {
     } else {
         panic!("Expected scalar 'b'");
     }
-    assert!(matches!(events[7], Event::SequenceEnd { .. }));
-    assert!(matches!(events[8], Event::MappingEnd { .. }));
+    assert!(matches!(events[7], Event::SequenceEnd));
+    assert!(matches!(events[8], Event::MappingEnd));
     assert!(matches!(events[9], Event::DocumentEnd { .. }));
-    assert!(matches!(events[10], Event::StreamEnd { .. }));
+    assert!(matches!(events[10], Event::StreamEnd));
 }

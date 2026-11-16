@@ -32,7 +32,7 @@ fn scalar_document(value: &str, explicit: bool) -> Vec<Event<'_>> {
         Event::document_start(explicit, None),
         Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
         Event::document_end(false),
-        Event::stream_end(),
+        Event::StreamEnd,
     ]
 }
 
@@ -95,15 +95,15 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
             .collect::<Vec<_>>(),
         vec![
             Event::document_start(true, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("healthy".into(), ScalarStyle::plain(), 0, None),
-            Event::mapping_start(StructureStyle::block(), 0, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("enabled".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("true".into(), ScalarStyle::plain(), 0, None),
-            Event::mapping_end(),
-            Event::mapping_end(),
+            Event::MappingEnd,
+            Event::MappingEnd,
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ],
     );
 
@@ -186,10 +186,7 @@ fn load_can_resume_without_synthetic_ends_for_the_abandoned_document() {
         .any(|event| matches!(event, Event::SequenceStart { .. })));
     assert!(!partial.0.iter().any(|event| matches!(
         event,
-        Event::SequenceEnd { .. }
-            | Event::MappingEnd { .. }
-            | Event::DocumentEnd { .. }
-            | Event::StreamEnd { .. }
+        Event::SequenceEnd | Event::MappingEnd | Event::DocumentEnd { .. } | Event::StreamEnd
     )));
 
     parser.proceed_next_document().unwrap();
@@ -457,7 +454,7 @@ fn recovery_at_eof_emits_stream_end_once() {
         first_error(&mut parser);
         parser.proceed_next_document().unwrap();
         let (event, span) = parser.next_event().unwrap().unwrap();
-        assert_eq!(event, Event::stream_end());
+        assert_eq!(event, Event::StreamEnd);
         assert_eq!(span.start.index(), source.chars().count());
         for _ in 0..3 {
             assert!(parser.next_event().is_none());
@@ -474,7 +471,7 @@ fn repeated_proceed_calls_preserve_an_unread_stream_end() {
         for _ in 0..4 {
             parser.proceed_next_document().unwrap();
         }
-        assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
+        assert_eq!(remaining_events(&mut parser), [Event::StreamEnd]);
         parser.proceed_next_document().unwrap();
         assert!(parser.next_event().is_none());
     }
@@ -484,16 +481,16 @@ fn repeated_proceed_calls_preserve_an_unread_stream_end() {
 fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
     let mut parser = Parser::new_from_str("healthy\n");
     loop {
-        if parser.peek().unwrap().unwrap().0 == Event::stream_end() {
+        if parser.peek().unwrap().unwrap().0 == Event::StreamEnd {
             break;
         }
         parser.next_event().unwrap().unwrap();
     }
     for _ in 0..3 {
         parser.proceed_next_document().unwrap();
-        assert_eq!(parser.peek().unwrap().unwrap().0, Event::stream_end());
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamEnd);
     }
-    assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
+    assert_eq!(remaining_events(&mut parser), [Event::StreamEnd]);
     parser.proceed_next_document().unwrap();
     assert!(parser.peek().is_none());
 }
@@ -502,7 +499,7 @@ fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
 fn skipping_an_empty_or_finished_stream_does_not_restart_it() {
     let mut empty = Parser::new_from_str("");
     empty.proceed_next_document().unwrap();
-    assert_eq!(remaining_events(&mut empty), vec![Event::stream_end()]);
+    assert_eq!(remaining_events(&mut empty), vec![Event::StreamEnd]);
 
     let mut finished = Parser::new_from_str("healthy\n");
     remaining_events(&mut finished);
@@ -520,7 +517,7 @@ fn proceed_after_load_consumes_a_recovered_eof_stays_exhausted() {
         parser.proceed_next_document().unwrap();
         let mut events = Events::default();
         parser.load(&mut events, true).unwrap();
-        assert_eq!(events.0, [Event::stream_end()]);
+        assert_eq!(events.0, [Event::StreamEnd]);
         parser.proceed_next_document().unwrap();
         assert!(parser.peek().is_none());
         assert!(parser.next_event().is_none());
@@ -668,7 +665,7 @@ fn assert_header_error_tag_retention<'input, I: BorrowedInput<'input>>(
         assert!(!events
             .iter()
             .any(|event| matches!(event, Event::Scalar { value, .. } if value == "discard")));
-        assert_eq!(events.last(), Some(&Event::stream_end()));
+        assert_eq!(events.last(), Some(&Event::StreamEnd));
     } else {
         assert_eq!(
             first_error(&mut parser).kind(),
@@ -785,7 +782,7 @@ fn failed_headers_can_recover_after_an_explicit_end_or_reach_eof() {
                 .into_iter()
                 .map(|(event, _)| event)
                 .collect::<Vec<_>>(),
-            [Event::stream_end()],
+            [Event::StreamEnd],
             "source: {source:?}",
         );
     }
@@ -830,7 +827,7 @@ fn recovery_retains_options_and_resets_nesting_limits() {
     let events = remaining_events(&mut parser);
     assert!(events.contains(&Event::unresolved_alias("missing".into())));
     assert_eq!(events.first(), Some(&Event::document_start(true, None)));
-    assert_eq!(events.last(), Some(&Event::stream_end()));
+    assert_eq!(events.last(), Some(&Event::StreamEnd));
 }
 
 #[cfg(feature = "comments")]

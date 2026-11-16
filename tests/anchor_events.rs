@@ -182,30 +182,30 @@ fn every_anchored_node_kind_emits_metadata_immediately_after_its_node_event() {
         ("&a\n", &[Scalar("~")]),
         ("[&a, next]\n", &[Scalar("~")]),
         ("key: &a\nnext: value\n", &[Scalar("~")]),
-        ("&a []\n", &[Sequence(StructureStyle::flow())]),
-        ("&a {}\n", &[Mapping(StructureStyle::flow())]),
-        ("&a [value]\n", &[Sequence(StructureStyle::flow())]),
-        ("&a {key: value}\n", &[Mapping(StructureStyle::flow())]),
-        ("&a\n- value\n", &[Sequence(StructureStyle::block())]),
-        ("&a\nkey: value\n", &[Mapping(StructureStyle::block())]),
-        ("key: &a\n- value\n", &[Sequence(StructureStyle::block())]),
+        ("&a []\n", &[Sequence(StructureStyle::Flow)]),
+        ("&a {}\n", &[Mapping(StructureStyle::Flow)]),
+        ("&a [value]\n", &[Sequence(StructureStyle::Flow)]),
+        ("&a {key: value}\n", &[Mapping(StructureStyle::Flow)]),
+        ("&a\n- value\n", &[Sequence(StructureStyle::Block)]),
+        ("&a\nkey: value\n", &[Mapping(StructureStyle::Block)]),
+        ("key: &a\n- value\n", &[Sequence(StructureStyle::Block)]),
         (
             "key: &a\n-\nnext: value\n",
-            &[Sequence(StructureStyle::block())],
+            &[Sequence(StructureStyle::Block)],
         ),
         ("? &a key\n: value\n", &[Scalar("key")]),
         ("[&a key: value]\n", &[Scalar("key")]),
         (
             "&a [*a, &b {key: &c value}, *b, *c]\n",
             &[
-                Sequence(StructureStyle::flow()),
-                Mapping(StructureStyle::flow()),
+                Sequence(StructureStyle::Flow),
+                Mapping(StructureStyle::Flow),
                 Scalar("value"),
             ],
         ),
         (
             "key: &a # c\n- # c2\n- x\n",
-            &[Sequence(StructureStyle::block())],
+            &[Sequence(StructureStyle::Block)],
         ),
         ("? &a # c\n: &b v\n", &[Scalar("~"), Scalar("v")]),
         ("- &a # c\n- &b x\n", &[Scalar("~"), Scalar("x")]),
@@ -214,17 +214,14 @@ fn every_anchored_node_kind_emits_metadata_immediately_after_its_node_event() {
         ("&a # c\n...\n--- &b x\n", &[Scalar("~"), Scalar("x")]),
         ("--- &a\n--- &b x\n", &[Scalar("~"), Scalar("x")]),
         ("&a # c", &[Scalar("~")]),
-        (
-            "key: !t &a # c\n- x\n",
-            &[Sequence(StructureStyle::block())],
-        ),
+        ("key: !t &a # c\n- x\n", &[Sequence(StructureStyle::Block)]),
         ("&a key: # c\n  &b v\n", &[Scalar("key"), Scalar("v")]),
         (
             "- &a\n  - &b x\n",
-            &[Sequence(StructureStyle::block()), Scalar("x")],
+            &[Sequence(StructureStyle::Block), Scalar("x")],
         ),
-        ("&a [*a]\n", &[Sequence(StructureStyle::flow())]),
-        ("<<: &a {x: 1}\n", &[Mapping(StructureStyle::flow())]),
+        ("&a [*a]\n", &[Sequence(StructureStyle::Flow)]),
+        ("<<: &a {x: 1}\n", &[Mapping(StructureStyle::Flow)]),
     ];
     for &(source, expected_nodes) in cases {
         for offset in [0, 1] {
@@ -632,7 +629,7 @@ fn loading_documents_separately_delivers_each_anchor_once() {
                 Event::document_end(false),
             ];
             if index == 0 {
-                expected.insert(0, Event::stream_start());
+                expected.insert(0, Event::StreamStart);
             }
             assert_eq!(
                 sink.0.iter().map(|(event, _)| event).collect::<Vec<_>>(),
@@ -649,7 +646,7 @@ fn loading_documents_separately_delivers_each_anchor_once() {
         }
         parser.load(&mut sink, true).unwrap();
         assert_eq!(sink.0.len(), 1);
-        assert_eq!(sink.0[0].0, Event::stream_end());
+        assert_eq!(sink.0[0].0, Event::StreamEnd);
         assert!(parser.next().is_none());
     }
 }
@@ -683,7 +680,7 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
             [
                 Event::anchor(offset, "a".into()),
                 Event::document_end(false),
-                Event::stream_end()
+                Event::StreamEnd
             ]
         );
         assert_eq!(sink.0[0].1.slice(source), Some("&a"));
@@ -805,7 +802,7 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
                     Event::new_scalar("second".into(), ScalarStyle::plain(), offset + 1, None),
                     Event::anchor(offset + 1, "kept".into()),
                     Event::document_end(false),
-                    Event::stream_end(),
+                    Event::StreamEnd,
                 ]
             );
             assert_eq!(events[2].1.slice(source), Some("&kept"));
@@ -840,7 +837,7 @@ fn anchored_collection_emits_metadata_before_an_unclosed_child_error() {
             assert_anchored_nodes(
                 source,
                 &events,
-                &[AnchoredNode::Sequence(StructureStyle::block())],
+                &[AnchoredNode::Sequence(StructureStyle::Block)],
                 offset,
             );
             assert_eq!(events.last().unwrap().0, Event::anchor(offset, "a".into()));

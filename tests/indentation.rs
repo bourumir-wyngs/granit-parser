@@ -270,7 +270,7 @@ fn root_block_sequence_can_have_anchor_on_previous_line() {
     assert!(events.iter().any(|event| matches!(
         event,
         Event::SequenceStart {
-            style: StructureStyle::Block { .. },
+            style: StructureStyle::Block,
             anchor_id: 1,
             tag: None,
             ..
@@ -288,7 +288,7 @@ fn indented_mapping_value_sequence_can_have_anchor_and_comment_on_previous_lines
     assert!(events.iter().any(|event| matches!(
         event,
         Event::SequenceStart {
-            style: StructureStyle::Block { .. },
+            style: StructureStyle::Block,
             anchor_id: 1,
             tag: None,
             ..

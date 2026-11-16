@@ -167,11 +167,11 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
             .collect::<Vec<_>>(),
         [
             Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
-            Event::stream_start(),
+            Event::StreamStart,
             Event::document_start(false, None),
             Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
             Event::document_end(false),
-            Event::stream_end(),
+            Event::StreamEnd,
         ],
     );
 }
@@ -245,7 +245,7 @@ fn ignored_comments_preserve_collection_entry_order() {
                     style: ScalarStyle::Plain { .. },
                     ..
                 } => Some(value.as_ref()),
-                Event::SequenceEnd { .. } => Some("<sequence end>"),
+                Event::SequenceEnd => Some("<sequence end>"),
                 _ => None,
             })
             .collect::<Vec<_>>();

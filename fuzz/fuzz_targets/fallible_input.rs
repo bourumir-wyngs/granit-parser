@@ -70,7 +70,7 @@ fn check_parser(input: &str, position: usize, expected: &ErrorKind) {
 
     let actual = loop {
         match parser.next() {
-            Some(Ok((event, _))) => emitted_stream_end |= matches!(event, Event::StreamEnd { .. }),
+            Some(Ok((event, _))) => emitted_stream_end |= matches!(event, Event::StreamEnd),
             Some(Err(error)) => break error,
             None => panic!("source error was mistaken for clean EOF"),
         }
@@ -93,7 +93,7 @@ fn check_scanner(input: &str, position: usize, expected: &ErrorKind) {
     let actual = loop {
         match scanner.next() {
             Some(Ok(token)) => {
-                emitted_stream_end |= matches!(token.token_type(), TokenType::StreamEnd { .. });
+                emitted_stream_end |= matches!(token.token_type(), TokenType::StreamEnd);
             }
             Some(Err(error)) => break error,
             None => panic!("source error was mistaken for clean EOF"),

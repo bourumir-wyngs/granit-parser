@@ -63,7 +63,7 @@ pub fn check_input(data: &[u8]) {
     let mut expected = vec![
         scalar("child"),
         #[cfg(feature = "comments")]
-        Event::comment(format!(" tail {payload}").into(), Placement::right()),
+        Event::comment(format!(" tail {payload}").into(), Placement::Right),
     ];
     for index in 0..comment_count {
         let text = format!(" after {index} {payload}");
@@ -76,9 +76,9 @@ pub fn check_input(data: &[u8]) {
             // Placement::Last requires no further token before StreamEnd. A following
             // comment is itself a token, so consecutive earlier comments remain Above.
             if tail == 0 && index + 1 == comment_count {
-                Placement::last()
+                Placement::Last
             } else {
-                Placement::above()
+                Placement::Above
             },
         ));
     }
@@ -126,7 +126,7 @@ pub fn check_input(data: &[u8]) {
                     // leaving its trailing-comment validation pending during the child.
                     assert_eq!(
                         next_checked(&mut stack, peek).unwrap().unwrap().0,
-                        Event::comment(" middle tail".into(), Placement::right())
+                        Event::comment(" middle tail".into(), Placement::Right)
                     );
                 }
             }
@@ -176,11 +176,11 @@ fn scalar(value: &'static str) -> Event<'static> {
 
 fn parent_events() -> [Event<'static>; 5] {
     [
-        Event::stream_start(),
+        Event::StreamStart,
         Event::document_start(false, None),
         scalar("parent"),
         Event::document_end(false),
-        Event::stream_end(),
+        Event::StreamEnd,
     ]
 }
 
@@ -212,7 +212,7 @@ fn push_child<'a>(stack: &mut Stack<'a>, backend: u8, source: &'a str) {
                 .collect::<Result<Vec<_>, _>>()
                 .expect("generated replay input must be valid YAML");
             if backend == 4 {
-                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd { .. }));
+                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
             }
             stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".into());
         }

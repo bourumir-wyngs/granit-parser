@@ -51,7 +51,7 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
 
 #[test]
 fn root_block_scalars_stop_at_document_markers() {
-    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for (chomping, content, expected) in [
             ("", "text\n", "text\n"),
             ("", "", ""),
@@ -87,7 +87,7 @@ fn root_block_scalars_stop_at_document_markers() {
                 assert_eq!(
                     events,
                     [
-                        Event::stream_start(),
+                        Event::StreamStart,
                         Event::document_start(false, None),
                         Event::new_scalar(expected.into(), actual_style, 0, None),
                         Event::document_end(!explicit),
@@ -103,7 +103,7 @@ fn root_block_scalars_stop_at_document_markers() {
                             None
                         ),
                         Event::document_end(false),
-                        Event::stream_end(),
+                        Event::StreamEnd,
                     ],
                     "input: {yaml:?}",
                 );
@@ -115,8 +115,8 @@ fn root_block_scalars_stop_at_document_markers() {
 #[test]
 fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_markers() {
     for (indicator, style, body) in [
-        ('|', ScalarKind::literal(), "\nα\nβ"),
-        ('>', ScalarKind::folded(), "\nα β"),
+        ('|', ScalarKind::Literal, "\nα\nβ"),
+        ('>', ScalarKind::Folded, "\nα β"),
     ] {
         for (chomping, tail) in [("-", ""), ("", "\n"), ("+", "\n\n")] {
             for newline in ["\n", "\r\n", "\r"] {
@@ -133,16 +133,16 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         .map(|(event, _)| event.clone())
                         .collect::<Vec<_>>(),
                     [
-                        Event::stream_start(),
+                        Event::StreamStart,
                         Event::document_start(false, None),
                         Event::new_scalar(format!("{body}{tail}").into(), actual_style, 0, None),
                         Event::document_end(false),
                         Event::document_start(true, None),
                         #[cfg(feature = "comments")]
-                        Event::comment(" next document".into(), Placement::right()),
+                        Event::comment(" next document".into(), Placement::Right),
                         Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
                         Event::document_end(false),
-                        Event::stream_end(),
+                        Event::StreamEnd,
                     ]
                     .into_iter()
                     .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
@@ -170,7 +170,7 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
 
 #[test]
 fn block_scalars_preserve_content_resembling_document_markers() {
-    for (indicator, style) in [('|', ScalarKind::literal()), ('>', ScalarKind::folded())] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for (content, expected) in [
             ("---text\n", "---text\n"),
             ("---#text\n", "---#text\n"),
@@ -193,11 +193,11 @@ fn block_scalars_preserve_content_resembling_document_markers() {
             assert_eq!(
                 events,
                 [
-                    Event::stream_start(),
+                    Event::StreamStart,
                     Event::document_start(false, None),
                     Event::new_scalar(expected.into(), actual_style, 0, None),
                     Event::document_end(false),
-                    Event::stream_end(),
+                    Event::StreamEnd,
                 ],
                 "input: {yaml:?}",
             );
