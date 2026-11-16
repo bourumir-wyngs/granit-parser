@@ -9,6 +9,11 @@
   `ErrorKind::BomInsideDocument`. A BOM in a document prefix is still skipped.
 - Accept under-indented quoted scalar continuations in block context by default, matching
   `PyYAML` and `ruamel.yaml`. `strict_indentation: true` still rejects them.
+- Accept tabs before quoted scalar continuations by default, matching libyaml, `PyYAML` and
+  `ruamel.yaml`. `strict_indentation: true` still rejects them (`ErrorKind::TabInIndentation`).
+- Add `Options::block_scalar_eof_without_line_feed` (default `false`) to add no line feed after
+  the last line of a block scalar that ends the input without a line break, as libyaml does.
+  By default that line still gets one, as the YAML test suite expects (`L24T`).
 
 ## 2.1.0
 

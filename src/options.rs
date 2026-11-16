@@ -48,6 +48,14 @@ pub struct Options {
     /// unknown keys (for example, Serde's `deny_unknown_fields`) so these are not silently
     /// ignored. Defaults to false.
     pub bom_inside_document_as_content: bool,
+    /// Add no line feed after the last line of a block scalar when the input ends on that line,
+    /// without a line break, as libyaml does.
+    ///
+    /// By default, such a line is read as if it ended with a line break, as the YAML test suite
+    /// expects (`L24T`): `"key: |\n  text"` yields `"text\n"`. When `true`, it yields `"text"`,
+    /// as libyaml, `PyYAML` and `ruamel.yaml` do. This applies to literal and folded scalars with
+    /// clip or keep chomping; strip chomping adds no line feed either way. Defaults to false.
+    pub block_scalar_eof_without_line_feed: bool,
     /// Emit unresolved alias nodes instead of stopping at an unknown anchor.
     ///
     /// Defaults to `false`. When omitted or explicitly set to `false`, an alias without a
@@ -167,6 +175,7 @@ impl Default for Options {
             strict_indentation: false,
             disallow_directives: false,
             bom_inside_document_as_content: false,
+            block_scalar_eof_without_line_feed: false,
             emit_unresolved_aliases: false,
             emit_anchor_events: false,
             emit_comments: cfg!(feature = "comments"),
