@@ -7,8 +7,11 @@ use crate::common;
 
 use std::str;
 
-use common::parse_with_both_inputs;
-use granit_parser::{Event, Parser, ScalarKind, ScalarStyle};
+use common::{
+    parse_with_both_inputs,
+    snapshots::{snapshot, ExpectedEvent, ExpectedStyle},
+};
+use granit_parser::{Parser, ScalarKind};
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 
@@ -142,17 +145,17 @@ fn root_block_document(seed: &[u8], bucket: u8, target_len: usize) -> String {
     assert_eq!(
         events
             .iter()
-            .map(|(event, _)| event.clone())
+            .map(|(event, _)| snapshot(event))
             .collect::<Vec<_>>(),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar(expected.into(), actual_style, false, 0, None),
-            Event::document_end(false),
-            Event::document_start(true, None),
-            Event::new_scalar("second".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::new_scalar(expected.into(), actual_style, false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::document_start(true, None),
+            ExpectedEvent::new_scalar("second".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ],
         "root block scalar folding, chomping, or document boundary changed",
     );

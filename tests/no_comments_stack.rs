@@ -1,9 +1,11 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
+
 mod support;
 use granit_parser::{Event, Options, Parser, ParserStack, Span, StrInput};
 #[cfg(feature = "comments")]
-use granit_parser::{Marker, ParserTrait, Placement, ReplayParser, ScalarStyle};
-#[cfg(feature = "comments")]
-use std::borrow::Cow;
+use granit_parser::{Marker, ParserTrait, ReplayParser};
 use std::{boxed::Box, vec::Vec};
 
 type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
@@ -19,6 +21,20 @@ fn no_comment_options() -> Options {
 #[cfg(feature = "comments")]
 fn span() -> Span {
     Span::empty(Marker::new(0, 1, 0))
+}
+
+#[cfg(feature = "comments")]
+fn replay_events(source: &'static str) -> Vec<(Event<'static>, Span)> {
+    Parser::new_from_str(source)
+        .map(Result::unwrap)
+        .filter(|(event, _)| {
+            !matches!(
+                event,
+                Event::StreamStart { .. } | Event::DocumentStart { .. }
+            )
+        })
+        .map(|(event, _)| (event, span()))
+        .collect()
 }
 
 fn ambiguous_comment_run() -> String {
@@ -61,7 +77,7 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
             .count(),
         1
     );
@@ -72,16 +88,7 @@ fn assert_nested_trailing_comment_is_suppressed(stack: Stack) {
 fn default_stack_emits_replayed_comments() {
     let mut stack = Stack::new();
     stack.push_replay_parser(
-        ReplayParser::new(
-            vec![
-                (
-                    Event::comment(Cow::Borrowed(" replay"), Placement::Free),
-                    span(),
-                ),
-                (Event::StreamEnd, span()),
-            ],
-            1,
-        ),
+        ReplayParser::new(replay_events("# replay\n"), 1),
         "replay".to_owned(),
     );
 
@@ -94,20 +101,7 @@ fn default_stack_emits_replayed_comments() {
 fn no_comments_stack_suppresses_replayed_events() {
     let mut stack = Stack::with_options(no_comment_options());
     stack.push_replay_parser(
-        ReplayParser::new(
-            vec![
-                (
-                    Event::comment(Cow::Borrowed(" replay"), Placement::Free),
-                    span(),
-                ),
-                (
-                    Event::new_scalar(Cow::Borrowed("value"), ScalarStyle::Plain, false, 0, None),
-                    span(),
-                ),
-                (Event::StreamEnd, span()),
-            ],
-            1,
-        ),
+        ReplayParser::new(replay_events("# replay\nvalue\n"), 1),
         "replay".to_owned(),
     );
 
@@ -124,7 +118,7 @@ fn no_comments_stack_suppresses_preconsumed_current_and_later_comments() {
     let mut parser = Parser::new_from_str("# current\n# later\nvalue\n");
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
     let current = parser.next_event().unwrap().unwrap();
     assert!(matches!(current.0, Event::Comment { .. }));
@@ -149,11 +143,13 @@ fn no_comments_options_reach_borrowed_includes() {
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
     assert_eq!(
-        events
-            .iter()
-            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
-            .collect::<Vec<_>>(),
-        ["key", "~", "next", "value"],
+        snapshot(
+            &(events
+                .iter()
+                .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+                .collect::<Vec<_>>())
+        ),
+        snapshot(&["key", "~", "next", "value"]),
     );
 }
 
@@ -167,11 +163,13 @@ fn no_comments_options_reach_owned_includes() {
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert_has_no_comments(&events);
     assert_eq!(
-        events
-            .iter()
-            .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
-            .collect::<Vec<_>>(),
-        ["key", "~", "next", "value"],
+        snapshot(
+            &(events
+                .iter()
+                .filter_map(|(event, _)| event.scalar().map(|(value, _)| value))
+                .collect::<Vec<_>>())
+        ),
+        snapshot(&["key", "~", "next", "value"]),
     );
 }
 
@@ -214,21 +212,7 @@ fn suppressed_custom_comment_after_nested_document_end_is_not_a_second_document(
 fn suppressed_replay_comment_after_nested_document_end_is_not_a_second_document() {
     let mut stack = stack_with_parent();
     stack.push_replay_parser(
-        ReplayParser::new(
-            vec![
-                (
-                    Event::new_scalar(Cow::Borrowed("child"), ScalarStyle::Plain, false, 0, None),
-                    span(),
-                ),
-                (Event::document_end(false), span()),
-                (
-                    Event::comment(Cow::Borrowed(" trailing"), Placement::Last),
-                    span(),
-                ),
-                (Event::StreamEnd, span()),
-            ],
-            1,
-        ),
+        ReplayParser::new(replay_events("child\n... # trailing\n"), 1),
         "replay child".to_owned(),
     );
 

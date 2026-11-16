@@ -1,3 +1,6 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
 mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Options, Parser, Scanner, StrInput,
@@ -133,7 +136,7 @@ fn new_uses_default_options() {
     let from_options: Vec<_> =
         Parser::with_options(StrInput::new(yaml), Options::default()).collect();
 
-    assert_eq!(from_new, from_options);
+    assert_eq!(snapshot(&from_new), snapshot(&from_options));
 }
 
 #[test]
@@ -417,7 +420,7 @@ fn scanner_enforces_block_nesting_limit_for_compact_collections() {
                 Ok(token)
                     if matches!(
                         token.token_type(),
-                        TokenType::BlockSequenceStart | TokenType::BlockMappingStart
+                        TokenType::BlockSequenceStart { .. } | TokenType::BlockMappingStart { .. }
                     ) =>
                 {
                     starts += 1;

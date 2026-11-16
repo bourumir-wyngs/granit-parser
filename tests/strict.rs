@@ -1,6 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+
 use granit_parser::{
-    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScalarStyle, ScanError,
-    Scanner, StrInput, StructureStyle, Tag,
+    BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScanError, Scanner,
+    StrInput, StructureStyle, Tag,
 };
 use std::borrow::Cow;
 
@@ -43,12 +47,18 @@ fn assert_relaxed_only_with_kind(
                 .0
         })
         .collect::<Vec<_>>();
-    assert_eq!(default, expected, "default changed events for {yaml:?}");
+    assert_eq!(
+        snapshot(&default),
+        snapshot(&expected),
+        "default changed events for {yaml:?}"
+    );
 
     for result in events_with_inputs(yaml, false) {
         assert_eq!(
-            result.unwrap_or_else(|error| panic!("relaxed mode rejected {yaml:?}: {error}")),
-            expected,
+            snapshot(
+                &result.unwrap_or_else(|error| panic!("relaxed mode rejected {yaml:?}: {error}"))
+            ),
+            snapshot(&expected),
             "relaxed mode changed events for {yaml:?}"
         );
     }
@@ -82,10 +92,10 @@ fn assert_relaxed_only_with_kind(
     // The corresponding conforming spelling must also work through every input backend.
     for result in events_with_inputs(reference, true) {
         assert_eq!(
-            result.unwrap_or_else(|error| panic!(
+            snapshot(&result.unwrap_or_else(|error| panic!(
                 "strict mode rejected reference {reference:?}: {error}"
-            )),
-            expected
+            ))),
+            snapshot(&expected)
         );
     }
 }
@@ -413,7 +423,10 @@ fn strict_rejects_tabs_used_instead_of_flow_indentation() {
             })
             .collect::<Vec<_>>();
         for result in events_with_inputs(yaml, false) {
-            assert_eq!(result.expect("relaxed mode should parse"), expected);
+            assert_eq!(
+                snapshot(&result.expect("relaxed mode should parse")),
+                snapshot(&expected)
+            );
         }
         for result in events_with_inputs(yaml, true) {
             let error = result.expect_err("strict mode accepted tab indentation");
@@ -464,10 +477,7 @@ fn conforming_flow_indentation_has_identical_events_in_both_modes() {
             .collect::<Vec<_>>();
         for strict_indentation in [false, true] {
             for result in events_with_inputs(yaml, strict_indentation) {
-                assert_eq!(
-                    result.unwrap_or_else(|error| panic!("strict_indentation={strict_indentation}, input {yaml:?}: {error}")),
-                    expected
-                );
+                assert_eq!( snapshot(&result.unwrap_or_else(|error| panic!("strict_indentation={strict_indentation}, input {yaml:?}: {error}"))), snapshot(&expected));
             }
             Scanner::with_options(StrInput::new(yaml), granit_parser::options! { strict_indentation: strict_indentation })
                 .collect::<Result<Vec<_>, _>>()
@@ -571,8 +581,8 @@ fn strict_flow_indentation_follows_dedents_and_document_boundaries() {
         .collect::<Vec<_>>();
     for result in events_with_inputs(yaml, true) {
         assert_eq!(
-            result.expect("indentation should follow the current block"),
-            expected
+            snapshot(&result.expect("indentation should follow the current block")),
+            snapshot(&expected)
         );
     }
 }
@@ -582,25 +592,25 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
     // YAML 1.2.2 [112] discards the escaped break but retains each l-empty [70].
     // Empty lines may contain fewer spaces than the required flow prefix [69].
     let expected = vec![
-        Event::StreamStart,
-        Event::document_start(false, None),
-        Event::mapping_start(StructureStyle::Block, 0, None),
-        Event::new_scalar("outer".into(), ScalarStyle::Plain, false, 0, None),
-        Event::mapping_start(StructureStyle::Block, 0, None),
-        Event::new_scalar("key".into(), ScalarStyle::Plain, false, 0, None),
-        Event::new_scalar(
+        ExpectedEvent::StreamStart,
+        ExpectedEvent::document_start(false, None),
+        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+        ExpectedEvent::new_scalar("outer".into(), ExpectedStyle::plain(), false, 0, None),
+        ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+        ExpectedEvent::new_scalar("key".into(), ExpectedStyle::plain(), false, 0, None),
+        ExpectedEvent::new_scalar(
             "é\n字".into(),
-            ScalarStyle::DoubleQuoted,
+            ExpectedStyle::DoubleQuoted,
             false,
             1,
             Some(Cow::Owned(Tag::new("!", "custom"))),
         ),
-        Event::new_scalar("copy".into(), ScalarStyle::Plain, false, 0, None),
-        Event::alias(1),
-        Event::MappingEnd,
-        Event::MappingEnd,
-        Event::document_end(false),
-        Event::StreamEnd,
+        ExpectedEvent::new_scalar("copy".into(), ExpectedStyle::plain(), false, 0, None),
+        ExpectedEvent::alias(1),
+        ExpectedEvent::MappingEnd,
+        ExpectedEvent::MappingEnd,
+        ExpectedEvent::document_end(false),
+        ExpectedEvent::StreamEnd,
     ];
     for newline in ["\n", "\r\n"] {
         for empty_line in ["", " ", "   \t"] {
@@ -610,8 +620,8 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
             for strict in [false, true] {
                 for result in events_with_inputs(&yaml, strict) {
                     assert_eq!(
-                        result.unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
-                        expected,
+                        snapshot(&result.unwrap_or_else(|error| panic!("{yaml:?}: {error}"))),
+                        snapshot(&expected),
                         "strict={strict}, {yaml:?}"
                     );
                 }

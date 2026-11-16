@@ -3,6 +3,10 @@
 //! These tests target scattered error paths and default trait implementations that the
 //! regular test suite does not reach.
 
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent};
+
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
 
@@ -34,7 +38,7 @@ impl<'input> TryEventReceiver<'input> for RejectStreamEnd {
     type Error = &'static str;
 
     fn on_event(&mut self, ev: Event<'input>) -> Result<(), Self::Error> {
-        if matches!(ev, Event::StreamEnd) {
+        if matches!(ev, Event::StreamEnd { .. }) {
             Err("stream end rejected")
         } else {
             Ok(())
@@ -286,7 +290,8 @@ fn assert_load_scan_error_exhausts_parser<'input, T: BorrowedInput<'input>>(
     assert!(parser.next_event().is_none());
     parser.load(&mut events, multi).unwrap();
     assert_eq!(
-        events.0, emitted,
+        snapshot(&events.0),
+        snapshot(&emitted),
         "an exhausted parser must not emit further events"
     );
     let mut receiver = AcceptAll;
@@ -395,7 +400,7 @@ fn next_event_after_receiver_error_on_stream_end_returns_stream_end() {
     // The parser already reached its terminal state; asking for another event
     // re-emits `StreamEnd` instead of scanning further.
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::StreamEnd);
+    assert_eq!(snapshot(&event), ExpectedEvent::StreamEnd);
     assert!(parser.next_event().is_none());
 }
 
@@ -408,6 +413,6 @@ fn next_event_after_receiver_error_on_stream_end_with_comments_returns_stream_en
     assert_eq!(err, TryLoadError::Receiver("stream end rejected"));
 
     let (event, _) = parser.next_event().expect("stream end event").unwrap();
-    assert_eq!(event, Event::StreamEnd);
+    assert_eq!(snapshot(&event), ExpectedEvent::StreamEnd);
     assert!(parser.next_event().is_none());
 }

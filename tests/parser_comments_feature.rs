@@ -1,19 +1,24 @@
 #![cfg(not(feature = "comments"))]
 
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ParserStack,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 
 fn parsed_events(yaml: &str) -> Vec<(Event<'_>, Span)> {
     let events = Parser::new_from_str(yaml)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     assert_eq!(
-        events,
-        Parser::new_from_iter(yaml.chars())
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap(),
+        snapshot(&(events)),
+        snapshot(
+            &(Parser::new_from_iter(yaml.chars())
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap())
+        ),
         "{yaml:?}"
     );
     events
@@ -46,8 +51,8 @@ fn default_scanners_and_parsers_ignore_comments_for_all_input_backends() {
         let fallible = Parser::new_from_fallible_iter(yaml.chars().map(Ok::<char, ErrorKind>))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(string, buffered, "{yaml:?}");
-        assert_eq!(string, fallible, "{yaml:?}");
+        assert_eq!(snapshot(&(string)), snapshot(&(buffered)), "{yaml:?}");
+        assert_eq!(snapshot(&(string)), snapshot(&(fallible)), "{yaml:?}");
         assert!(string
             .iter()
             .any(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "value")));
@@ -63,8 +68,8 @@ fn default_scanners_and_parsers_ignore_comments_for_all_input_backends() {
         ))
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-        assert_eq!(string, buffered, "{yaml:?}");
-        assert_eq!(string, fallible, "{yaml:?}");
+        assert_eq!(snapshot(&(string)), snapshot(&(buffered)), "{yaml:?}");
+        assert_eq!(snapshot(&(string)), snapshot(&(fallible)), "{yaml:?}");
         assert!(string.iter().any(|token| {
             matches!(token.token_type(), TokenType::Scalar { value, .. } if value == "value")
         }));
@@ -159,20 +164,36 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
         "child".into(),
     );
     assert_eq!(
-        stack
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap()
-            .into_iter()
-            .map(|(event, _)| event)
-            .collect::<Vec<_>>(),
-        [
-            Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar("parent".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
-        ],
+        snapshot(
+            &(stack
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .into_iter()
+                .map(|(event, _)| event)
+                .collect::<Vec<_>>())
+        ),
+        snapshot(
+            &([
+                ExpectedEvent::new_scalar(
+                    "child".into(),
+                    ExpectedStyle::Plain { implicit: false },
+                    false,
+                    0,
+                    None
+                ),
+                ExpectedEvent::StreamStart,
+                ExpectedEvent::document_start(false, None),
+                ExpectedEvent::new_scalar(
+                    "parent".into(),
+                    ExpectedStyle::Plain { implicit: false },
+                    false,
+                    0,
+                    None
+                ),
+                ExpectedEvent::document_end(false),
+                ExpectedEvent::StreamEnd,
+            ])
+        )
     );
 }
 
@@ -242,10 +263,10 @@ fn ignored_comments_preserve_collection_entry_order() {
             .filter_map(|(event, _)| match event {
                 Event::Scalar {
                     value,
-                    style: ScalarStyle::Plain,
+                    style: ScalarStyle::Plain { .. },
                     ..
                 } => Some(value.as_ref()),
-                Event::SequenceEnd => Some("<sequence end>"),
+                Event::SequenceEnd { .. } => Some("<sequence end>"),
                 _ => None,
             })
             .collect::<Vec<_>>();

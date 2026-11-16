@@ -1,4 +1,4 @@
-use granit_parser::{options, Event, Parser, ScanError};
+use granit_parser::{options, Event, Parser, ScalarStyle, ScanError};
 
 const README: &str = include_str!("../README.md");
 
@@ -45,14 +45,11 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
             Event::UnresolvedAlias { name, .. } => {
                 lines.push(format!("undefined anchor: {name:?}"));
             }
-            Event::Scalar {
-                value,
-                style,
-                implicit,
-                ..
-            } => {
-                if style.is_plain() && value == "~" {
-                    lines.push(format!("plain scalar: value={value:?} implicit={implicit}"));
+            Event::Scalar { value, style, .. } => {
+                if let ScalarStyle::Plain { implicit, .. } = style {
+                    if value == "~" {
+                        lines.push(format!("plain scalar: value={value:?} implicit={implicit}"));
+                    }
                 }
                 if let Some(syntax) = style.block_syntax() {
                     lines.push(format!(

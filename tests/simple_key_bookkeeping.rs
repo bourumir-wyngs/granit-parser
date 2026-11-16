@@ -1,3 +1,6 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
 mod support;
 use granit_parser::{ErrorKind, Event, Marker, Options, Parser, ScanError, Span};
 
@@ -13,8 +16,16 @@ fn trace_all_inputs(source: &str, options: Options) -> Vec<Result<(Event<'_>, Sp
         options,
     )
     .collect::<Vec<_>>();
-    assert_eq!(trace, from_iter, "source: {source:?}");
-    assert_eq!(trace, from_fallible, "source: {source:?}");
+    assert_eq!(
+        snapshot(&(trace)),
+        snapshot(&(from_iter)),
+        "source: {source:?}"
+    );
+    assert_eq!(
+        snapshot(&(trace)),
+        snapshot(&(from_fallible)),
+        "source: {source:?}"
+    );
     trace
 }
 
@@ -32,14 +43,14 @@ fn outline(trace: &[Result<(Event<'_>, Span), ScanError>]) -> Vec<String> {
             Ok((Event::Scalar { value, .. }, _)) => format!("scalar:{value}"),
             #[cfg(feature = "comments")]
             Ok((Event::Comment { value, .. }, _)) => format!("comment:{value}"),
-            Ok((Event::StreamStart, _)) => "+STR".into(),
-            Ok((Event::StreamEnd, _)) => "-STR".into(),
+            Ok((Event::StreamStart { .. }, _)) => "+STR".into(),
+            Ok((Event::StreamEnd { .. }, _)) => "-STR".into(),
             Ok((Event::DocumentStart { .. }, _)) => "+DOC".into(),
             Ok((Event::DocumentEnd { .. }, _)) => "-DOC".into(),
             Ok((Event::SequenceStart { .. }, _)) => "+SEQ".into(),
-            Ok((Event::SequenceEnd, _)) => "-SEQ".into(),
+            Ok((Event::SequenceEnd { .. }, _)) => "-SEQ".into(),
             Ok((Event::MappingStart { .. }, _)) => "+MAP".into(),
-            Ok((Event::MappingEnd, _)) => "-MAP".into(),
+            Ok((Event::MappingEnd { .. }, _)) => "-MAP".into(),
             other => format!("{other:?}"),
         })
         .collect()
@@ -76,7 +87,7 @@ fn outer_key_remains_active_after_all_nested_candidates_are_removed() {
         assert!(matches!(&events[3 + depth].0, Event::Scalar { value, .. } if value == "leaf"));
         assert!(events[4 + depth..4 + 2 * depth]
             .iter()
-            .all(|(event, _)| matches!(event, Event::SequenceEnd)));
+            .all(|(event, _)| matches!(event, Event::SequenceEnd { .. })));
         assert!(
             matches!(&events[4 + 2 * depth].0, Event::Scalar { value, .. } if value == "value")
         );
@@ -136,7 +147,10 @@ fn zero_and_maximum_limits_preserve_explicit_keys_and_non_key_nodes() {
         let expected = parse_all_inputs(source, Options::default());
         for limit in [0, usize::MAX] {
             let options = granit_parser::options! { simple_key_max_lookahead: limit };
-            assert_eq!(parse_all_inputs(source, options), expected);
+            assert_eq!(
+                snapshot(&(parse_all_inputs(source, options))),
+                snapshot(&(expected))
+            );
         }
     }
     let source = format!("a: b\n{}: value\n", "é".repeat(2048));
@@ -230,8 +244,8 @@ fn under_indented_flow_entries_keep_supported_and_invalid_key_cases() {
     let actual = parse_all_inputs(source, Options::default());
     let expected = parse_all_inputs(reference, Options::default());
     assert_eq!(
-        actual.iter().map(|(event, _)| event).collect::<Vec<_>>(),
-        expected.iter().map(|(event, _)| event).collect::<Vec<_>>()
+        snapshot(&(actual.iter().map(|(event, _)| event).collect::<Vec<_>>())),
+        snapshot(&(expected.iter().map(|(event, _)| event).collect::<Vec<_>>()))
     );
 
     let source = "key: { &anchor\nname\n: value\n}\n";

@@ -1,7 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     BorrowedInput, ErrorKind, Event, Parser, Span, SpannedEventReceiver, TryLoadError,
     TrySpannedEventReceiver,
 };
+use snapshots::snapshot;
 
 #[derive(Default)]
 struct Events<'input>(Vec<(Event<'input>, Span)>);
@@ -39,7 +42,7 @@ fn assert_presence<'input, I: BorrowedInput<'input>>(
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::StreamEnd))
+            .filter(|(event, _)| matches!(event, Event::StreamEnd { .. }))
             .count(),
         1,
     );
@@ -96,10 +99,16 @@ fn presence_after_document_end_preserves_the_entire_remaining_event_stream() {
             assert_eq!(parser.proceed_next_document().unwrap(), has_document);
             if !has_document {
                 assert!(!parser.proceed_next_document().unwrap());
-                assert_eq!(parser.peek().unwrap().unwrap(), &expected[0]);
+                assert_eq!(
+                    snapshot(&(parser.peek().unwrap().unwrap())),
+                    snapshot(&(&expected[0]))
+                );
                 assert!(!parser.proceed_next_document().unwrap());
             }
-            assert_eq!(parser.collect::<Result<Vec<_>, _>>().unwrap(), expected);
+            assert_eq!(
+                snapshot(&(parser.collect::<Result<Vec<_>, _>>().unwrap())),
+                snapshot(&(expected))
+            );
         }
     }
 }
@@ -110,9 +119,15 @@ fn repeated_proceed_preserves_an_unread_or_peeked_stream_end() {
     for _ in 0..3 {
         assert!(!parser.proceed_next_document().unwrap());
     }
-    assert_eq!(parser.peek().unwrap().unwrap().0, Event::StreamEnd);
+    assert!(matches!(
+        parser.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+    assert!(matches!(
+        parser.next().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
     assert!(!parser.proceed_next_document().unwrap());
     assert!(parser.next().is_none());
 }
@@ -182,7 +197,7 @@ fn load_and_try_load_preserve_buffered_comments_before_the_next_syntax_error() {
             } else {
                 parser.load(&mut events, true).unwrap_err()
             };
-            assert_eq!(events.0, expected);
+            assert_eq!(snapshot(&(events.0)), snapshot(&(expected)));
             assert_eq!(error.kind(), expected_error.kind());
             assert_eq!(error.marker(), expected_error.marker());
             assert!(parser.next().is_none());
@@ -197,7 +212,10 @@ fn incomplete_next_header_is_not_reported_as_clean_eof() {
     let error = parser.by_ref().find_map(Result::err).unwrap();
     assert_eq!(error.kind(), &ErrorKind::ExpectedDocumentStart);
     assert!(!parser.proceed_next_document().unwrap());
-    assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+    assert!(matches!(
+        parser.next().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
 }
 
 #[cfg(feature = "comments")]
@@ -264,7 +282,7 @@ fn pending_header_probe_keeps_source_failures_terminal() {
     let mut events = Events::default();
     parser.load(&mut events, true).unwrap();
     parser.try_load(&mut events, true).unwrap();
-    assert_eq!(events.0, []);
+    assert!((events.0).is_empty());
     assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
 }
 
@@ -290,7 +308,7 @@ fn source_failure_while_probing_past_comments_is_terminal() {
         let mut events = Events::default();
         parser.load(&mut events, true).unwrap();
         parser.try_load(&mut events, true).unwrap();
-        assert_eq!(events.0, []);
+        assert!((events.0).is_empty());
         assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
     }
 }
@@ -317,7 +335,7 @@ fn terminal_probe_error_discards_a_previously_peeked_comment() {
     let mut events = Events::default();
     parser.load(&mut events, true).unwrap();
     parser.try_load(&mut events, true).unwrap();
-    assert_eq!(events.0, []);
+    assert!((events.0).is_empty());
 }
 
 #[cfg(feature = "comments")]
@@ -344,7 +362,10 @@ fn probing_respects_the_comment_buffer_limit_and_disabled_comments() {
             },
         );
         assert!(!parser.proceed_next_document().unwrap());
-        assert_eq!(parser.next().unwrap().unwrap().0, Event::StreamEnd);
+        assert!(matches!(
+            parser.next().unwrap().unwrap().0,
+            Event::StreamEnd { .. }
+        ));
 
         let mut parser = Parser::new_from_str_with_options(
             "first\n...\n# one\n# two\n---\nhealthy\n",

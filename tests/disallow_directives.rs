@@ -1,7 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     options, BufferedInput, ErrorKind, FallibleBufferedInput, Options, Parser, ScanError, Scanner,
     StrInput,
 };
+use snapshots::snapshot;
 
 fn first_errors(yaml: &str, options: Options) -> [(&str, Option<ScanError>); 6] {
     [
@@ -128,7 +131,11 @@ fn directives_remain_enabled_by_default_and_explicit_false() {
             Parser::new_from_str_with_options(yaml, options! { disallow_directives: false })
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-        assert_eq!(explicit_false, expected, "input: {yaml:?}");
+        assert_eq!(
+            snapshot(&(explicit_false)),
+            snapshot(&(expected)),
+            "input: {yaml:?}"
+        );
     }
 }
 
@@ -158,7 +165,11 @@ fn percent_in_scalar_content_and_comments_is_unaffected() {
             let actual = Parser::new_from_str_with_options(yaml, enabled.clone())
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-            assert_eq!(actual, expected, "input: {yaml:?}");
+            assert_eq!(
+                snapshot(&(actual)),
+                snapshot(&(expected)),
+                "input: {yaml:?}"
+            );
 
             let expected = Scanner::with_options(StrInput::new(yaml), disabled)
                 .collect::<Result<Vec<_>, _>>()
@@ -166,7 +177,11 @@ fn percent_in_scalar_content_and_comments_is_unaffected() {
             let actual = Scanner::with_options(StrInput::new(yaml), enabled)
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-            assert_eq!(actual, expected, "input: {yaml:?}");
+            assert_eq!(
+                snapshot(&(actual)),
+                snapshot(&(expected)),
+                "input: {yaml:?}"
+            );
         }
     }
 }

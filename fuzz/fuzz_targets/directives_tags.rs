@@ -126,10 +126,11 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
     let tokens = Scanner::with_options(StrInput::new(&yaml), options.clone())
         .collect::<Result<Vec<_>, _>>()
         .expect("comment text and separation must not consume directive limits");
-    assert_eq!(
+    assert!(matches!(
         tokens[1].token_type(),
-        &TokenType::reserved_directive("FUTURE".into(), parameters.clone()),
-    );
+        TokenType::ReservedDirective { name, parameters: actual, .. }
+            if name == "FUTURE" && actual == &parameters
+    ));
     #[cfg(feature = "comments")]
     {
         let comments = tokens

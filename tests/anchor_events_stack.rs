@@ -1,25 +1,53 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     options, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, Span, StructureStyle,
 };
+use snapshots::{snapshot, ExpectedEvent};
 use std::borrow::Cow;
 
 #[test]
 fn replay_tracks_anchor_metadata_ids_without_reassigning_them() {
     let span = Span::empty(Marker::new(0, 1, 0));
     // A replay can start after the defining node was consumed elsewhere.
-    let events = vec![
-        (Event::anchor(7, "name".into()), span),
-        (Event::alias(99), span),
-        (Event::anchor(0, "unassigned".into()), span),
-    ];
+    let events = Parser::new_from_str_with_options(
+        "[&name value, *name, &unassigned other]",
+        options! { emit_anchor_events: true },
+    )
+    .map(Result::unwrap)
+    .filter_map(|(mut event, _)| {
+        match &mut event {
+            Event::Anchor {
+                anchor_id, name, ..
+            } => {
+                *anchor_id = if name == "name" { 7 } else { 0 };
+            }
+            Event::Alias { anchor_id, .. } => *anchor_id = 99,
+            _ => return None,
+        }
+        Some((event, span))
+    })
+    .collect::<Vec<_>>();
     let mut replay = ReplayParser::new(events.clone(), 2);
 
-    assert_eq!(replay.peek().unwrap().unwrap(), &events[0]);
+    assert_eq!(
+        snapshot(&(replay.peek().unwrap().unwrap())),
+        snapshot(&(&events[0]))
+    );
     assert_eq!(replay.anchor_offset(), 2);
-    assert_eq!(replay.next().unwrap().unwrap(), events[0]);
+    assert_eq!(
+        snapshot(&(replay.next().unwrap().unwrap())),
+        snapshot(&(events[0]))
+    );
     assert_eq!(replay.anchor_offset(), 8);
-    assert_eq!(replay.next().unwrap().unwrap(), events[1]);
-    assert_eq!(replay.next().unwrap().unwrap(), events[2]);
+    assert_eq!(
+        snapshot(&(replay.next().unwrap().unwrap())),
+        snapshot(&(events[1]))
+    );
+    assert_eq!(
+        snapshot(&(replay.next().unwrap().unwrap())),
+        snapshot(&(events[2]))
+    );
     assert_eq!(replay.anchor_offset(), 8);
     assert!(replay.next().is_none());
 }
@@ -39,11 +67,17 @@ fn stack_preserves_caller_parser_and_replay_anchor_events() {
         Parser::new_from_str_with_options(source, options! { emit_anchor_events: true }),
         "caller.yaml".into(),
     );
-    assert_eq!(stack.collect::<Result<Vec<_>, _>>().unwrap(), events);
+    assert_eq!(
+        snapshot(&(stack.collect::<Result<Vec<_>, _>>().unwrap())),
+        snapshot(&(events))
+    );
 
     let mut replay_stack: ParserStack<'_> = ParserStack::new();
     replay_stack.push_replay_parser(ReplayParser::new(events.clone(), 1), "replay.yaml".into());
-    assert_eq!(replay_stack.collect::<Result<Vec<_>, _>>().unwrap(), events);
+    assert_eq!(
+        snapshot(&(replay_stack.collect::<Result<Vec<_>, _>>().unwrap())),
+        snapshot(&(events))
+    );
 }
 
 #[test]
@@ -134,14 +168,16 @@ fn included_anchor_events_preserve_a_zero_offset_from_an_empty_replay() {
 
         let events = stack.by_ref().collect::<Result<Vec<_>, _>>().unwrap();
         assert_eq!(
-            events.iter().map(|(event, _)| event).collect::<Vec<_>>(),
-            [
-                &Event::sequence_start(StructureStyle::Flow, 0, None),
-                &Event::anchor(0, "inc".into()),
-                &Event::alias(0),
-                &Event::SequenceEnd,
-                &Event::StreamEnd,
-            ]
+            snapshot(&(events.iter().map(|(event, _)| event).collect::<Vec<_>>())),
+            snapshot(
+                &([
+                    &ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
+                    &ExpectedEvent::anchor(0, "inc".into()),
+                    &ExpectedEvent::alias(0),
+                    &ExpectedEvent::SequenceEnd,
+                    &ExpectedEvent::StreamEnd,
+                ])
+            )
         );
         assert_eq!((events[1].1.start.index(), events[1].1.end.index()), (0, 4));
         if borrowed {

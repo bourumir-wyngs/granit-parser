@@ -1,7 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
+use snapshots::snapshot;
 use std::collections::{BTreeSet, HashSet};
 
 fn events(source: &str) -> Vec<(Event<'_>, Span)> {
@@ -276,7 +279,7 @@ fn scanner_and_parser_expose_identical_header_ranges() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(scanner_style, parser_style);
+    assert_eq!(snapshot(&scanner_style), snapshot(&parser_style));
     assert_eq!(scanner_syntax, parser_syntax);
     assert_eq!(
         scanner_syntax.header_byte_range(&scanner_span),
@@ -409,11 +412,6 @@ fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
     assert_ne!(original.cmp(&other_characters), std::cmp::Ordering::Equal);
     assert_eq!(HashSet::from([original, other_characters]).len(), 2);
     assert_eq!(BTreeSet::from([original, other_characters]).len(), 2);
-
-    let first_style = ScalarStyle::literal(original);
-    let second_style = ScalarStyle::literal(other_characters);
-    assert_ne!(first_style, second_style);
-    assert_eq!(first_style.kind(), second_style.kind());
 }
 
 #[test]
@@ -457,12 +455,11 @@ fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
             .iter()
             .rev()
             .find_map(|(event, _)| match event {
-                Event::Scalar {
-                    value,
-                    style,
-                    implicit,
-                    ..
-                } => Some((value.as_ref(), *style, *implicit)),
+                Event::Scalar { value, style, .. } => Some((
+                    value.as_ref(),
+                    *style,
+                    matches!(style, ScalarStyle::Plain { implicit: true, .. }),
+                )),
                 _ => None,
             })
             .unwrap();
@@ -473,7 +470,7 @@ fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
         let streaming = Parser::new_from_iter(source.chars())
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(parsed, streaming, "{source:?}");
+        assert_eq!(snapshot(&parsed), snapshot(&streaming), "{source:?}");
     }
 }
 
@@ -492,13 +489,9 @@ fn omitted_collection_nodes_and_empty_documents_are_implicit() {
             .filter_map(|(event, _)| match event {
                 Event::Scalar {
                     value,
-                    style,
-                    implicit,
+                    style: ScalarStyle::Plain { implicit, .. },
                     ..
-                } => {
-                    assert_eq!(*style, ScalarStyle::Plain, "{source:?}");
-                    Some((value.as_ref(), *implicit))
-                }
+                } => Some((value.as_ref(), *implicit)),
                 _ => None,
             })
             .collect();
@@ -507,18 +500,17 @@ fn omitted_collection_nodes_and_empty_documents_are_implicit() {
 }
 
 #[test]
-fn plain_style_comparisons_keep_matching_omitted_nulls() {
+fn plain_style_patterns_keep_matching_omitted_nulls() {
     let source = "omitted:\nwritten: ~\nquoted: \"~\"\n";
     let parsed = events(source);
     let scalars: Vec<_> = parsed
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar {
-                value,
-                style,
-                implicit,
-                ..
-            } if value == "~" => Some((event, *style, *implicit)),
+            Event::Scalar { value, style, .. } if value == "~" => Some((
+                event,
+                *style,
+                matches!(style, ScalarStyle::Plain { implicit: true, .. }),
+            )),
             _ => None,
         })
         .collect();
@@ -526,7 +518,7 @@ fn plain_style_comparisons_keep_matching_omitted_nulls() {
     assert_eq!(
         scalars
             .iter()
-            .map(|(_, style, _)| *style == ScalarStyle::Plain)
+            .map(|(_, style, _)| matches!(style, ScalarStyle::Plain { .. }))
             .collect::<Vec<_>>(),
         [true, true, false],
     );
@@ -537,8 +529,11 @@ fn plain_style_comparisons_keep_matching_omitted_nulls() {
             .collect::<Vec<_>>(),
         [true, false, false],
     );
-    assert_eq!(scalars[0].0.scalar(), scalars[1].0.scalar());
-    assert_ne!(scalars[0].0, scalars[1].0);
+    assert_eq!(
+        scalars[0].0.scalar().unwrap().0,
+        scalars[1].0.scalar().unwrap().0
+    );
+    assert_ne!(snapshot(scalars[0].0), snapshot(scalars[1].0));
 
     let tokens = Scanner::new(StrInput::new(source))
         .collect::<Result<Vec<_>, _>>()
@@ -548,7 +543,7 @@ fn plain_style_comparisons_keep_matching_omitted_nulls() {
             .iter()
             .filter(|token| matches!(token.token_type(),
                 TokenType::Scalar { value, style, .. }
-                    if value == "~" && *style == ScalarStyle::Plain
+                    if value == "~" && matches!(style, ScalarStyle::Plain { .. })
             ))
             .count(),
         1,
@@ -608,7 +603,7 @@ fn header_only_eof_uses_minimum_inferred_content_indent() {
                     let streaming = Parser::new_from_iter(source.chars())
                         .collect::<Result<Vec<_>, _>>()
                         .expect("valid header-only YAML");
-                    assert_eq!(parsed, streaming, "{source:?}");
+                    assert_eq!(snapshot(&parsed), snapshot(&streaming), "{source:?}");
                 }
             }
         }

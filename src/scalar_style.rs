@@ -262,41 +262,85 @@ pub enum ScalarKind {
 
 /// The source notation and applicable syntax metadata of a YAML scalar.
 ///
-/// Match variants carrying data with `..`, and use their constructors for synthetic values.
-/// Plain and quoted styles are ordinary unit variants and can be used directly. Equality
-/// includes block-header metadata; use [`Self::kind`] or the category predicates to compare
-/// notation alone. Whether a scalar was omitted is recorded on [`crate::Event::Scalar`].
+/// Inspect styles with `matches!`, `if let`, or `match`, using `{ .. }` even for variants
+/// that currently have no fields. The rest pattern ignores metadata you do not need and lets
+/// the library add fields later without changing your code. The enum and every variant are
+/// non-exhaustive, so a complete `match` also needs a fallback arm.
+///
+/// Styles deliberately provide neither equality, ordering, hashing, nor constructors.
+/// Comparing whole style values would make classification depend on all present and future
+/// metadata. Match the variant instead, then inspect the fields relevant to your use case.
+/// [`Self::kind`] returns a comparable, fieldless category when a map key or ordering is needed.
 ///
 /// ```
+/// use granit_parser::{Parser, ScalarStyle};
+/// let (event, _) = Parser::new_from_str("value").nth(2).unwrap().unwrap();
+/// let (_, style) = event.scalar().unwrap();
+/// assert!(matches!(style, ScalarStyle::Plain { .. }));
+/// if let ScalarStyle::Plain { implicit, .. } = style {
+///     assert!(!implicit);
+/// }
+/// assert!(!matches!(style, ScalarStyle::SingleQuoted { .. }));
+/// ```
+///
+/// Whole-style equality is intentionally unavailable:
+///
+/// ```compile_fail,E0369
 /// use granit_parser::ScalarStyle;
-/// let style = ScalarStyle::Plain;
-/// assert_eq!(style, ScalarStyle::Plain);
-/// assert!(style.is_plain());
-/// assert_eq!(ScalarStyle::DoubleQuoted.kind(), granit_parser::ScalarKind::DoubleQuoted);
+/// fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
+///     left == right
+/// }
 /// ```
 ///
-/// External callers cannot construct variants carrying data directly:
+/// Styles are not hash keys; use [`ScalarKind`] when only the notation category matters:
+///
+/// ```compile_fail,E0277
+/// use granit_parser::ScalarStyle;
+/// fn require_hash<T: core::hash::Hash>() {}
+/// require_hash::<ScalarStyle>();
+/// ```
+///
+/// Non-exhaustive variants cannot be constructed by callers:
 ///
 /// ```compile_fail,E0639
 /// use granit_parser::{BlockScalarSyntax, ScalarStyle};
 /// let style = ScalarStyle::Literal { syntax: BlockScalarSyntax::default() };
 /// ```
 ///
+/// No constructor helper bypasses that restriction:
+///
+/// ```compile_fail,E0599
+/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
+/// let style = ScalarStyle::literal(BlockScalarSyntax::default());
+/// ```
+///
 /// Variant patterns must allow future fields:
 ///
 /// ```compile_fail,E0638
-/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
-/// let style = ScalarStyle::literal(BlockScalarSyntax::default());
-/// if let ScalarStyle::Literal { syntax } = style {}
+/// use granit_parser::ScalarStyle;
+/// fn inspect(style: ScalarStyle) {
+///     if let ScalarStyle::Literal { syntax } = style {}
+/// }
 /// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug)]
+// In-crate regression tests compare every known field; downstream builds expose no equality.
+#[cfg_attr(test, derive(Eq, PartialEq))]
 #[non_exhaustive]
 pub enum ScalarStyle {
     /// A plain scalar or a synthesized empty node.
-    Plain,
+    #[non_exhaustive]
+    Plain {
+        /// Whether the parser synthesized an omitted node instead of reading scalar text.
+        ///
+        /// Explicit tags and anchors can decorate an omitted node. Written empty quoted or
+        /// block scalars have their own styles and are never implicit plain scalars.
+        implicit: bool,
+    },
     /// A single-quoted scalar.
+    #[non_exhaustive]
     SingleQuoted,
     /// A double-quoted scalar.
+    #[non_exhaustive]
     DoubleQuoted,
     /// A literal block, with no escape processing or line folding.
     #[non_exhaustive]
@@ -313,23 +357,11 @@ pub enum ScalarStyle {
 }
 
 impl ScalarStyle {
-    /// Return literal block style carrying `syntax`.
-    #[must_use]
-    pub const fn literal(syntax: BlockScalarSyntax) -> Self {
-        Self::Literal { syntax }
-    }
-
-    /// Return folded block style carrying `syntax`.
-    #[must_use]
-    pub const fn folded(syntax: BlockScalarSyntax) -> Self {
-        Self::Folded { syntax }
-    }
-
     /// Return the notation category, ignoring source positions and all other metadata.
     #[must_use]
     pub const fn kind(&self) -> ScalarKind {
         match self {
-            Self::Plain => ScalarKind::Plain,
+            Self::Plain { .. } => ScalarKind::Plain,
             Self::SingleQuoted => ScalarKind::SingleQuoted,
             Self::DoubleQuoted => ScalarKind::DoubleQuoted,
             Self::Literal { .. } => ScalarKind::Literal,
@@ -339,10 +371,10 @@ impl ScalarStyle {
 
     /// Return whether this is plain notation, including synthesized empty nodes.
     ///
-    /// Equivalent to `self == ScalarStyle::Plain`; omission is metadata on the scalar event.
+    /// Equivalent to `matches!(self, ScalarStyle::Plain { .. })`.
     #[must_use]
     pub const fn is_plain(&self) -> bool {
-        matches!(self, Self::Plain)
+        matches!(self, Self::Plain { .. })
     }
 
     /// Return whether this is single-quoted notation.

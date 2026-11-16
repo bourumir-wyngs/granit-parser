@@ -1,5 +1,9 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+
 mod support;
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
@@ -43,7 +47,7 @@ fn run_parser(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     //     eprintln!("\t{x:?}");
     // }
 
-    assert_eq!(str_events, iter_events);
+    assert_eq!(snapshot(&str_events), snapshot(&iter_events));
     assert_eq!(str_error, iter_error);
 
     if let Some(err) = str_error {
@@ -65,11 +69,8 @@ fn collection_styles(input: &str) -> Vec<(&'static str, StructureStyle)> {
         .collect()
 }
 
-fn expected_events<'input>(events: impl IntoIterator<Item = Event<'input>>) -> Vec<Event<'input>> {
-    events
-        .into_iter()
-        .filter(|event| cfg!(feature = "comments") || !support::is_comment_event(event))
-        .collect()
+fn expected_events(events: impl IntoIterator<Item = ExpectedEvent>) -> Vec<ExpectedEvent> {
+    events.into_iter().collect()
 }
 
 #[test]
@@ -133,18 +134,18 @@ fn test_mapping_structure_styles() {
 #[test]
 fn test_empty_doc() {
     assert_eq!(
-        run_parser("").unwrap(),
-        [Event::StreamStart, Event::StreamEnd]
+        snapshot(&run_parser("").unwrap()),
+        [ExpectedEvent::StreamStart, ExpectedEvent::StreamEnd]
     );
 
     assert_eq!(
-        run_parser("---").unwrap(),
+        snapshot(&run_parser("---").unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(true, None),
-            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(true, None),
+            ExpectedEvent::new_scalar("~".into(), ExpectedStyle::plain(), true, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -152,22 +153,22 @@ fn test_empty_doc() {
 #[test]
 fn test_utf() {
     assert_eq!(
-        run_parser("a: \u{4F60}\u{5273}").unwrap(),
+        snapshot(&run_parser("a: \u{4F60}\u{5273}").unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar(
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("a".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar(
                 "\u{4F60}\u{5273}".into(),
-                ScalarStyle::Plain,
+                ExpectedStyle::plain(),
                 false,
                 0,
                 None
             ),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -182,24 +183,24 @@ a: b # This is another comment
 ";
 
     assert_eq!(
-        run_parser(s).unwrap(),
+        snapshot(&run_parser(s).unwrap()),
         expected_events([
-            Event::StreamStart,
+            ExpectedEvent::StreamStart,
             #[cfg(feature = "comments")]
-            Event::comment(" This is a comment".into(), Placement::Above),
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar("b".into(), ScalarStyle::Plain, false, 0, None),
+            ExpectedEvent::comment(" This is a comment".into(), Placement::Above),
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("a".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar("b".into(), ExpectedStyle::plain(), false, 0, None),
             #[cfg(feature = "comments")]
-            Event::comment(" This is another comment".into(), Placement::Right),
+            ExpectedEvent::comment(" This is another comment".into(), Placement::Right),
             #[cfg(feature = "comments")]
-            Event::comment("#".into(), Placement::Above),
+            ExpectedEvent::comment("#".into(), Placement::Above),
             #[cfg(feature = "comments")]
-            Event::comment("".into(), Placement::Above),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::comment("".into(), Placement::Above),
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ])
     );
 }
@@ -213,17 +214,17 @@ fn test_quoting() {
 ";
 
     assert_eq!(
-        run_parser(s).unwrap(),
+        snapshot(&run_parser(s).unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::sequence_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("plain".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar("squote".into(), ScalarStyle::SingleQuoted, false, 0, None),
-            Event::new_scalar("dquote".into(), ScalarStyle::DoubleQuoted, false, 0, None),
-            Event::SequenceEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::sequence_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("plain".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar("squote".into(), ExpectedStyle::SingleQuoted, false, 0, None),
+            ExpectedEvent::new_scalar("dquote".into(), ExpectedStyle::DoubleQuoted, false, 0, None),
+            ExpectedEvent::SequenceEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -238,19 +239,19 @@ a scalar
 a scalar
 ";
     assert_eq!(
-        run_parser(s).unwrap(),
+        snapshot(&run_parser(s).unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::document_start(true, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::document_start(true, None),
-            Event::new_scalar("a scalar".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::new_scalar("a scalar".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::document_start(true, None),
+            ExpectedEvent::new_scalar("a scalar".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::document_start(true, None),
+            ExpectedEvent::new_scalar("a scalar".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -259,20 +260,26 @@ a scalar
 fn test_github_27() {
     // https://github.com/chyh1990/yaml-rust/issues/27
     assert_eq!(
-        run_parser("&a").unwrap(),
+        snapshot(&run_parser("&a").unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 1, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::new_scalar("~".into(), ExpectedStyle::plain(), true, 1, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
 
 #[test]
 fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
-    let scalar_events = |input: &str| -> Vec<(String, ScalarStyle, bool, usize, Option<String>)> {
+    let scalar_events = |input: &str| -> Vec<(
+        String,
+        granit_parser::ScalarKind,
+        bool,
+        usize,
+        Option<String>,
+    )> {
         run_parser(input)
             .unwrap()
             .into_iter()
@@ -280,14 +287,13 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
                 Event::Scalar {
                     value,
                     style,
-                    implicit,
                     anchor_id: anchor,
                     tag,
                     ..
                 } => Some((
                     value.into_owned(),
-                    style,
-                    implicit,
+                    style.kind(),
+                    matches!(style, ScalarStyle::Plain { implicit: true, .. }),
                     anchor,
                     tag.map(|tag| tag.original()),
                 )),
@@ -299,17 +305,35 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
     assert_eq!(
         scalar_events("a: &x\n"),
         vec![
-            ("a".to_string(), ScalarStyle::Plain, false, 0, None),
-            ("~".to_string(), ScalarStyle::Plain, true, 1, None),
+            (
+                "a".to_string(),
+                granit_parser::ScalarKind::Plain,
+                false,
+                0,
+                None
+            ),
+            (
+                "~".to_string(),
+                granit_parser::ScalarKind::Plain,
+                true,
+                1,
+                None
+            ),
         ]
     );
     assert_eq!(
         scalar_events("a: !!str\n"),
         vec![
-            ("a".to_string(), ScalarStyle::Plain, false, 0, None),
+            (
+                "a".to_string(),
+                granit_parser::ScalarKind::Plain,
+                false,
+                0,
+                None
+            ),
             (
                 String::new(),
-                ScalarStyle::Plain,
+                granit_parser::ScalarKind::Plain,
                 true,
                 0,
                 Some("!!str".to_string()),
@@ -349,17 +373,17 @@ fn test_comment_after_tag() {
 foobar";
 
     assert_eq!(
-        run_parser(s).unwrap(),
+        snapshot(&run_parser(s).unwrap()),
         expected_events([
-            Event::StreamStart,
+            ExpectedEvent::StreamStart,
             #[cfg(feature = "comments")]
-            Event::comment(" This is a comment".into(), Placement::Above),
-            Event::document_start(true, Some(YamlVersion::new(1, 2))),
+            ExpectedEvent::comment(" This is a comment".into(), Placement::Above),
+            ExpectedEvent::document_start(true, Some(YamlVersion::new(1, 2))),
             #[cfg(feature = "comments")]
-            Event::comment("-------".into(), Placement::Right),
-            Event::new_scalar("foobar".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::comment("-------".into(), Placement::Right),
+            ExpectedEvent::new_scalar("foobar".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ])
     );
 }
@@ -410,13 +434,13 @@ a: |-
 ";
 
     assert_eq!(
-        run_parser(s).unwrap(),
+        snapshot(&run_parser(s).unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar(
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("a".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar(
                 "a\n    b".into(),
                 {
                     let mut syntax = granit_parser::BlockScalarSyntax::new(
@@ -427,15 +451,15 @@ a: |-
                     .unwrap();
                     syntax.header_chars_before_span = 21;
                     syntax.header_bytes_before_span = 21;
-                    ScalarStyle::literal(syntax)
+                    ExpectedStyle::literal(syntax)
                 },
                 false,
                 0,
                 None
             ),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -444,39 +468,39 @@ a: |-
 fn test_bad_docstart() {
     run_parser("---This used to cause an infinite loop").unwrap();
     assert_eq!(
-        run_parser("----").unwrap(),
+        snapshot(&run_parser("----").unwrap()),
         [
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar("----".into(), ScalarStyle::Plain, false, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::new_scalar("----".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 
     assert_eq!(
-        run_parser("--- #comment").unwrap(),
+        snapshot(&run_parser("--- #comment").unwrap()),
         expected_events([
-            Event::StreamStart,
-            Event::document_start(true, None),
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(true, None),
             #[cfg(feature = "comments")]
-            Event::comment("comment".into(), Placement::Right),
-            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 0, None),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::comment("comment".into(), Placement::Right),
+            ExpectedEvent::new_scalar("~".into(), ExpectedStyle::plain(), true, 0, None),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ])
     );
 
     assert_eq!(
-        run_parser("---- #comment").unwrap(),
+        snapshot(&run_parser("---- #comment").unwrap()),
         expected_events([
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::new_scalar("----".into(), ScalarStyle::Plain, false, 0, None),
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::new_scalar("----".into(), ExpectedStyle::plain(), false, 0, None),
             #[cfg(feature = "comments")]
-            Event::comment("comment".into(), Placement::Right),
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::comment("comment".into(), Placement::Right),
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ])
     );
 }
@@ -525,9 +549,9 @@ hash:
         .zip(one_space.iter())
         .zip(mixed_spaces.iter())
     {
-        assert_eq!(a, b);
-        assert_eq!(a, c);
-        assert_eq!(a, d);
+        assert_eq!(snapshot(&a), snapshot(&b));
+        assert_eq!(snapshot(&a), snapshot(&c));
+        assert_eq!(snapshot(&a), snapshot(&d));
     }
 }
 

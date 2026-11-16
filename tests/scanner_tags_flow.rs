@@ -7,6 +7,9 @@
 //! - custom [`Input`] implementations that advertise byte offsets but cannot (always) provide
 //!   slices, which is a legal implementation of the optional slicing capability.
 
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
 use std::cell::Cell;
 
 use granit_parser::{
@@ -173,7 +176,10 @@ fn primary_handle_override_only_expands_shorthand_tags() {
     ] {
         let yaml = format!("%TAG ! tag:example.org,2026:\n--- {source_tag} 123\n");
         let events = collect_events(StrInput::new(&yaml)).unwrap();
-        assert_eq!(events, collect_events(buffered(&yaml)).unwrap());
+        assert_eq!(
+            snapshot(&events),
+            snapshot(&collect_events(buffered(&yaml)).unwrap())
+        );
 
         let (value, tag) = first_tagged_scalar(&events);
         assert_eq!(value, "123");
@@ -203,8 +209,11 @@ fn primary_handle_override_preserves_non_specific_tag_on_all_node_types() {
         let expected = collect_events(StrInput::new(&baseline)).unwrap();
         let yaml = format!("%TAG ! tag:example.org,2026:\n{baseline}");
         let events = collect_events(StrInput::new(&yaml)).unwrap();
-        assert_eq!(events, expected, "input: {yaml:?}");
-        assert_eq!(events, collect_events(buffered(&yaml)).unwrap());
+        assert_eq!(snapshot(&events), snapshot(&expected), "input: {yaml:?}");
+        assert_eq!(
+            snapshot(&events),
+            snapshot(&collect_events(buffered(&yaml)).unwrap())
+        );
 
         let tag = events.iter().find_map(Event::tag).expect("expected a tag");
         assert_eq!(tag.parts(), ("", "!"));
@@ -236,10 +245,13 @@ fn primary_handle_overrides_are_scoped_to_documents_with_nested_non_specific_tag
         ("!", "str", "!str", None),
     ];
     let events = collect_events(StrInput::new(yaml)).unwrap();
-    assert_eq!(events, collect_events(buffered(yaml)).unwrap());
     assert_eq!(
-        events,
-        collect_events(OpaqueInput::new(yaml, SliceMode::Delegate)).unwrap(),
+        snapshot(&events),
+        snapshot(&collect_events(buffered(yaml)).unwrap())
+    );
+    assert_eq!(
+        snapshot(&events),
+        snapshot(&collect_events(OpaqueInput::new(yaml, SliceMode::Delegate)).unwrap()),
     );
     let tags = events.iter().filter_map(Event::tag).collect::<Vec<_>>();
     assert_eq!(tags.len(), expected_tags.len());
@@ -411,7 +423,7 @@ fn no_borrow_input_scans_anchor_and_alias_as_owned() {
         .find_map(|event| {
             if let Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 anchor_id,
                 tag: None,
                 ..
@@ -425,7 +437,9 @@ fn no_borrow_input_scans_anchor_and_alias_as_owned() {
         .expect("expected the anchored scalar");
     assert_ne!(anchor_id, 0, "anchored scalar must be assigned an id");
     assert!(
-        events.contains(&Event::alias(anchor_id)),
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Alias { anchor_id: id, .. } if *id == anchor_id)),
         "alias must reference the anchored scalar id"
     );
 }

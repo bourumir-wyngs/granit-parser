@@ -9,9 +9,11 @@ use crate::common;
 
 use std::fmt::Write;
 
+use common::snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+
 use granit_parser::{
-    ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, ScalarStyle,
-    ScanError, Span, StrInput,
+    ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser, ScanError, Span,
+    StrInput,
 };
 #[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
@@ -63,7 +65,7 @@ pub fn check_input(data: &[u8]) {
     let mut expected = vec![
         scalar("child"),
         #[cfg(feature = "comments")]
-        Event::comment(format!(" tail {payload}").into(), Placement::Right),
+        ExpectedEvent::comment(format!(" tail {payload}").into(), Placement::Right),
     ];
     for index in 0..comment_count {
         let text = format!(" after {index} {payload}");
@@ -71,7 +73,7 @@ pub fn check_input(data: &[u8]) {
         source.push_str(&text);
         source.push_str(newline);
         #[cfg(feature = "comments")]
-        expected.push(Event::comment(
+        expected.push(ExpectedEvent::comment(
             text.into(),
             // Placement::Last requires no further token before StreamEnd. A following
             // comment is itself a token, so consecutive earlier comments remain Above.
@@ -117,7 +119,7 @@ pub fn check_input(data: &[u8]) {
             if nested {
                 stack.push_str_parser(Parser::new_from_str(MIDDLE), "middle.yaml".into());
                 assert_eq!(
-                    next_checked(&mut stack, peek).unwrap().unwrap().0,
+                    snapshot(&next_checked(&mut stack, peek).unwrap().unwrap().0),
                     scalar("middle")
                 );
                 #[cfg(feature = "comments")]
@@ -125,21 +127,22 @@ pub fn check_input(data: &[u8]) {
                     // Suspend the middle source after its DocumentEnd has been consumed,
                     // leaving its trailing-comment validation pending during the child.
                     assert_eq!(
-                        next_checked(&mut stack, peek).unwrap().unwrap().0,
-                        Event::comment(" middle tail".into(), Placement::Right)
+                        snapshot(&next_checked(&mut stack, peek).unwrap().unwrap().0),
+                        ExpectedEvent::comment(" middle tail".into(), Placement::Right)
                     );
                 }
             }
             push_child(&mut stack, backend, &source);
 
             for event in expected.iter().filter(|event| {
-                (cfg!(feature = "comments") && emit_comments) || !common::is_comment_event(event)
+                (cfg!(feature = "comments") && emit_comments) || !is_expected_comment(event)
             }) {
                 let (actual, _) = next_checked(&mut stack, peek)
                     .expect("generated source ended before its expected events")
                     .expect("generated source failed before its expected events");
                 assert_eq!(
-                    &actual, event,
+                    snapshot(&actual),
+                    *event,
                     "backend={backend}, tail={tail}, source={source:?}"
                 );
             }
@@ -170,17 +173,17 @@ pub fn check_input(data: &[u8]) {
     }
 }
 
-fn scalar(value: &'static str) -> Event<'static> {
-    Event::new_scalar(value.into(), ScalarStyle::Plain, false, 0, None)
+fn scalar(value: &'static str) -> ExpectedEvent {
+    ExpectedEvent::new_scalar(value.into(), ExpectedStyle::plain(), false, 0, None)
 }
 
-fn parent_events() -> [Event<'static>; 5] {
+fn parent_events() -> [ExpectedEvent; 5] {
     [
-        Event::StreamStart,
-        Event::document_start(false, None),
+        ExpectedEvent::StreamStart,
+        ExpectedEvent::document_start(false, None),
         scalar("parent"),
-        Event::document_end(false),
-        Event::StreamEnd,
+        ExpectedEvent::document_end(false),
+        ExpectedEvent::StreamEnd,
     ]
 }
 
@@ -190,9 +193,16 @@ fn next_checked<'a>(
 ) -> Option<Result<(Event<'a>, Span), ScanError>> {
     if peek {
         let first = stack.peek().map(Result::<&_, _>::cloned);
-        assert_eq!(stack.peek().map(Result::<&_, _>::cloned), first);
+        assert_eq!(
+            snapshot(&stack.peek().map(Result::<&_, _>::cloned)),
+            snapshot(&first)
+        );
         let next = stack.next_event();
-        assert_eq!(next, first, "peek and next_event disagree");
+        assert_eq!(
+            snapshot(&next),
+            snapshot(&first),
+            "peek and next_event disagree"
+        );
         next
     } else {
         stack.next_event()
@@ -212,7 +222,7 @@ fn push_child<'a>(stack: &mut Stack<'a>, backend: u8, source: &'a str) {
                 .collect::<Result<Vec<_>, _>>()
                 .expect("generated replay input must be valid YAML");
             if backend == 4 {
-                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
+                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd { .. }));
             }
             stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".into());
         }
@@ -229,5 +239,17 @@ fn push_child<'a>(stack: &mut Stack<'a>, backend: u8, source: &'a str) {
                 .expect("valid borrowed include");
         }
         _ => unreachable!("backend selector is bounded"),
+    }
+}
+
+fn is_expected_comment(event: &ExpectedEvent) -> bool {
+    #[cfg(feature = "comments")]
+    {
+        matches!(event, ExpectedEvent::Comment { .. })
+    }
+    #[cfg(not(feature = "comments"))]
+    {
+        let _ = event;
+        false
     }
 }

@@ -1,3 +1,6 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
 use std::borrow::Cow;
 
 use granit_parser::{ErrorKind, Event, InputIoError, Marker, Parser, ScanError, Span};
@@ -14,8 +17,8 @@ fn parse_all_inputs(source: &str) -> Vec<(Event<'_>, Span)> {
     let from_fallible = Parser::new_from_fallible_iter(source.chars().map(Ok::<_, ErrorKind>))
         .collect::<Result<Vec<_>, _>>()
         .expect("fallible input should parse");
-    assert_eq!(from_str, from_iter);
-    assert_eq!(from_str, from_fallible);
+    assert_eq!(snapshot(&(from_str)), snapshot(&(from_iter)));
+    assert_eq!(snapshot(&(from_str)), snapshot(&(from_fallible)));
     from_str
 }
 

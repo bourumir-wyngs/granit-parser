@@ -1,4 +1,7 @@
-use granit_parser::{Event, Parser, ScalarStyle, ScanError, StructureStyle};
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use granit_parser::{Event, Parser, ScanError, StructureStyle};
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     Parser::new_from_str(input)
@@ -33,17 +36,29 @@ fn explicit_block_mapping_empty_key_is_null() {
     let events = parse_events("?\n: value\n").unwrap();
 
     assert_eq!(
-        events,
-        vec![
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::Plain, true, 0, None),
-            Event::new_scalar("value".into(), ScalarStyle::Plain, false, 0, None),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
-        ]
+        snapshot(&events),
+        snapshot(&vec![
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar(
+                "~".into(),
+                ExpectedStyle::Plain { implicit: false },
+                true,
+                0,
+                None
+            ),
+            ExpectedEvent::new_scalar(
+                "value".into(),
+                ExpectedStyle::Plain { implicit: false },
+                false,
+                0,
+                None
+            ),
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
+        ])
     );
 }
 
@@ -55,7 +70,7 @@ fn flow_mapping_entry_without_colon_gets_null_value() {
     assert!(matches!(events.get(2), Some(Event::MappingStart { .. })));
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::MappingEnd)));
+        .any(|event| matches!(event, Event::MappingEnd { .. })));
 }
 
 #[test]
@@ -78,7 +93,7 @@ fn flow_sequence_explicit_mapping_can_omit_value() {
     assert_eq!(scalar_values(&events), vec!["foo", "~"]);
     assert!(events
         .iter()
-        .any(|event| matches!(event, Event::MappingEnd)));
+        .any(|event| matches!(event, Event::MappingEnd { .. })));
 }
 
 #[test]
@@ -93,7 +108,10 @@ fn flow_sequence_entry_requires_comma_before_next_collection() {
 fn repeated_document_end_markers_do_not_start_empty_documents() {
     let events = parse_events("...\n...\n").unwrap();
 
-    assert_eq!(events, vec![Event::StreamStart, Event::StreamEnd]);
+    assert_eq!(
+        snapshot(&events),
+        snapshot(&vec![ExpectedEvent::StreamStart, ExpectedEvent::StreamEnd])
+    );
 }
 
 #[test]

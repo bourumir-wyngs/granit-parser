@@ -1,3 +1,6 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedTokenType};
 mod support;
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
@@ -23,7 +26,11 @@ fn scanner_tokens(yaml: &str, options: Options) -> Vec<Token<'_>> {
     let iter_tokens = Scanner::with_options(BufferedInput::new(yaml.chars()), options)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(tokens, iter_tokens, "input: {yaml:?}");
+    assert_eq!(
+        snapshot(&(tokens)),
+        snapshot(&(iter_tokens)),
+        "input: {yaml:?}"
+    );
     tokens
 }
 
@@ -53,8 +60,8 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
         let _ = comment_text;
         let tokens = scanner_tokens(yaml, Options::default());
         assert_eq!(
-            tokens[1].token_type(),
-            &TokenType::reserved_directive(name.into(), vec![param.into()]),
+            snapshot(&(tokens[1].token_type())),
+            snapshot(&(&ExpectedTokenType::reserved_directive(name.into(), vec![param.into()])))
         );
         #[cfg(feature = "comments")]
         {
@@ -72,10 +79,12 @@ fn reserved_directive_separated_comments_preserve_parameters_and_scalar() {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(
-            events,
-            Parser::new_from_iter(yaml.chars())
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap(),
+            snapshot(&(events)),
+            snapshot(
+                &(Parser::new_from_iter(yaml.chars())
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap())
+            )
         );
         #[cfg(feature = "comments")]
         {
@@ -174,11 +183,16 @@ fn reserved_directive_comments_at_eof_do_not_supply_a_document() {
                     options! { #[cfg(feature = "comments")] emit_comments: emit_comments };
                 let tokens = scanner_tokens(&yaml, options.clone());
                 assert_eq!(
-                    tokens[1].token_type(),
-                    &TokenType::reserved_directive("FUTURE".into(), params.clone()),
+                    snapshot(&(tokens[1].token_type())),
+                    snapshot(
+                        &(&ExpectedTokenType::reserved_directive("FUTURE".into(), params.clone()))
+                    )
                 );
                 assert_eq!(tokens.len(), 3 + usize::from(emit_comments));
-                assert_eq!(tokens.last().unwrap().token_type(), &TokenType::StreamEnd);
+                assert!(matches!(
+                    tokens.last().unwrap().token_type(),
+                    TokenType::StreamEnd { .. }
+                ));
                 #[cfg(feature = "comments")]
                 if emit_comments {
                     let TokenType::Comment { comment, .. } = tokens[2].token_type() else {

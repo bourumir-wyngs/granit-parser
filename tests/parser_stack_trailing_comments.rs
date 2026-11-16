@@ -1,9 +1,12 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
 mod support;
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
 use granit_parser::{
-    ErrorKind, Event, Marker, Options, Parser, ParserStack, ParserTrait, ReplayParser, ScalarStyle,
-    ScanError, Span, StrInput,
+    ErrorKind, Event, Marker, Options, Parser, ParserStack, ParserTrait, ReplayParser, ScanError,
+    Span, StrInput,
 };
 
 type Stack = ParserStack<'static, std::vec::IntoIter<char>, StrInput<'static>>;
@@ -52,8 +55,8 @@ fn nested_events(yaml: &'static str) -> Vec<(Event<'static>, Span)> {
         .filter(|(event, _)| {
             !matches!(
                 event,
-                Event::StreamStart
-                    | Event::StreamEnd
+                Event::StreamStart { .. }
+                    | Event::StreamEnd { .. }
                     | Event::DocumentStart { .. }
                     | Event::DocumentEnd { .. }
             )
@@ -78,7 +81,7 @@ fn stack_with_child(backend: Backend, yaml: &'static str, options: Options) -> S
         Backend::Replay | Backend::ReplayWithoutStreamEnd => {
             let mut events = ordinary_events(yaml);
             if matches!(backend, Backend::ReplayWithoutStreamEnd) {
-                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
+                assert!(matches!(events.pop().unwrap().0, Event::StreamEnd { .. }));
             }
             stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".to_owned());
         }
@@ -96,9 +99,12 @@ fn stack_with_child(backend: Backend, yaml: &'static str, options: Options) -> S
 
 fn next_with_repeated_peek(stack: &mut Stack) -> Option<Result<(Event<'static>, Span), ScanError>> {
     let peeked = stack.peek().map(Result::<&_, _>::cloned);
-    assert_eq!(stack.peek().map(Result::<&_, _>::cloned), peeked);
+    assert_eq!(
+        snapshot(&(stack.peek().map(Result::<&_, _>::cloned))),
+        snapshot(&(peeked))
+    );
     let next = stack.next_event();
-    assert_eq!(next, peeked);
+    assert_eq!(snapshot(&(next)), snapshot(&(peeked)));
     next
 }
 
@@ -116,14 +122,26 @@ fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
 fn included_trailing_comments_are_emitted_before_parent_resumes() {
     // Keep the semantic oracle independent of the parser used by every backend.
     let expected = vec![
-        Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
-        Event::comment(" trailing".into(), Placement::Right),
-        Event::comment(" after".into(), Placement::Last),
-        Event::StreamStart,
-        Event::document_start(false, None),
-        Event::new_scalar("parent".into(), ScalarStyle::Plain, false, 0, None),
-        Event::document_end(false),
-        Event::StreamEnd,
+        ExpectedEvent::new_scalar(
+            "child".into(),
+            ExpectedStyle::Plain { implicit: false },
+            false,
+            0,
+            None,
+        ),
+        ExpectedEvent::comment(" trailing".into(), Placement::Right),
+        ExpectedEvent::comment(" after".into(), Placement::Last),
+        ExpectedEvent::StreamStart,
+        ExpectedEvent::document_start(false, None),
+        ExpectedEvent::new_scalar(
+            "parent".into(),
+            ExpectedStyle::Plain { implicit: false },
+            false,
+            0,
+            None,
+        ),
+        ExpectedEvent::document_end(false),
+        ExpectedEvent::StreamEnd,
     ];
 
     for backend in BACKENDS {
@@ -133,11 +151,13 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
             actual.push(event.unwrap());
         }
         assert_eq!(
-            actual
-                .iter()
-                .map(|(event, _)| event.clone())
-                .collect::<Vec<_>>(),
-            expected,
+            snapshot(
+                &(actual
+                    .iter()
+                    .map(|(event, _)| event.clone())
+                    .collect::<Vec<_>>())
+            ),
+            snapshot(&(expected)),
             "{backend:?}"
         );
         assert_eq!(
@@ -168,23 +188,29 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
                 }
             };
             let expected = vec![
-                Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
+                ExpectedEvent::new_scalar(
+                    "child".into(),
+                    ExpectedStyle::Plain { implicit: false },
+                    false,
+                    0,
+                    None,
+                ),
                 #[cfg(feature = "comments")]
-                Event::comment(" trailing".into(), Placement::Right),
+                ExpectedEvent::comment(" trailing".into(), Placement::Right),
                 #[cfg(feature = "comments")]
-                Event::comment(" after".into(), Placement::Above),
+                ExpectedEvent::comment(" after".into(), Placement::Above),
             ]
             .into_iter()
-            .filter(|event| {
-                (cfg!(feature = "comments") && emit_comments) || !support::is_comment_event(event)
-            })
+            .filter(|event| (cfg!(feature = "comments") && emit_comments) || !event.is_comment())
             .collect::<Vec<_>>();
             assert_eq!(
-                actual
-                    .into_iter()
-                    .map(|(event, _)| event)
-                    .collect::<Vec<_>>(),
-                expected,
+                snapshot(
+                    &(actual
+                        .into_iter()
+                        .map(|(event, _)| event)
+                        .collect::<Vec<_>>())
+                ),
+                snapshot(&(expected)),
                 "{backend:?}, emit_comments={emit_comments}"
             );
             assert_multiple_documents_error(&mut stack, &error);
@@ -194,14 +220,19 @@ fn trailing_comments_do_not_hide_a_second_included_document() {
 
 #[test]
 fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
-    for unexpected in [
-        Event::new_scalar("extra".into(), ScalarStyle::Plain, false, 0, None),
-        Event::StreamStart,
-        Event::document_end(false),
-    ] {
+    let unexpected_events = ordinary_events("extra\n")
+        .into_iter()
+        .map(|(event, _)| event)
+        .filter(|event| {
+            matches!(
+                event,
+                Event::Scalar { .. } | Event::StreamStart { .. } | Event::DocumentEnd { .. }
+            )
+        });
+    for unexpected in unexpected_events {
         for &emit_comments in support::comment_modes() {
             let mut events = ordinary_events(CHILD);
-            assert!(matches!(events.pop().unwrap().0, Event::StreamEnd));
+            assert!(matches!(events.pop().unwrap().0, Event::StreamEnd { .. }));
             events.push((unexpected.clone(), Span::empty(Marker::new(29, 4, 0))));
 
             let mut stack = Stack::with_options(granit_parser::options! {
@@ -212,18 +243,24 @@ fn replayed_trailing_comments_do_not_allow_events_after_document_end() {
             stack.push_replay_parser(ReplayParser::new(events, 1), "child.yaml".to_owned());
 
             let expected = [
-                Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None),
+                ExpectedEvent::new_scalar(
+                    "child".into(),
+                    ExpectedStyle::Plain { implicit: false },
+                    false,
+                    0,
+                    None,
+                ),
                 #[cfg(feature = "comments")]
-                Event::comment(" trailing".into(), Placement::Right),
+                ExpectedEvent::comment(" trailing".into(), Placement::Right),
                 #[cfg(feature = "comments")]
-                Event::comment(" after".into(), Placement::Last),
+                ExpectedEvent::comment(" after".into(), Placement::Last),
             ];
             for event in expected.into_iter().filter(|event| {
-                (cfg!(feature = "comments") && emit_comments) || !support::is_comment_event(event)
+                (cfg!(feature = "comments") && emit_comments) || !event.is_comment()
             }) {
                 assert_eq!(
-                    next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
-                    event
+                    snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap().0)),
+                    snapshot(&(event))
                 );
             }
 
@@ -241,12 +278,20 @@ fn nested_second_document_error_uses_its_own_pending_end_and_source() {
     for backend in BACKENDS {
         let mut stack = stack_with_child(backend, CHILD, Options::default());
         assert_eq!(
-            next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
-            Event::new_scalar("child".into(), ScalarStyle::Plain, false, 0, None)
+            snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap().0)),
+            snapshot(
+                &(ExpectedEvent::new_scalar(
+                    "child".into(),
+                    ExpectedStyle::Plain { implicit: false },
+                    false,
+                    0,
+                    None
+                ))
+            )
         );
         assert_eq!(
-            next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
-            Event::comment(" trailing".into(), Placement::Right)
+            snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap().0)),
+            snapshot(&(ExpectedEvent::comment(" trailing".into(), Placement::Right)))
         );
         // Both sources now need document-end validation; the grandchild's failure must
         // retain its own end marker instead of using the suspended child's marker.
@@ -255,12 +300,18 @@ fn nested_second_document_error_uses_its_own_pending_end_and_source() {
             "grandchild.yaml".to_owned(),
         );
         for expected in [
-            Event::new_scalar("grandchild".into(), ScalarStyle::Plain, false, 0, None),
-            Event::comment(" grandchild tail".into(), Placement::Right),
+            ExpectedEvent::new_scalar(
+                "grandchild".into(),
+                ExpectedStyle::Plain { implicit: false },
+                false,
+                0,
+                None,
+            ),
+            ExpectedEvent::comment(" grandchild tail".into(), Placement::Right),
         ] {
             assert_eq!(
-                next_with_repeated_peek(&mut stack).unwrap().unwrap().0,
-                expected
+                snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap().0)),
+                snapshot(&(expected))
             );
         }
 
@@ -285,20 +336,35 @@ fn pushing_during_a_peeked_trailing_comment_preserves_each_sources_validation() 
     for child in [CHILD, TWO_DOCUMENTS] {
         let mut stack = stack_with_child(Backend::String, child, Options::default());
         let expected_child = nested_events(child);
-        assert_eq!(stack.next_event().unwrap().unwrap(), expected_child[0]);
+        assert_eq!(
+            snapshot(&(stack.next_event().unwrap().unwrap())),
+            snapshot(&(expected_child[0]))
+        );
 
-        assert_eq!(stack.peek().unwrap().unwrap(), &expected_child[1]);
-        assert_eq!(stack.peek().unwrap().unwrap(), &expected_child[1]);
+        assert_eq!(
+            snapshot(&(stack.peek().unwrap().unwrap())),
+            snapshot(&(&expected_child[1]))
+        );
+        assert_eq!(
+            snapshot(&(stack.peek().unwrap().unwrap())),
+            snapshot(&(&expected_child[1]))
+        );
         stack.push_str_parser(
             Parser::new_from_str(GRANDCHILD),
             "grandchild.yaml".to_owned(),
         );
-        assert_eq!(stack.next_event().unwrap().unwrap(), expected_child[1]);
+        assert_eq!(
+            snapshot(&(stack.next_event().unwrap().unwrap())),
+            snapshot(&(expected_child[1]))
+        );
 
         let mut expected = nested_events(GRANDCHILD);
         expected.extend(expected_child.into_iter().skip(2));
         for event in expected {
-            assert_eq!(next_with_repeated_peek(&mut stack).unwrap().unwrap(), event);
+            assert_eq!(
+                snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap())),
+                snapshot(&(event))
+            );
         }
 
         if child == TWO_DOCUMENTS {
@@ -309,7 +375,7 @@ fn pushing_during_a_peeked_trailing_comment_preserves_each_sources_validation() 
             while let Some(event) = next_with_repeated_peek(&mut stack) {
                 resumed.push(event.unwrap());
             }
-            assert_eq!(resumed, ordinary_events(PARENT));
+            assert_eq!(snapshot(&(resumed)), snapshot(&(ordinary_events(PARENT))));
         }
     }
 }
@@ -321,11 +387,14 @@ fn scan_errors_after_trailing_comments_keep_their_kind_and_source() {
     for backend in [Backend::String, Backend::Iterator, Backend::Custom] {
         let mut stack = stack_with_child(backend, INVALID_TAIL, Options::default());
         let expected = nested_events(CHILD);
-        assert_eq!(stack.next_event().unwrap().unwrap(), expected[0]);
+        assert_eq!(
+            snapshot(&(stack.next_event().unwrap().unwrap())),
+            snapshot(&(expected[0]))
+        );
         if cfg!(feature = "comments") {
             assert_eq!(
-                next_with_repeated_peek(&mut stack).unwrap().unwrap(),
-                expected[1]
+                snapshot(&(next_with_repeated_peek(&mut stack).unwrap().unwrap())),
+                snapshot(&(expected[1]))
             );
         }
 

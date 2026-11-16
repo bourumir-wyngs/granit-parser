@@ -1,6 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle, ExpectedTokenType};
+
 use granit_parser::{
     BufferedInput, ErrorKind, Event, Parser, ScalarStyle, ScanError, Scanner, StrInput,
-    StructureStyle, TokenType,
+    StructureStyle,
 };
 
 // Regression guards for StrInput::next_can_be_plain_scalar simplification.
@@ -33,16 +37,16 @@ fn colon_without_space_is_part_of_scalar_value() {
     let s = "k: a:b\n";
     let events: Vec<_> = Parser::new_from_str(s).map(|r| r.unwrap().0).collect();
     assert_eq!(
-        events,
+        snapshot(&events),
         vec![
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("k".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar("a:b".into(), ScalarStyle::Plain, false, 0, None),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("k".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar("a:b".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -66,16 +70,28 @@ fn plain_scalar_dash_before_flow_delimiter() {
                 .map(|(event, _)| event)
                 .collect();
             assert_eq!(
-                events,
+                snapshot(&events),
                 [
-                    Event::StreamStart,
-                    Event::document_start(false, None),
-                    Event::sequence_start(StructureStyle::Flow, 0, None),
-                    Event::new_scalar(expected_first.into(), ScalarStyle::Plain, false, 0, None),
-                    Event::new_scalar("after".into(), ScalarStyle::Plain, false, 0, None),
-                    Event::SequenceEnd,
-                    Event::document_end(false),
-                    Event::StreamEnd,
+                    ExpectedEvent::StreamStart,
+                    ExpectedEvent::document_start(false, None),
+                    ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
+                    ExpectedEvent::new_scalar(
+                        expected_first.into(),
+                        ExpectedStyle::plain(),
+                        false,
+                        0,
+                        None
+                    ),
+                    ExpectedEvent::new_scalar(
+                        "after".into(),
+                        ExpectedStyle::plain(),
+                        false,
+                        0,
+                        None
+                    ),
+                    ExpectedEvent::SequenceEnd,
+                    ExpectedEvent::document_end(false),
+                    ExpectedEvent::StreamEnd,
                 ],
                 "input: {yaml:?}",
             );
@@ -97,19 +113,22 @@ fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
                 .map(|token| token.token_type().clone())
                 .collect();
             assert_eq!(
-                types,
+                snapshot(&types),
                 [
-                    TokenType::StreamStart,
-                    TokenType::FlowSequenceStart,
-                    TokenType::scalar(ScalarStyle::Plain, first.into()),
-                    TokenType::FlowEntry,
-                    TokenType::scalar(ScalarStyle::Plain, "after".into()),
-                    TokenType::FlowSequenceEnd,
-                    TokenType::StreamEnd,
+                    ExpectedTokenType::StreamStart,
+                    ExpectedTokenType::FlowSequenceStart,
+                    ExpectedTokenType::scalar(ExpectedStyle::plain(), first.into()),
+                    ExpectedTokenType::FlowEntry,
+                    ExpectedTokenType::scalar(ExpectedStyle::plain(), "after".into()),
+                    ExpectedTokenType::FlowSequenceEnd,
+                    ExpectedTokenType::StreamEnd,
                 ],
                 "input: {yaml:?}",
             );
-            assert_eq!(tokens[2].span().end, tokens[3].span().start);
+            assert_eq!(
+                snapshot(&tokens[2].span().end),
+                snapshot(&tokens[3].span().start)
+            );
         }
     }
 }
@@ -123,7 +142,7 @@ fn plain_scalar_dash_before_closing_flow_delimiter() {
         ] {
             let events = result.unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"));
             assert!(events.iter().any(|(event, _)| {
-                matches!(event, Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "a -")
+                matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "a -")
             }));
         }
     }

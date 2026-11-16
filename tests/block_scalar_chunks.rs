@@ -1,7 +1,10 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{
     ErrorKind, Event, InputIoError, Marker, Parser, ScalarKind, ScalarStyle, ScanError, Span,
     StructureStyle, Tag,
 };
+use snapshots::{snapshot, ExpectedEvent};
 use std::borrow::Cow;
 
 /// Compare scalar values and character-based spans with both streaming backends.
@@ -16,8 +19,8 @@ fn parse_all_inputs(source: &str) -> Vec<(Event<'_>, Span)> {
     let from_fallible = Parser::new_from_fallible_iter(source.chars().map(Ok::<_, ErrorKind>))
         .collect::<Result<Vec<_>, _>>()
         .expect("fallible input should parse");
-    assert_eq!(from_str, from_iter);
-    assert_eq!(from_str, from_fallible);
+    assert_eq!(snapshot(&from_str), snapshot(&from_iter));
+    assert_eq!(snapshot(&from_str), snapshot(&from_fallible));
     from_str
 }
 
@@ -84,7 +87,7 @@ fn long_lines_preserve_folding_chomping_indentation_and_line_breaks() {
                     assert_eq!(actual_style.kind(), style);
                     assert!(events.iter().any(|(event, _)| matches!(
                         event,
-                        Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "tail"
+                        Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "tail"
                     )));
                 }
             }
@@ -316,25 +319,27 @@ fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof()
                 let (_, actual_style, _) = block_scalar(&events);
                 assert_eq!(actual_style.kind(), style);
                 assert_eq!(
-                    events
-                        .iter()
-                        .map(|(event, _)| event.clone())
-                        .collect::<Vec<_>>(),
-                    vec![
-                        Event::StreamStart,
-                        Event::document_start(false, None),
-                        Event::sequence_start(StructureStyle::Block, 0, None),
-                        Event::new_scalar(
+                    snapshot(
+                        &events
+                            .iter()
+                            .map(|(event, _)| event.clone())
+                            .collect::<Vec<_>>()
+                    ),
+                    snapshot(&vec![
+                        ExpectedEvent::StreamStart,
+                        ExpectedEvent::document_start(false, None),
+                        ExpectedEvent::sequence_start(StructureStyle::Block, 0, None),
+                        ExpectedEvent::new_scalar(
                             expected_value.into(),
                             actual_style,
                             false,
                             1,
                             Some(Cow::Owned(Tag::new("!", "custom"))),
                         ),
-                        Event::SequenceEnd,
-                        Event::document_end(false),
-                        Event::StreamEnd,
-                    ],
+                        ExpectedEvent::SequenceEnd,
+                        ExpectedEvent::document_end(false),
+                        ExpectedEvent::StreamEnd,
+                    ]),
                     "{source:?}"
                 );
                 let (_, _, span) = block_scalar(&events);

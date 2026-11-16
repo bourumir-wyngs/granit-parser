@@ -1,3 +1,7 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
+
 mod support;
 use std::{
     borrow::Cow,
@@ -385,7 +389,7 @@ fn parse_to_events(source: &str, options: Options) -> Result<EventReporter<'_>, 
     }
 
     // No matter the input, we should parse into the same events.
-    assert_eq!(str_events, iter_events);
+    assert_eq!(snapshot(&str_events), snapshot(&iter_events));
     // Or the same error.
     assert_eq!(str_error, iter_error);
     // If we had an error, return it so the test fails.
@@ -452,8 +456,8 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
         self.last_span = Some((ev.clone(), span));
 
         let line: String = match ev {
-            Event::StreamStart => "+STR".into(),
-            Event::StreamEnd => "-STR".into(),
+            Event::StreamStart { .. } => "+STR".into(),
+            Event::StreamEnd { .. } => "-STR".into(),
 
             Event::DocumentStart { explicit, .. } => {
                 if explicit { "+DOC ---" } else { "+DOC" }.into()
@@ -477,7 +481,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::SequenceEnd => "-SEQ".into(),
+            Event::SequenceEnd { .. } => "-SEQ".into(),
 
             Event::MappingStart {
                 style,
@@ -496,7 +500,7 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::MappingEnd => "-MAP".into(),
+            Event::MappingEnd { .. } => "-MAP".into(),
 
             Event::Scalar {
                 value: ref text,
@@ -506,9 +510,9 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                 ..
             } => {
                 let kind = match style {
-                    ScalarStyle::Plain => ":",
-                    ScalarStyle::SingleQuoted => "'",
-                    ScalarStyle::DoubleQuoted => r#"""#,
+                    ScalarStyle::Plain { .. } => ":",
+                    ScalarStyle::SingleQuoted { .. } => "'",
+                    ScalarStyle::DoubleQuoted { .. } => r#"""#,
                     ScalarStyle::Literal { .. } => "|",
                     ScalarStyle::Folded { .. } => ">",
                     _ => panic!("unknown scalar style"),

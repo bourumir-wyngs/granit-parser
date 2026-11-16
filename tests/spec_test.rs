@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 #![allow(non_upper_case_globals)]
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::snapshot;
 extern crate granit_parser;
 
 use granit_parser::{Event, EventReceiver, Parser, ScalarStyle};
@@ -29,15 +32,15 @@ impl EventReceiver<'_> for YamlChecker {
             Event::DocumentStart { .. } => TestEvent::OnDocumentStart,
             Event::DocumentEnd { .. } => TestEvent::OnDocumentEnd,
             Event::SequenceStart { .. } => TestEvent::OnSequenceStart,
-            Event::SequenceEnd => TestEvent::OnSequenceEnd,
+            Event::SequenceEnd { .. } => TestEvent::OnSequenceEnd,
             Event::MappingStart { .. } => TestEvent::OnMapStart,
-            Event::MappingEnd => TestEvent::OnMapEnd,
+            Event::MappingEnd { .. } => TestEvent::OnMapEnd,
             Event::Scalar {
                 value: ref v,
                 style,
                 ..
             } => {
-                if v == "~" && style == ScalarStyle::Plain {
+                if v == "~" && matches!(style, ScalarStyle::Plain { .. }) {
                     TestEvent::OnNull
                 } else {
                     TestEvent::OnScalar
@@ -84,7 +87,7 @@ fn str_to_test_events(docs: &str) -> Vec<TestEvent> {
     //     eprintln!("\t{x:?}");
     // }
 
-    assert_eq!(str_events, iter_events);
+    assert_eq!(snapshot(&(str_events)), snapshot(&(iter_events)));
     assert_eq!(str_error, None);
     assert_eq!(iter_error, None);
 

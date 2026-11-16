@@ -1,4 +1,7 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
 use granit_parser::{Event, Parser, ScalarStyle, StructureStyle};
+use snapshots::snapshot;
 
 fn scalar_value<'a>(ev: &'a Event<'_>) -> Option<&'a str> {
     match ev {
@@ -70,7 +73,11 @@ fn assert_same_events(yaml: &str, reference: &str) {
             .into_iter()
             .map(|(event, _)| event)
             .collect();
-        assert_eq!(events, expected, "input: {yaml:?}");
+        assert_eq!(
+            snapshot(&(events)),
+            snapshot(&(expected)),
+            "input: {yaml:?}"
+        );
     }
 }
 

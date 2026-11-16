@@ -11,9 +11,13 @@
 //!   `slice_bytes`) but without zero-copy borrowing (`slice_borrowed` returns `None`), which
 //!   forces the owned-copy fallbacks when finalizing quoted scalars.
 
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+
 use granit_parser::{
     input::{is_breakz, BorrowedInput, Input},
-    Event, Parser, ScalarKind, ScalarStyle, ScanError, StructureStyle,
+    Event, Parser, ScalarKind, ScanError, StructureStyle,
 };
 
 fn parse_events(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
@@ -250,11 +254,11 @@ fn block_scalar_line_longer_than_lookahead_window_is_read_completely() {
     let events = events.expect("valid literal scalar must parse");
 
     assert_eq!(
-        scalars_of(&events),
-        vec![(
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![(
             "abcdefghijklmnopqrstuvwxyz 0123456789\n".to_owned(),
             ScalarKind::Literal
-        )]
+        )])
     );
 }
 
@@ -270,11 +274,11 @@ fn folded_scalar_long_lines_with_windowed_input_fold_to_spaces() {
     let events = events.expect("valid folded scalar must parse");
 
     assert_eq!(
-        scalars_of(&events),
-        vec![(
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![(
             "the quick brown fox jumps over the lazy dog and runs away\n".to_owned(),
             ScalarKind::Folded
-        )]
+        )])
     );
 }
 
@@ -293,11 +297,11 @@ fn deeply_indented_block_scalar_with_buffered_input() {
     let events = events.expect("valid literal scalar must parse");
 
     assert_eq!(
-        scalars_of(&events),
-        vec![
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![
             ("k".to_owned(), ScalarKind::Plain),
             ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::Literal),
-        ]
+        ])
     );
 }
 
@@ -316,11 +320,11 @@ fn deeply_indented_block_scalar_with_windowed_input() {
     let events = events.expect("valid literal scalar must parse");
 
     assert_eq!(
-        scalars_of(&events),
-        vec![
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![
             ("k".to_owned(), ScalarKind::Plain),
             ("aaaa\n\nbbbb\n".to_owned(), ScalarKind::Literal),
-        ]
+        ])
     );
 }
 
@@ -336,8 +340,8 @@ fn double_quoted_trailing_blank_before_break_folds_to_space() {
     let events = parse_events("\"a \nb\"\n").unwrap();
 
     assert_eq!(
-        scalars_of(&events),
-        vec![("a b".to_owned(), ScalarKind::DoubleQuoted)]
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![("a b".to_owned(), ScalarKind::DoubleQuoted)])
     );
 }
 
@@ -347,8 +351,8 @@ fn single_quoted_trailing_blanks_before_break_fold_to_space() {
     let events = parse_events("'a  \n  b'\n").unwrap();
 
     assert_eq!(
-        scalars_of(&events),
-        vec![("a b".to_owned(), ScalarKind::SingleQuoted)]
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![("a b".to_owned(), ScalarKind::SingleQuoted)])
     );
 }
 
@@ -364,8 +368,8 @@ fn quoted_scalar_from_offsets_without_borrowing_is_copied() {
     let events = events.expect("valid double quoted scalar must parse");
 
     assert_eq!(
-        scalars_of(&events),
-        vec![("hello world".to_owned(), ScalarKind::DoubleQuoted)]
+        snapshot(&scalars_of(&events)),
+        snapshot(&vec![("hello world".to_owned(), ScalarKind::DoubleQuoted)])
     );
 }
 
@@ -415,19 +419,19 @@ fn empty_flow_sequence_key_in_existing_block_mapping() {
     let events = parse_events("x: y\n[]: b\n").unwrap();
 
     assert_eq!(
-        events,
+        snapshot(&events),
         vec![
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("x".into(), ScalarStyle::Plain, false, 0, None),
-            Event::new_scalar("y".into(), ScalarStyle::Plain, false, 0, None),
-            Event::sequence_start(StructureStyle::Flow, 0, None),
-            Event::SequenceEnd,
-            Event::new_scalar("b".into(), ScalarStyle::Plain, false, 0, None),
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("x".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::new_scalar("y".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::sequence_start(StructureStyle::Flow, 0, None),
+            ExpectedEvent::SequenceEnd,
+            ExpectedEvent::new_scalar("b".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }
@@ -440,18 +444,18 @@ fn sequence_indented_one_column_under_mapping_key() {
     let events = parse_events("a:\n - b\n").unwrap();
 
     assert_eq!(
-        events,
+        snapshot(&events),
         vec![
-            Event::StreamStart,
-            Event::document_start(false, None),
-            Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("a".into(), ScalarStyle::Plain, false, 0, None),
-            Event::sequence_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("b".into(), ScalarStyle::Plain, false, 0, None),
-            Event::SequenceEnd,
-            Event::MappingEnd,
-            Event::document_end(false),
-            Event::StreamEnd,
+            ExpectedEvent::StreamStart,
+            ExpectedEvent::document_start(false, None),
+            ExpectedEvent::mapping_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("a".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::sequence_start(StructureStyle::Block, 0, None),
+            ExpectedEvent::new_scalar("b".into(), ExpectedStyle::plain(), false, 0, None),
+            ExpectedEvent::SequenceEnd,
+            ExpectedEvent::MappingEnd,
+            ExpectedEvent::document_end(false),
+            ExpectedEvent::StreamEnd,
         ]
     );
 }

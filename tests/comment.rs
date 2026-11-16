@@ -1,3 +1,6 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent};
 use std::{borrow::Cow, cell::Cell, rc::Rc};
 
 use granit_parser::{
@@ -105,7 +108,7 @@ fn first_empty_scalar_span(events: &[(Event<'_>, Span)]) -> Span {
         .find_map(|(event, span)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } if value.as_ref() == "~" => Some(*span),
             _ => None,
@@ -149,11 +152,17 @@ fn comment_type_preserves_single_space_payload() {
 
 #[test]
 fn event_comment_stores_raw_payload() {
-    let event = Event::comment(" payload ".into(), Placement::Free);
+    let event = Parser::new_from_str("# payload \n")
+        .map(Result::unwrap)
+        .find_map(|(event, _)| matches!(event, Event::Comment { .. }).then_some(event))
+        .unwrap();
 
-    assert_eq!(event, Event::comment(" payload ".into(), Placement::Free));
+    assert_eq!(
+        snapshot(&event),
+        snapshot(&ExpectedEvent::comment(" payload ".into(), Placement::Last))
+    );
     assert!(!event.is_node());
-    assert_eq!(event.scalar(), None);
+    assert!(event.scalar().is_none());
     assert_eq!(event.tag(), None);
     assert_eq!(event.anchor_id(), None);
     assert_eq!(event.alias_id(), None);
@@ -166,10 +175,11 @@ fn token_comment_uses_span_for_full_source_comment() {
         Marker::new(11, 1, 11).with_byte_offset(Some(11)),
         Marker::new(20, 1, 20).with_byte_offset(Some(20)),
     );
-    let token = Token::new(
-        span,
-        TokenType::comment(Comment::new(" payload").with_placement(Placement::Right)),
-    );
+    let token = Scanner::new(StrInput::new(yaml))
+        .map(Result::unwrap)
+        .find(|token| matches!(token.token_type(), TokenType::Comment { .. }))
+        .unwrap();
+    assert_eq!(token.span(), span);
 
     assert_eq!(token.span().slice(yaml), Some("# payload"));
     assert!(
@@ -253,7 +263,7 @@ fn scanner_emits_trailing_comment_after_plain_scalar_token() {
     let value_index = tokens
         .iter()
         .position(|token| {
-            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain, value, .. } if value == "value")
+            matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value")
         })
         .expect("plain scalar token should be emitted");
     let comment_index = tokens
@@ -300,32 +310,32 @@ fn scanner_emits_comments_after_syntax_tokens() {
         },
         Case {
             yaml: "---\nkey: value\n... # document end\n",
-            syntax_matches: |token| matches!(token, TokenType::DocumentEnd),
+            syntax_matches: |token| matches!(token, TokenType::DocumentEnd { .. }),
             expected_comment: " document end",
         },
         Case {
             yaml: "[ # flow start\n]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceStart { .. }),
             expected_comment: " flow start",
         },
         Case {
             yaml: "[a] # flow end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd),
+            syntax_matches: |token| matches!(token, TokenType::FlowSequenceEnd { .. }),
             expected_comment: " flow end",
         },
         Case {
             yaml: "{a: b} # flow mapping end\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd),
+            syntax_matches: |token| matches!(token, TokenType::FlowMappingEnd { .. }),
             expected_comment: " flow mapping end",
         },
         Case {
             yaml: "[a, # flow entry\nb]\n",
-            syntax_matches: |token| matches!(token, TokenType::FlowEntry),
+            syntax_matches: |token| matches!(token, TokenType::FlowEntry { .. }),
             expected_comment: " flow entry",
         },
         Case {
             yaml: "? # explicit key\n: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Key),
+            syntax_matches: |token| matches!(token, TokenType::Key { .. }),
             expected_comment: " explicit key",
         },
         Case {
@@ -348,12 +358,12 @@ fn scanner_emits_comments_after_syntax_tokens() {
         },
         Case {
             yaml: "key: \"value\" # quoted\n",
-            syntax_matches: |token| matches!(token, TokenType::Scalar { style: ScalarStyle::DoubleQuoted, value, .. } if value == "value"),
+            syntax_matches: |token| matches!(token, TokenType::Scalar { style: ScalarStyle::DoubleQuoted { .. }, value, .. } if value == "value"),
             expected_comment: " quoted",
         },
         Case {
             yaml: "key:\t# mapping value\n  nested: value\n",
-            syntax_matches: |token| matches!(token, TokenType::Value),
+            syntax_matches: |token| matches!(token, TokenType::Value { .. }),
             expected_comment: " mapping value",
         },
     ];
@@ -546,17 +556,17 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
     let cases = [
         (
             "key: \"# not a comment\"\n",
-            ScalarStyle::DoubleQuoted,
+            granit_parser::ScalarKind::DoubleQuoted,
             "# not a comment",
         ),
         (
             "key: '# not a comment'\n",
-            ScalarStyle::SingleQuoted,
+            granit_parser::ScalarKind::SingleQuoted,
             "# not a comment",
         ),
         (
             "key: |\n  # not a comment\n",
-            ScalarStyle::literal(granit_parser::BlockScalarSyntax::default()),
+            granit_parser::ScalarKind::Literal,
             "# not a comment\n",
         ),
     ];
@@ -573,7 +583,7 @@ fn scanner_does_not_emit_comments_from_quoted_or_block_scalar_content() {
         assert!(
             tokens.iter().any(|token| {
                 matches!(token.token_type(), TokenType::Scalar { style: scalar_style, value, .. }
-                    if scalar_style.kind() == style.kind() && value == expected_value)
+                    if scalar_style.kind() == style && value == expected_value)
             }),
             "{yaml:?}"
         );
@@ -605,7 +615,7 @@ fn scanner_treats_unseparated_hash_after_plain_scalar_as_content() {
     let tokens = scanner_tokens("key: value#bad\n").expect("valid YAML should scan without errors");
 
     assert!(tokens.iter().any(|token| {
-        matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain, value, .. } if value == "value#bad")
+        matches!(token.token_type(), TokenType::Scalar { style: ScalarStyle::Plain { .. }, value, .. } if value == "value#bad")
     }));
     assert!(!tokens
         .iter()
@@ -644,7 +654,7 @@ fn scanner_preserves_comment_adjacent_plain_scalar_whitespace_rules() {
             .iter()
             .filter_map(|token| match token.token_type() {
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain,
+                    style: ScalarStyle::Plain { .. },
                     value,
                     ..
                 } => Some(value.as_ref()),
@@ -767,7 +777,7 @@ fn own_line_comment_before_invalid_token_is_emitted_before_error() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     assert!(matches!(
@@ -875,7 +885,7 @@ fn parser_emits_trailing_comment_after_plain_scalar_event() {
     let value_index = events
         .iter()
         .position(|(event, _)| {
-            matches!(event, Event::Scalar { value, style: ScalarStyle::Plain, .. } if value == "value")
+            matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "value")
         })
         .expect("plain scalar event should be emitted");
     let comment_index = events
@@ -1133,11 +1143,11 @@ fn later_empty_indentless_sequence_entry_after_comment_is_queued_before_next_key
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1166,11 +1176,11 @@ fn later_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1199,11 +1209,11 @@ fn first_indentless_sequence_entry_after_comment_keeps_value_in_sequence() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             _ => None,
         })
         .collect();
@@ -1231,7 +1241,7 @@ fn parser_handles_comments_in_flow_mapping_key_and_separator_states() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1262,7 +1272,7 @@ fn parser_handles_flow_mapping_value_after_comment() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1286,7 +1296,7 @@ fn parser_handles_implicit_flow_mapping_value_after_comment() {
         .filter_map(|(event, _)| match event {
             Event::Scalar {
                 value,
-                style: ScalarStyle::Plain,
+                style: ScalarStyle::Plain { .. },
                 ..
             } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
@@ -1322,7 +1332,7 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
 
     assert!(matches!(
         parser.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     let first_peek = parser.peek().unwrap().unwrap().clone();
@@ -1332,8 +1342,8 @@ fn parser_peek_returns_and_preserves_pending_comment_event() {
     assert!(
         matches!(first_peek.0, Event::Comment { value: ref text, placement: Placement::Above, .. } if text == " first")
     );
-    assert_eq!(first_peek, second_peek);
-    assert_eq!(first_peek, next);
+    assert_eq!(snapshot(&first_peek), snapshot(&second_peek));
+    assert_eq!(snapshot(&first_peek), snapshot(&next));
 }
 
 #[derive(Default)]
@@ -1386,12 +1396,12 @@ fn parser_emits_comments_around_markers_flow_collections_and_stream_end() {
     let names: Vec<String> = events
         .iter()
         .filter_map(|(event, _)| match event {
-            Event::StreamStart => Some("StreamStart".into()),
+            Event::StreamStart { .. } => Some("StreamStart".into()),
             Event::DocumentStart { .. } => Some("DocumentStart".into()),
             Event::SequenceStart { .. } => Some("SequenceStart".into()),
-            Event::SequenceEnd => Some("SequenceEnd".into()),
+            Event::SequenceEnd { .. } => Some("SequenceEnd".into()),
             Event::DocumentEnd { .. } => Some("DocumentEnd".into()),
-            Event::StreamEnd => Some("StreamEnd".into()),
+            Event::StreamEnd { .. } => Some("StreamEnd".into()),
             Event::Scalar { value, .. } => Some(format!("Scalar({value})")),
             Event::Comment { value: text, .. } => Some(format!("Comment({text})")),
             _ => None,

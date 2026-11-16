@@ -2,6 +2,10 @@
 
 use std::collections::BTreeSet;
 
+#[path = "../../tests/support/snapshots.rs"]
+pub mod snapshots;
+use snapshots::snapshot;
+
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Options, Parser, ScanError,
     Scanner, Span, SpannedEventReceiver, StrInput, Token, TokenType,
@@ -39,7 +43,8 @@ pub fn parse_with_options(input: &str, options: Options) {
     validate_streaming_parser_trace(&fallible);
 
     assert_eq!(
-        string.items, buffered.items,
+        snapshot(&string.items),
+        snapshot(&buffered.items),
         "StrInput and BufferedInput emitted different parser events"
     );
     assert_eq!(
@@ -47,7 +52,8 @@ pub fn parse_with_options(input: &str, options: Options) {
         "StrInput and BufferedInput returned different parser errors"
     );
     assert_eq!(
-        string.items, fallible.items,
+        snapshot(&string.items),
+        snapshot(&fallible.items),
         "infallible and all-Ok fallible inputs emitted different parser events"
     );
     assert_eq!(
@@ -78,7 +84,8 @@ pub fn scan_with_options(input: &str, options: Options) {
     validate_streaming_scanner_trace(&fallible);
 
     assert_eq!(
-        string.items, buffered.items,
+        snapshot(&string.items),
+        snapshot(&buffered.items),
         "StrInput and BufferedInput emitted different scanner tokens"
     );
     assert_eq!(
@@ -86,7 +93,8 @@ pub fn scan_with_options(input: &str, options: Options) {
         "StrInput and BufferedInput returned different scanner errors"
     );
     assert_eq!(
-        string.items, fallible.items,
+        snapshot(&string.items),
+        snapshot(&fallible.items),
         "infallible and all-Ok fallible inputs emitted different scanner tokens"
     );
     assert_eq!(
@@ -130,7 +138,8 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         .filter(|(event, _)| !is_comment_event(event))
         .collect();
     assert_eq!(
-        parser_non_comments, parser_without.items,
+        snapshot(&parser_non_comments),
+        snapshot(&parser_without.items),
         "comment suppression changed non-comment parser events"
     );
     assert_eq!(
@@ -152,7 +161,8 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         .filter(|token| !is_comment_token(token.token_type()))
         .collect();
     assert_eq!(
-        scanner_non_comments, scanner_without.items,
+        snapshot(&scanner_non_comments),
+        snapshot(&scanner_without.items),
         "comment suppression changed non-comment scanner tokens"
     );
     assert_eq!(
@@ -186,7 +196,8 @@ fn check_load_matches_iterator<'input>(
     let mut sink = CollectSpanned::default();
     let error = parser.load(&mut sink, true).err();
     assert_eq!(
-        sink.items, expected.items,
+        snapshot(&sink.items),
+        snapshot(&expected.items),
         "`load` and the iterator emitted different parser events"
     );
     assert_eq!(
@@ -212,7 +223,7 @@ fn check_load_matches_iterator<'input>(
         );
     } else {
         assert!(
-            matches!(repeated, [(Event::StreamEnd, _)]),
+            matches!(repeated, [(Event::StreamEnd { .. }, _)]),
             "expected only a repeated StreamEnd after a clean end: {repeated:?}"
         );
     }
@@ -350,13 +361,13 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     if complete || !events.is_empty() {
         assert!(
-            matches!(events.first(), Some((Event::StreamStart, _))),
+            matches!(events.first(), Some((Event::StreamStart { .. }, _))),
             "parser trace does not start with StreamStart"
         );
     }
     if complete {
         assert!(
-            matches!(events.last(), Some((Event::StreamEnd, _))),
+            matches!(events.last(), Some((Event::StreamEnd { .. }, _))),
             "successful parser trace does not end with StreamEnd"
         );
     }
@@ -367,8 +378,8 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     for (index, (event, _)) in events.iter().enumerate() {
         match event {
-            Event::StreamStart => assert_eq!(index, 0, "duplicate StreamStart event"),
-            Event::StreamEnd => {
+            Event::StreamStart { .. } => assert_eq!(index, 0, "duplicate StreamStart event"),
+            Event::StreamEnd { .. } => {
                 assert!(complete, "StreamEnd preceded a parser error");
                 assert_eq!(index + 1, events.len(), "early StreamEnd event");
                 assert!(!document_open, "StreamEnd occurred inside a document");
@@ -395,7 +406,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Sequence);
             }
-            Event::SequenceEnd => {
+            Event::SequenceEnd { .. } => {
                 assert_eq!(collections.pop(), Some(Collection::Sequence));
             }
             Event::MappingStart {
@@ -405,7 +416,7 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Mapping);
             }
-            Event::MappingEnd => {
+            Event::MappingEnd { .. } => {
                 assert_eq!(collections.pop(), Some(Collection::Mapping));
             }
             Event::Scalar {
@@ -464,7 +475,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.first().map(Token::token_type),
-                Some(TokenType::StreamStart)
+                Some(TokenType::StreamStart { .. })
             ),
             "scanner trace does not start with StreamStart"
         );
@@ -473,7 +484,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.last().map(Token::token_type),
-                Some(TokenType::StreamEnd)
+                Some(TokenType::StreamEnd { .. })
             ),
             "successful scanner trace does not end with StreamEnd"
         );
@@ -481,7 +492,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamStart))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamStart { .. }))
             .count(),
         usize::from(!tokens.is_empty()),
         "scanner emitted multiple StreamStart tokens"
@@ -489,7 +500,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd { .. }))
             .count(),
         usize::from(complete),
         "scanner must emit StreamEnd exactly once on success and never before an error"

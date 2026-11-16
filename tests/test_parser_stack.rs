@@ -1,3 +1,7 @@
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent, ExpectedStyle};
+
 #[cfg(feature = "comments")]
 use granit_parser::Placement;
 extern crate alloc;
@@ -11,7 +15,7 @@ use alloc::{
 use core::iter::Empty;
 use granit_parser::{
     BorrowedInput, ErrorKind, Event, Marker, Parser, ParserStack, ParserTrait, ReplayParser,
-    ScalarStyle, ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
+    ScanError, Span, SpannedEventReceiver, StrInput, StructureStyle, TryEventReceiver,
     TryLoadError,
 };
 
@@ -21,8 +25,25 @@ fn test_span() -> Span {
     Span::empty(Marker::new(0, 1, 0))
 }
 
+fn parsed_events(source: &'static str) -> Vec<(Event<'static>, Span)> {
+    Parser::new_from_str(source).map(Result::unwrap).collect()
+}
+
 fn plain_scalar(value: &'static str, anchor_id: usize) -> Event<'static> {
-    Event::new_scalar(value.into(), ScalarStyle::Plain, false, anchor_id, None)
+    let mut event = parsed_events(value)
+        .into_iter()
+        .find_map(|(event, _)| matches!(event, Event::Scalar { .. }).then_some(event))
+        .expect("plain scalar fixture");
+    if let Event::Scalar { anchor_id: id, .. } = &mut event {
+        *id = anchor_id;
+    }
+    event
+}
+
+fn stream_end() -> Event<'static> {
+    let event = parsed_events("value").pop().unwrap().0;
+    assert!(matches!(event, Event::StreamEnd { .. }));
+    event
 }
 
 fn collect_events<'a, I, T>(stack: &mut ParserStack<'a, I, T>) -> Result<Vec<Event<'a>>, String>
@@ -34,7 +55,7 @@ where
     loop {
         match stack.next_event() {
             Some(Ok((ev, _))) => {
-                let is_end = matches!(ev, Event::StreamEnd);
+                let is_end = matches!(ev, Event::StreamEnd { .. });
                 events.push(ev);
                 if is_end {
                     break;
@@ -98,17 +119,17 @@ fn format_events(events: &[Event]) -> Vec<String> {
     events
         .iter()
         .map(|e| match e {
-            Event::StreamStart => "StreamStart".to_string(),
-            Event::StreamEnd => "StreamEnd".to_string(),
+            Event::StreamStart { .. } => "StreamStart".to_string(),
+            Event::StreamEnd { .. } => "StreamEnd".to_string(),
             Event::DocumentStart { .. } => "DocStart".to_string(),
             Event::DocumentEnd { .. } => "DocEnd".to_string(),
             #[cfg(feature = "comments")]
             Event::Comment { value: text, .. } => alloc::format!("Comment({})", text.as_ref()),
             Event::Scalar { value: val, .. } => alloc::format!("Scalar({})", val.as_ref()),
             Event::MappingStart { .. } => "MapStart".to_string(),
-            Event::MappingEnd => "MapEnd".to_string(),
+            Event::MappingEnd { .. } => "MapEnd".to_string(),
             Event::SequenceStart { .. } => "SeqStart".to_string(),
-            Event::SequenceEnd => "SeqEnd".to_string(),
+            Event::SequenceEnd { .. } => "SeqEnd".to_string(),
             _ => "Other".to_string(),
         })
         .collect()
@@ -254,7 +275,7 @@ fn test_three_parsers_dynamic_adding() {
 
     // Fetch first event from top parser (p1)
     let ev1 = stack.next_event().unwrap().unwrap().0;
-    assert!(matches!(ev1, Event::StreamStart));
+    assert!(matches!(ev1, Event::StreamStart { .. }));
 
     // Now push middle parser
     stack.push_str_parser(Parser::new_from_str("p2: 2"), "p2".to_string());
@@ -334,7 +355,7 @@ fn test_anchor_id_propagation() {
     loop {
         match stack.next_event() {
             Some(Ok((ev, _))) => {
-                let is_end = matches!(ev, Event::StreamEnd);
+                let is_end = matches!(ev, Event::StreamEnd { .. });
                 events.push(ev);
                 if is_end {
                     break;
@@ -653,13 +674,11 @@ fn borrowed_include_inherits_and_propagates_parent_anchor_offset() {
 fn replay_parser_moves_owned_event_text() {
     let value = "owned replay value".to_string();
     let value_ptr = value.as_ptr();
-    let mut replay = ReplayParser::new(
-        vec![(
-            Event::new_scalar(Cow::Owned(value), ScalarStyle::Plain, false, 0, None),
-            test_span(),
-        )],
-        1,
-    );
+    let mut scalar = plain_scalar("placeholder", 0);
+    if let Event::Scalar { value: content, .. } = &mut scalar {
+        *content = Cow::Owned(value);
+    }
+    let mut replay = ReplayParser::new(vec![(scalar, test_span())], 1);
 
     let event = replay.next().unwrap().unwrap().0;
     let Event::Scalar {
@@ -697,35 +716,9 @@ fn test_replay_parser_updates_anchor_offset() {
         }
     }
 
-    let span = Span::empty(Marker::new(0, 1, 0));
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (Event::mapping_start(StructureStyle::Block, 0, None), span),
-        (
-            Event::new_scalar(
-                "k2".into(),
-                granit_parser::ScalarStyle::Plain,
-                false,
-                0,
-                None,
-            ),
-            span,
-        ),
-        (
-            Event::new_scalar(
-                "v2".into(),
-                granit_parser::ScalarStyle::Plain,
-                false,
-                2,
-                None,
-            ),
-            span,
-        ),
-        (Event::MappingEnd, span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let mut parser = Parser::new_from_str("k2: &b v2");
+    parser.set_anchor_offset(2);
+    let replay_events = parser.map(Result::unwrap).collect();
     stack.push_replay_parser(ReplayParser::new(replay_events, 1), "replay".to_string());
 
     let events = collect_events(&mut stack).unwrap();
@@ -757,35 +750,7 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
         }
     }
 
-    let span = Span::empty(Marker::new(0, 1, 0));
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (Event::mapping_start(StructureStyle::Block, 0, None), span),
-        (
-            Event::new_scalar(
-                "included".into(),
-                granit_parser::ScalarStyle::Plain,
-                false,
-                0,
-                None,
-            ),
-            span,
-        ),
-        (
-            Event::new_scalar(
-                "value".into(),
-                granit_parser::ScalarStyle::Plain,
-                false,
-                0,
-                None,
-            ),
-            span,
-        ),
-        (Event::MappingEnd, span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let replay_events = parsed_events("included: value");
 
     stack.push_replay_parser(ReplayParser::new(replay_events, 1), "replay".to_string());
 
@@ -805,26 +770,47 @@ fn test_replay_parser_without_anchors_does_not_regress_anchor_offset() {
 
 #[test]
 fn replay_parser_peek_next_and_load_track_collection_anchors() {
-    let span = test_span();
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (Event::sequence_start(StructureStyle::Block, 4, None), span),
-        (Event::SequenceEnd, span),
-        (Event::mapping_start(StructureStyle::Block, 7, None), span),
-        (Event::MappingEnd, span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let mut replay_events = parsed_events("&seq []");
+    for (event, _) in &mut replay_events {
+        if let Event::SequenceStart {
+            anchor_id, style, ..
+        } = event
+        {
+            *anchor_id = 4;
+            *style = StructureStyle::Block;
+        }
+    }
+    let mut mapping = parsed_events("&map {}");
+    for (event, _) in &mut mapping {
+        if let Event::MappingStart {
+            anchor_id, style, ..
+        } = event
+        {
+            *anchor_id = 7;
+            *style = StructureStyle::Block;
+        }
+    }
+    // Deliberately replay two collection roots in one document, preserving the synthetic
+    // stream coverage while obtaining each actual event from a parser-produced fixture.
+    let document_end = replay_events
+        .iter()
+        .position(|(event, _)| matches!(event, Event::DocumentEnd { .. }))
+        .unwrap();
+    replay_events.splice(
+        document_end..document_end,
+        mapping.into_iter().filter(|(event, _)| {
+            matches!(event, Event::MappingStart { .. } | Event::MappingEnd { .. })
+        }),
+    );
     let mut replay = ReplayParser::new(replay_events, 1);
 
     assert!(matches!(
         replay.peek().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
     assert!(matches!(
         replay.next_event().unwrap().unwrap().0,
-        Event::StreamStart
+        Event::StreamStart { .. }
     ));
 
     let mut recv = TestReceiver { events: Vec::new() };
@@ -847,17 +833,7 @@ fn replay_parser_peek_next_and_load_track_collection_anchors() {
 
 #[test]
 fn replay_parser_load_single_stops_at_document_end() {
-    let span = test_span();
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("first", 0), span),
-        (Event::document_end(false), span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("second", 0), span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let replay_events = parsed_events("first\n---\nsecond");
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TestReceiver { events: Vec::new() };
 
@@ -871,17 +847,7 @@ fn replay_parser_load_single_stops_at_document_end() {
 
 #[test]
 fn replay_parser_try_load_single_stops_at_document_end() {
-    let span = test_span();
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("first", 0), span),
-        (Event::document_end(false), span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("second", 0), span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let replay_events = parsed_events("first\n---\nsecond");
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TryTestReceiver { events: Vec::new() };
 
@@ -895,14 +861,7 @@ fn replay_parser_try_load_single_stops_at_document_end() {
 
 #[test]
 fn replay_parser_try_load_multi_reads_stream_end() {
-    let span = test_span();
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("first", 0), span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let replay_events = parsed_events("first");
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TryTestReceiver { events: Vec::new() };
 
@@ -923,15 +882,12 @@ fn replay_parser_try_load_multi_reads_stream_end() {
 #[test]
 #[cfg(feature = "comments")]
 fn replay_parser_preserves_comment_events() {
-    let span = test_span();
-    let replay_events = vec![
-        (Event::StreamStart, span),
-        (Event::comment(" replay".into(), Placement::Free), span),
-        (Event::document_start(false, None), span),
-        (plain_scalar("value", 0), span),
-        (Event::document_end(false), span),
-        (Event::StreamEnd, span),
-    ];
+    let mut replay_events = parsed_events("# replay\nvalue");
+    for (event, _) in &mut replay_events {
+        if let Event::Comment { placement, .. } = event {
+            *placement = Placement::Free;
+        }
+    }
     let mut replay = ReplayParser::new(replay_events, 1);
     let mut recv = TestReceiver { events: Vec::new() };
 
@@ -1013,11 +969,17 @@ fn parser_stack_include_preserves_comment_events_and_local_spans() {
 fn default_empty_stack_peek_and_next_emit_stream_end_once() {
     let mut stack: MyStack = ParserStack::default();
 
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
     assert!(matches!(
         stack.next_event().unwrap().unwrap().0,
-        Event::StreamEnd
+        Event::StreamEnd { .. }
     ));
     assert!(stack.next_event().is_none());
 }
@@ -1039,7 +1001,10 @@ fn parser_stack_push_str_after_exhaustion_stays_exhausted() {
 fn parser_stack_push_after_peeked_empty_stream_end_reactivates_stack() {
     let mut stack: MyStack = ParserStack::new();
 
-    assert!(matches!(stack.peek().unwrap().unwrap().0, Event::StreamEnd));
+    assert!(matches!(
+        stack.peek().unwrap().unwrap().0,
+        Event::StreamEnd { .. }
+    ));
 
     stack.push_str_parser(Parser::new_from_str("b: 2"), "second".to_string());
 
@@ -1262,7 +1227,10 @@ fn custom_parser_with_current_primes_next_event() {
     assert_eq!(stack.stack(), vec!["custom".to_string()]);
 
     let (event, event_span) = stack.next_event().unwrap().unwrap();
-    assert_eq!(event, plain_scalar("primed", 0));
+    assert_eq!(
+        snapshot(&event),
+        ExpectedEvent::new_scalar("primed".into(), ExpectedStyle::plain(), false, 0, None),
+    );
     assert_eq!(event_span, span);
 }
 
@@ -1282,7 +1250,7 @@ fn replay_parser_without_stream_end_is_popped_at_eof() {
     ));
     assert!(matches!(
         stack.next_event().unwrap().unwrap().0,
-        Event::StreamEnd
+        Event::StreamEnd { .. }
     ));
     assert!(stack.next_event().is_none());
 }
@@ -1387,7 +1355,7 @@ fn nested_replay_stream_end_is_popped_and_parent_continues() {
     let mut stack: MyStack = ParserStack::new();
     stack.push_str_parser(Parser::new_from_str("parent: value"), "parent".to_string());
     stack.push_replay_parser(
-        ReplayParser::new(vec![(Event::StreamEnd, span)], 1),
+        ReplayParser::new(vec![(stream_end(), span)], 1),
         "empty".to_string(),
     );
 
@@ -1438,10 +1406,7 @@ fn replay_child_propagates_anchor_offset_to_iter_parent() {
     let span = test_span();
     stack.push_replay_parser(
         ReplayParser::new(
-            vec![
-                (plain_scalar("included", 2), span),
-                (Event::StreamEnd, span),
-            ],
+            vec![(plain_scalar("included", 2), span), (stream_end(), span)],
             1,
         ),
         "replay".to_string(),
@@ -1471,10 +1436,7 @@ fn replay_child_propagates_anchor_offset_to_custom_parent() {
     let span = test_span();
     stack.push_replay_parser(
         ReplayParser::new(
-            vec![
-                (plain_scalar("included", 2), span),
-                (Event::StreamEnd, span),
-            ],
+            vec![(plain_scalar("included", 2), span), (stream_end(), span)],
             1,
         ),
         "replay".to_string(),
@@ -1496,19 +1458,19 @@ fn replay_child_propagates_anchor_offset_to_replay_parent() {
     );
     stack.push_replay_parser(
         ReplayParser::new(
-            vec![(plain_scalar("child", 4), span), (Event::StreamEnd, span)],
+            vec![(plain_scalar("child", 4), span), (stream_end(), span)],
             1,
         ),
         "replay-child".to_string(),
     );
 
     assert_eq!(
-        stack.next_event().unwrap().unwrap().0,
-        plain_scalar("child", 4)
+        snapshot(&stack.next_event().unwrap().unwrap().0),
+        ExpectedEvent::new_scalar("child".into(), ExpectedStyle::plain(), false, 4, None)
     );
     assert_eq!(
-        stack.next_event().unwrap().unwrap().0,
-        plain_scalar("parent", 0)
+        snapshot(&stack.next_event().unwrap().unwrap().0),
+        ExpectedEvent::new_scalar("parent".into(), ExpectedStyle::plain(), false, 0, None)
     );
     assert_eq!(stack.current_anchor_offset(), 5);
 }
@@ -1537,8 +1499,8 @@ fn custom_parser_with_current_inherits_parent_anchor_offset() {
 
     assert_eq!(stack.current_anchor_offset(), 2);
     assert_eq!(
-        stack.next_event().unwrap().unwrap().0,
-        plain_scalar("primed", 0)
+        snapshot(&stack.next_event().unwrap().unwrap().0),
+        ExpectedEvent::new_scalar("primed".into(), ExpectedStyle::plain(), false, 0, None)
     );
 
     let events = collect_events(&mut stack).unwrap();

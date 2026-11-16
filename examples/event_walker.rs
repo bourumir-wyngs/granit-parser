@@ -78,13 +78,13 @@ impl Walker {
                 self.frames.push(Frame::Mapping { next_is_key: true });
                 Ok(Some(context))
             }
-            Event::SequenceEnd => {
+            Event::SequenceEnd { .. } => {
                 assert_eq!(self.frames.pop(), Some(Frame::Sequence));
                 // Closing a collection only restores its parent's context.
                 // Its parent already advanced when the collection started.
                 Ok(None)
             }
-            Event::MappingEnd => {
+            Event::MappingEnd { .. } => {
                 assert_eq!(
                     self.frames.pop(),
                     Some(Frame::Mapping { next_is_key: true }),
@@ -106,7 +106,7 @@ impl Walker {
                 assert!(self.root_seen);
                 Ok(None)
             }
-            Event::StreamStart | Event::StreamEnd => Ok(None),
+            Event::StreamStart { .. } | Event::StreamEnd { .. } => Ok(None),
             // Anchor metadata describes the preceding node and consumes no slot.
             Event::Anchor { .. } => Ok(None),
             #[cfg(feature = "comments")]

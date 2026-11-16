@@ -456,12 +456,38 @@ impl AsRef<str> for Comment<'_> {
 }
 
 /// The contents of a scanner token.
+///
+/// Use `matches!`, `if let`, or `match` with `{ .. }` to inspect a token variant. Every
+/// variant is non-exhaustive, even if it currently has no fields, so the library can add
+/// metadata without changing those patterns. A complete match also needs a fallback arm.
+/// Token payloads do not implement equality and cannot be constructed by callers.
+///
+/// ```
+/// use granit_parser::{Scanner, StrInput, TokenType};
+/// let token = Scanner::new(StrInput::new("value")).next().unwrap().unwrap();
+/// assert!(matches!(token.token_type(), TokenType::StreamStart { .. }));
+/// ```
+///
+/// ```compile_fail,E0369
+/// use granit_parser::TokenType;
+/// fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
+///     left == right
+/// }
+/// ```
+///
+/// ```compile_fail,E0599
+/// use granit_parser::TokenType;
+/// let token = TokenType::alias("name".into());
+/// ```
 #[non_exhaustive]
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum TokenType<'input> {
     /// Start of the stream.
+    #[non_exhaustive]
     StreamStart,
     /// End of the stream.
+    #[non_exhaustive]
     StreamEnd,
     /// A YAML version directive.
     #[non_exhaustive]
@@ -480,30 +506,43 @@ pub enum TokenType<'input> {
         prefix: Cow<'input, str>,
     },
     /// Explicit document start marker (`---`).
+    #[non_exhaustive]
     DocumentStart,
     /// Explicit document end marker (`...`).
+    #[non_exhaustive]
     DocumentEnd,
     /// Start of a block sequence.
+    #[non_exhaustive]
     BlockSequenceStart,
     /// Start of a block mapping.
+    #[non_exhaustive]
     BlockMappingStart,
     /// End of a block collection.
+    #[non_exhaustive]
     BlockEnd,
     /// Opening `[` of a flow sequence.
+    #[non_exhaustive]
     FlowSequenceStart,
     /// Closing `]` of a flow sequence.
+    #[non_exhaustive]
     FlowSequenceEnd,
     /// Opening `{` of a flow mapping.
+    #[non_exhaustive]
     FlowMappingStart,
     /// Closing `}` of a flow mapping.
+    #[non_exhaustive]
     FlowMappingEnd,
     /// Block sequence entry indicator.
+    #[non_exhaustive]
     BlockEntry,
     /// Flow collection entry separator.
+    #[non_exhaustive]
     FlowEntry,
     /// Mapping key indicator.
+    #[non_exhaustive]
     Key,
     /// Mapping value indicator.
+    #[non_exhaustive]
     Value,
     /// Alias name without the leading `*`.
     #[non_exhaustive]
@@ -550,89 +589,12 @@ pub enum TokenType<'input> {
     },
 }
 
-impl<'input> TokenType<'input> {
-    /// Return a [`Self::VersionDirective`] token payload.
-    ///
-    /// * `major`: Major version number.
-    /// * `minor`: Minor version number.
-    #[must_use]
-    pub fn version_directive(major: u32, minor: u32) -> Self {
-        Self::VersionDirective { major, minor }
-    }
-
-    /// Return a [`Self::TagDirective`] token payload.
-    ///
-    /// * `handle`: Tag handle.
-    /// * `prefix`: Tag URI prefix.
-    #[must_use]
-    pub fn tag_directive(handle: Cow<'input, str>, prefix: Cow<'input, str>) -> Self {
-        Self::TagDirective { handle, prefix }
-    }
-
-    /// Return a [`Self::Alias`] token payload.
-    ///
-    /// * `name`: Original name without an indicator.
-    #[must_use]
-    pub fn alias(name: Cow<'input, str>) -> Self {
-        Self::Alias { name }
-    }
-
-    /// Return a [`Self::Anchor`] token payload.
-    ///
-    /// * `name`: Original name without an indicator.
-    #[must_use]
-    pub fn anchor(name: Cow<'input, str>) -> Self {
-        Self::Anchor { name }
-    }
-
-    /// Return a [`Self::Tag`] token payload.
-    ///
-    /// * `handle`: Tag handle.
-    /// * `suffix`: Tag suffix.
-    #[must_use]
-    pub fn tag(handle: Cow<'input, str>, suffix: Cow<'input, str>) -> Self {
-        Self::Tag { handle, suffix }
-    }
-
-    /// Return a [`Self::Scalar`] token payload.
-    ///
-    /// * `style`: Scalar source syntax.
-    /// * `value`: Decoded scalar value.
-    #[must_use]
-    pub fn scalar(style: ScalarStyle, value: Cow<'input, str>) -> Self {
-        Self::Scalar { style, value }
-    }
-
-    /// Return a [`Self::Comment`] token payload.
-    ///
-    /// * `comment`: Captured comment metadata.
-    #[cfg(feature = "comments")]
-    #[must_use]
-    pub fn comment(comment: Comment<'input>) -> Self {
-        Self::Comment { comment }
-    }
-
-    /// Return a [`Self::ReservedDirective`] token payload.
-    ///
-    /// * `name`: Original name without an indicator.
-    /// * `parameters`: Directive parameters split on YAML whitespace.
-    #[must_use]
-    pub fn reserved_directive(name: String, parameters: Vec<String>) -> Self {
-        Self::ReservedDirective { name, parameters }
-    }
-}
-
 /// A scanner token.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub struct Token<'input>(Span, TokenType<'input>);
 
 impl<'input> Token<'input> {
-    /// Create a scanner token from its source span and payload.
-    #[must_use]
-    pub const fn new(span: Span, token_type: TokenType<'input>) -> Self {
-        Self(span, token_type)
-    }
-
     /// Return the source span covered by this token.
     #[must_use]
     pub const fn span(&self) -> Span {
@@ -655,7 +617,8 @@ impl<'input> Token<'input> {
 /// Token payload used in the scanner's internal queue.
 ///
 /// Public [`Token`] values are reconstructed when the scanner emits them.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) enum QueuedTokenType<'input> {
     StreamStart,
     StreamEnd,
@@ -752,7 +715,8 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
 }
 
 /// A compact token stored by the scanner before it is emitted publicly.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenType<'input>);
 
 impl<'input> QueuedToken<'input> {
@@ -3279,7 +3243,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
         let end_mark = self.mark;
 
-        if tok == TokenType::FlowMappingStart {
+        if matches!(tok, TokenType::FlowMappingStart) {
             self.flow_mapping_started.push(true);
         } else {
             self.flow_mapping_started.push(false);
@@ -3614,9 +3578,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             };
 
             let style = if literal {
-                ScalarStyle::literal(syntax)
+                ScalarStyle::Literal { syntax }
             } else {
-                ScalarStyle::folded(syntax)
+                ScalarStyle::Folded { syntax }
             };
             return Ok(Token(
                 Span::new(start_mark, self.mark),
@@ -3732,9 +3696,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         let style = if literal {
-            ScalarStyle::literal(syntax)
+            ScalarStyle::Literal { syntax }
         } else {
-            ScalarStyle::folded(syntax)
+            ScalarStyle::Folded { syntax }
         };
         Ok(Token(
             span,
@@ -4560,7 +4524,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             Ok(Token(
                 Span::new(start_mark, end_mark),
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain,
+                    style: ScalarStyle::Plain { implicit: false },
                     value: contents,
                 },
             ))
@@ -5380,7 +5344,7 @@ mod test {
                     Token(
                         _,
                         TokenType::Scalar {
-                            style: ScalarStyle::Plain,
+                            style: ScalarStyle::Plain { implicit: false },
                             value,
                         },
                     ) => Some(value.into_owned()),
@@ -5525,7 +5489,7 @@ mod test {
             .all(|token| !matches!(token.1, TokenType::Comment { comment: _ })));
         assert!(tokens.iter().any(|token| matches!(
             token.1,
-            TokenType::Scalar { style: ScalarStyle::Plain, value: ref text } if text == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, value: ref text } if text == "value"
         )));
     }
 
@@ -5692,7 +5656,7 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar { style: ScalarStyle::Plain, ref value } if value == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, ref value } if value == "value"
         ));
         #[cfg(feature = "comments")]
         assert!(scanner
@@ -6703,13 +6667,13 @@ mod test {
                 TokenType::BlockMappingStart,
                 TokenType::Key,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain,
+                    style: ScalarStyle::Plain { implicit: false },
                     value: "a".into()
                 },
                 TokenType::Value,
                 TokenType::FlowSequenceStart,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain,
+                    style: ScalarStyle::Plain { implicit: false },
                     value: "foo".into()
                 },
                 TokenType::FlowSequenceEnd,

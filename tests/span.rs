@@ -1,5 +1,9 @@
 #![allow(clippy::bool_assert_comparison)]
 #![allow(clippy::float_cmp)]
+#[path = "support/snapshots.rs"]
+mod snapshots;
+use snapshots::{snapshot, ExpectedEvent};
+
 use granit_parser::{ErrorKind, Event, Marker, Parser, ScanError, Span};
 
 /// Run the parser through the string, returning all the scalars, and collecting their spans to strings.
@@ -25,7 +29,7 @@ fn run_parser_and_deref_seq_spans(input: &str) -> Result<Vec<String>, ScanError>
         let x = x?;
         match x.0 {
             Event::SequenceStart { .. } => start_stack.push(x.1.start),
-            Event::SequenceEnd => {
+            Event::SequenceEnd { .. } => {
                 let start = start_stack.pop().unwrap();
                 let input_s = Span::new(start, x.1.end)
                     .slice(input)
@@ -89,7 +93,7 @@ fn indentless_sequence_end_span_is_empty_before_the_next_key() {
         let spans = event_spans(yaml);
         let end = spans
             .iter()
-            .find(|(event, _)| matches!(event, Event::SequenceEnd))
+            .find(|(event, _)| matches!(event, Event::SequenceEnd { .. }))
             .map(|(_, span)| span.byte_range())
             .unwrap();
         assert_eq!(end, Some(at..at), "{yaml:?}");
@@ -124,11 +128,11 @@ fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
             Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
                 .collect::<Result<Vec<_>, _>>(),
         ] {
-            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
+            assert_eq!(snapshot(&other.unwrap()), snapshot(&from_str), "{yaml:?}");
         }
         let ends: Vec<_> = from_str
             .iter()
-            .filter_map(|(event, span)| matches!(event, Event::SequenceEnd).then_some(span))
+            .filter_map(|(event, span)| matches!(event, Event::SequenceEnd { .. }).then_some(span))
             .collect();
         assert_eq!(ends.len(), 1, "{yaml:?}");
         let span = ends[0];
@@ -165,19 +169,20 @@ fn stream_and_block_collection_end_spans_use_physical_eof() {
             Parser::new_from_fallible_iter(yaml.chars().map(Ok::<_, ErrorKind>))
                 .collect::<Result<Vec<_>, _>>(),
         ] {
-            assert_eq!(other.unwrap(), from_str, "{yaml:?}");
+            assert_eq!(snapshot(&other.unwrap()), snapshot(&from_str), "{yaml:?}");
         }
         let marker = Marker::new(yaml.chars().count(), line, col);
         let (last, stream_end) = from_str.last().expect("stream must have an end event");
-        assert_eq!(last, &Event::StreamEnd);
+        assert_eq!(snapshot(&last), ExpectedEvent::StreamEnd);
 
         // Flow endings cover their closing delimiter; block endings and StreamEnd
         // are empty spans at the actual end of the input, including its last line.
         let block_ends: Vec<_> = from_str
             .iter()
             .filter_map(|(event, span)| {
-                (matches!(event, Event::SequenceEnd | Event::MappingEnd) && span.is_empty())
-                    .then_some(span)
+                (matches!(event, Event::SequenceEnd { .. } | Event::MappingEnd { .. })
+                    && span.is_empty())
+                .then_some(span)
             })
             .collect();
         assert_eq!(block_ends.len(), block_end_count, "{yaml:?}");
@@ -201,7 +206,11 @@ fn flow_collection_event_spans_cover_only_the_indicators() {
         Some("[")
     );
     assert_eq!(
-        first_event_slice("[a] # c\n", |event| matches!(event, Event::SequenceEnd)).as_deref(),
+        first_event_slice("[a] # c\n", |event| matches!(
+            event,
+            Event::SequenceEnd { .. }
+        ))
+        .as_deref(),
         Some("]")
     );
     assert_eq!(
@@ -213,7 +222,11 @@ fn flow_collection_event_spans_cover_only_the_indicators() {
         Some("{")
     );
     assert_eq!(
-        first_event_slice("{a: b} # c\n", |event| matches!(event, Event::MappingEnd)).as_deref(),
+        first_event_slice("{a: b} # c\n", |event| matches!(
+            event,
+            Event::MappingEnd { .. }
+        ))
+        .as_deref(),
         Some("}")
     );
 }
@@ -342,7 +355,7 @@ fn tag_spans_preserve_complete_source_tokens_and_unicode_positions() {
                 .collect::<Result<Vec<_>, _>>(),
         ] {
             let streamed = streamed.unwrap();
-            assert_eq!(streamed, events, "{yaml:?}");
+            assert_eq!(snapshot(&streamed), snapshot(&events), "{yaml:?}");
             let streamed_tag = streamed
                 .iter()
                 .find_map(|(_, span)| span.tag_span())
@@ -456,13 +469,19 @@ fn tag_spans_are_preserved_by_peeking_and_replay() {
     while let Some(peeked) = parser.peek() {
         let peeked = peeked.unwrap().clone();
         let next = parser.next().unwrap().unwrap();
-        assert_eq!(next, peeked);
+        assert_eq!(snapshot(&next), snapshot(&peeked));
         events.push(next);
     }
     let mut replay = ReplayParser::new(events.clone(), 1);
     for expected in events {
-        assert_eq!(replay.peek().unwrap().unwrap(), &expected);
-        assert_eq!(replay.next().unwrap().unwrap(), expected);
+        assert_eq!(
+            snapshot(&replay.peek().unwrap().unwrap()),
+            snapshot(&&expected)
+        );
+        assert_eq!(
+            snapshot(&replay.next().unwrap().unwrap()),
+            snapshot(&expected)
+        );
     }
     assert!(replay.next().is_none());
 }
