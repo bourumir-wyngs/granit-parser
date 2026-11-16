@@ -205,6 +205,13 @@ fn load_tests_from_file(entry: &DirEntry) -> Result<Vec<Trial>> {
                 .clone_into(&mut expected_events);
             }
 
+            // And for this tab before a quoted scalar continuation.
+            if !strict_indentation && name == "DK95-01" {
+                expected_error = false;
+                "+STR\n+DOC\n+MAP\n=VAL :foo\n=VAL \"bar baz\n-MAP\n-DOC\n-STR\n"
+                    .clone_into(&mut expected_events);
+            }
+
             let trial_name = if strict_indentation {
                 format!("{name}::strict")
             } else {

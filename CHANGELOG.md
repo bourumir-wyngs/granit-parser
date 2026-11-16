@@ -9,6 +9,8 @@
   `ErrorKind::BomInsideDocument`. A BOM in a document prefix is still skipped.
 - Accept under-indented quoted scalar continuations in block context by default, matching
   `PyYAML` and `ruamel.yaml`. `strict_indentation: true` still rejects them.
+- Accept tabs before quoted scalar continuations by default, matching libyaml, `PyYAML` and
+  `ruamel.yaml`. `strict_indentation: true` still rejects them (`ErrorKind::TabInIndentation`).
 
 ## 2.1.0
 
