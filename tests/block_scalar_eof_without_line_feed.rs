@@ -37,7 +37,7 @@ fn last_scalar(yaml: &str, options: Options) -> [(&'static str, Result<String, S
 }
 
 /// Input, value by default (YAML test suite), value with the option (libyaml, `PyYAML`).
-const CASES: [(&str, &str, &str); 10] = [
+const CASES: [(&str, &str, &str); 20] = [
     ("key: |\n  text", "text\n", "text"),
     ("key: >\n  text", "text\n", "text"),
     ("key: |+\n  text", "text\n", "text"),
@@ -49,6 +49,19 @@ const CASES: [(&str, &str, &str); 10] = [
     // yaml-test-suite L24T, second case.
     ("foo: |\n  x\n   ", "x\n \n", "x\n "),
     ("key: |\n  text\n", "text\n", "text\n"),
+    // Whitespace-only final scalars use the scanner's early EOF return.
+    ("key: |+\n  ", "\n", ""),
+    ("key: >+\n  ", "\n", ""),
+    ("key: |2+\n  ", "\n", ""),
+    ("key: >2+\n  ", "\n", ""),
+    // The header break is never scalar content.
+    ("key: |+\n", "", ""),
+    ("key: >+\n", "", ""),
+    // Keep actual empty lines, including before an unterminated indentation-only tail.
+    ("key: |+\n  \n", "\n", "\n"),
+    ("key: >+\n  \n", "\n", "\n"),
+    ("key: |+\n  \n  ", "\n", "\n"),
+    ("key: >+\n  \n  ", "\n", "\n"),
 ];
 
 #[test]
