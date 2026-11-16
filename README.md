@@ -52,6 +52,12 @@ effect without the feature. Comments are still recognized and validated as YAML 
 
 Document starts are emitted as [`Event::DocumentStart { explicit, version, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
 
+The example also prints literal/folded header syntax: raw indicators, character and byte
+ranges, chomping, explicit indentation, and effective content indentation. The Unicode header
+comment makes character and byte distances differ. Header ranges exclude comments and line
+breaks; the companion scalar span retains its existing meaning. An omitted value and a written
+`~` demonstrate the `implicit` flag, while two documents show explicit and implicit ends.
+
 For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
 syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
 error, then continue reading events normally with original source positions. Its
@@ -89,6 +95,21 @@ favorite: &favorite bread
 order: *favorite
 unavailable: *missing
 dessert: cake
+literal: |
+  first line
+  second line
+folded: >2- # žąsis
+  hello
+  world
+nested:
+  kept: |+2
+    last line
+
+omitted:
+written_null: ~
+...
+---
+last: value
 "#;
 
     let options = options! {
@@ -111,6 +132,35 @@ dessert: cake
                 // Still an invalid reference, with a span covering the *name token.
                 println!("undefined anchor: {name:?}");
             }
+            Event::Scalar { value, style, .. } => {
+                // The same decoded text can represent omitted or explicitly written input.
+                if style.is_plain() && value == "~" {
+                    println!("plain scalar: value={value:?} implicit={}", style.is_implicit());
+                }
+                if let Some(syntax) = style.block_syntax() {
+                    // Pass the original companion span to resolve the compact offsets.
+                    println!(
+                        "block header: style={:?} text={:?} chars={:?} bytes={:?}",
+                        style.kind(),
+                        syntax.header_slice(&span, yaml),
+                        syntax.header_char_range(&span),
+                        syntax.header_byte_range(&span)
+                    );
+                    println!(
+                        "  chomping={:?} indentation_indicator={:?} content_indent={}",
+                        syntax.chomping, syntax.indentation_indicator, syntax.content_indent
+                    );
+                    println!(
+                        "  chomping indicator: chars={:?} bytes={:?}",
+                        syntax.chomping_char_range(&span), syntax.chomping_byte_range(&span)
+                    );
+                    println!(
+                        "  indentation indicator: chars={:?} bytes={:?}",
+                        syntax.indentation_char_range(&span), syntax.indentation_byte_range(&span)
+                    );
+                }
+            }
+            Event::DocumentEnd { explicit, .. } => println!("document end: explicit={explicit}"),
             _ => {}
         }
 
@@ -190,9 +240,45 @@ undefined anchor: "missing"
 UnresolvedAlias { name: "missing" } bytes=Some(406..414) source=Some("*missing")
 Scalar { value: "dessert", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(415..422) source=Some("dessert")
 Scalar { value: "cake", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(424..428) source=Some("cake")
-MappingEnd bytes=Some(429..429) source=Some("")
-DocumentEnd { explicit: false } bytes=Some(429..429) source=Some("")
-StreamEnd bytes=Some(429..429) source=Some("")
+Scalar { value: "literal", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(429..436) source=Some("literal")
+block header: style=Literal text=Some("|") chars=Some(438..439) bytes=Some(438..439)
+  chomping=Clip indentation_indicator=None content_indent=2
+  chomping indicator: chars=None bytes=None
+  indentation indicator: chars=None bytes=None
+Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, chomping_offset: None, indentation_offset: None, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
+Scalar { value: "folded", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
+block header: style=Folded text=Some(">2-") chars=Some(475..478) bytes=Some(475..478)
+  chomping=Strip indentation_indicator=Some(2) content_indent=2
+  chomping indicator: chars=Some(477..478) bytes=Some(477..478)
+  indentation indicator: chars=Some(476..477) bytes=Some(476..477)
+Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), chomping_offset: Some(2), indentation_offset: Some(1), content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
+Comment { value: " žąsis", placement: Right } bytes=Some(479..488) source=Some("# žąsis")
+Scalar { value: "nested", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(515..515) source=Some("")
+Scalar { value: "kept", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(515..519) source=Some("kept")
+block header: style=Literal text=Some("|+2") chars=Some(519..522) bytes=Some(521..524)
+  chomping=Keep indentation_indicator=Some(2) content_indent=4
+  chomping indicator: chars=Some(520..521) bytes=Some(522..523)
+  indentation indicator: chars=Some(521..522) bytes=Some(523..524)
+Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), chomping_offset: Some(1), indentation_offset: Some(2), content_indent: 4 } }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
+MappingEnd bytes=Some(540..540) source=Some("")
+Scalar { value: "omitted", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
+plain scalar: value="~" implicit=true
+Scalar { value: "~", style: Plain { implicit: true }, anchor_id: 0, tag: None } bytes=Some(547..547) source=Some("")
+Scalar { value: "written_null", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(549..561) source=Some("written_null")
+plain scalar: value="~" implicit=false
+Scalar { value: "~", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(563..564) source=Some("~")
+MappingEnd bytes=Some(565..565) source=Some("")
+document end: explicit=true
+DocumentEnd { explicit: true } bytes=Some(565..568) source=Some("...")
+DocumentStart { explicit: true, version: None } bytes=Some(569..572) source=Some("---")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(573..573) source=Some("")
+Scalar { value: "last", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(573..577) source=Some("last")
+Scalar { value: "value", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(579..584) source=Some("value")
+MappingEnd bytes=Some(585..585) source=Some("")
+document end: explicit=false
+DocumentEnd { explicit: false } bytes=Some(585..585) source=Some("")
+StreamEnd bytes=Some(585..585) source=Some("")
 ```
 
 ## Migrating to 3.0

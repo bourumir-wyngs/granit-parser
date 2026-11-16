@@ -45,6 +45,40 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
             Event::UnresolvedAlias { name, .. } => {
                 lines.push(format!("undefined anchor: {name:?}"));
             }
+            Event::Scalar { value, style, .. } => {
+                if style.is_plain() && value == "~" {
+                    lines.push(format!(
+                        "plain scalar: value={value:?} implicit={}",
+                        style.is_implicit()
+                    ));
+                }
+                if let Some(syntax) = style.block_syntax() {
+                    lines.push(format!(
+                        "block header: style={:?} text={:?} chars={:?} bytes={:?}",
+                        style.kind(),
+                        syntax.header_slice(&span, yaml),
+                        syntax.header_char_range(&span),
+                        syntax.header_byte_range(&span)
+                    ));
+                    lines.push(format!(
+                        "  chomping={:?} indentation_indicator={:?} content_indent={}",
+                        syntax.chomping, syntax.indentation_indicator, syntax.content_indent
+                    ));
+                    lines.push(format!(
+                        "  chomping indicator: chars={:?} bytes={:?}",
+                        syntax.chomping_char_range(&span),
+                        syntax.chomping_byte_range(&span)
+                    ));
+                    lines.push(format!(
+                        "  indentation indicator: chars={:?} bytes={:?}",
+                        syntax.indentation_char_range(&span),
+                        syntax.indentation_byte_range(&span)
+                    ));
+                }
+            }
+            Event::DocumentEnd { explicit, .. } => {
+                lines.push(format!("document end: explicit={explicit}"));
+            }
             _ => {}
         }
 
