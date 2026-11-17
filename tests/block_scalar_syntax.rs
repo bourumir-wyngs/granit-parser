@@ -3,8 +3,8 @@
 mod support;
 
 use granit_parser::{
-    BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
-    ScalarStyle, Scanner, Span, StrInput, TokenType,
+    BlockScalarSyntax, BorrowedInput, Chomping, ErrorKind, Event, Marker, Options, Parser,
+    ScalarKind, ScalarStyle, Scanner, Span, StrInput, TokenType,
 };
 
 fn events(source: &str) -> Vec<(Event<'_>, Span)> {
@@ -673,6 +673,120 @@ fn header_only_eof_uses_minimum_inferred_content_indent() {
                         .expect("valid header-only YAML");
                     assert_eq!(parsed, streaming, "{source:?}");
                     support::metadata::assert_parser_details_eq(&parsed, &streaming);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn recovered_block_headers_keep_the_original_source_origin_on_every_backend() {
+    fn recover<'input, I: BorrowedInput<'input>>(
+        mut parser: Parser<'input, I>,
+    ) -> Vec<(Event<'input>, Span)> {
+        parser
+            .by_ref()
+            .find_map(Result::err)
+            .expect("the first document has an invalid escape");
+        parser.proceed_next_document().unwrap();
+        parser.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    for (header, kind, expected, digit_first) in [
+        ("|2-", ScalarKind::Literal, "日本\nété", true),
+        (">-2", ScalarKind::Folded, "日本 été", false),
+    ] {
+        let source = format!(
+            "prefix: |+2\n  🦀\nbroken: \"\\q\"\n---\nresult: {header} # žąsis\r\n  日本\r\n  été\r\n...\r\n"
+        );
+        let header_byte = source.find(header).unwrap();
+        let header_char = source[..header_byte].chars().count();
+        let body_byte = source.find("日本").unwrap();
+        let body_char = source[..body_byte].chars().count();
+        for (has_bytes, parsed) in [
+            (true, recover(Parser::new_from_str(&source))),
+            (false, recover(Parser::new_from_iter(source.chars()))),
+            (
+                false,
+                recover(Parser::new_from_fallible_iter(
+                    source.chars().map(Ok::<_, ErrorKind>),
+                )),
+            ),
+        ] {
+            let (value, style, syntax, span) = block_scalar(&parsed);
+            assert_eq!(value, expected);
+            assert_eq!(style.kind(), kind);
+            assert_eq!(syntax.chomping, Chomping::Strip);
+            assert_eq!(syntax.indentation_indicator, Some(2));
+            assert_eq!(syntax.digit_first, digit_first);
+            assert_eq!(syntax.content_indent, 2);
+            assert_eq!(span.start.index(), body_char);
+            assert_eq!(span.start.byte_offset(), has_bytes.then_some(body_byte));
+            assert_eq!(
+                syntax.header_char_range(&span),
+                Some(header_char..header_char + 3)
+            );
+            assert_eq!(
+                syntax.header_byte_range(&span),
+                has_bytes.then_some(header_byte..header_byte + 3)
+            );
+            assert_eq!(
+                syntax.header_slice(&span, &source),
+                has_bytes.then_some(header)
+            );
+            assert!(parsed
+                .iter()
+                .any(|(event, _)| matches!(event, Event::DocumentEnd { explicit: true, .. })));
+        }
+    }
+}
+
+#[test]
+fn eof_newline_suppression_preserves_header_metadata_and_spans() {
+    for header in ["|2+", ">+2"] {
+        for (body, default_value, suppressed_value) in [
+            ("  text", "text\n", "text"),
+            ("  ", "\n", ""),
+            ("  \r\n", "\n", "\n"),
+            ("", "", ""),
+        ] {
+            let source = format!("clé: {header} # žąsis\r\n{body}");
+            let header_byte = source.find(header).unwrap();
+            let mut baseline = None;
+            for suppress_newline in [false, true] {
+                let mut options = Options::default();
+                options.block_scalar_eof_without_line_feed = suppress_newline;
+                let parsed = Parser::new_from_str_with_options(&source, options)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                let (value, _, syntax, span) = block_scalar(&parsed);
+                assert_eq!(
+                    value,
+                    if suppress_newline {
+                        suppressed_value
+                    } else {
+                        default_value
+                    }
+                );
+                assert_eq!(syntax.chomping, Chomping::Keep);
+                assert_eq!(syntax.indentation_indicator, Some(2));
+                assert_eq!(syntax.content_indent, 2);
+                assert_eq!(syntax.header_slice(&span, &source), Some(header));
+                assert_eq!(
+                    syntax.header_byte_range(&span),
+                    Some(header_byte..header_byte + 3)
+                );
+                assert_eq!(span.end.byte_offset(), Some(source.len()));
+                let metadata = (
+                    syntax,
+                    span,
+                    span.start.byte_offset(),
+                    span.end.byte_offset(),
+                );
+                if let Some(expected) = baseline {
+                    assert_eq!(metadata, expected, "source: {source:?}");
+                } else {
+                    baseline = Some(metadata);
                 }
             }
         }
