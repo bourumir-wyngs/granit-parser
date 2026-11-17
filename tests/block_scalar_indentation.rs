@@ -10,7 +10,7 @@ fn yaml_5llu_block_scalar_wrong_indent_should_fail() {
 
     for next in parser {
         match next {
-            Ok((Event::DocumentEnd, _)) => {
+            Ok((Event::DocumentEnd { .. }, _)) => {
                 break; // fine
             }
             Err(err) => {
@@ -27,7 +27,7 @@ fn yaml_5llu_block_scalar_wrong_indent_should_fail() {
 
     for next in parser {
         match next {
-            Ok((Event::DocumentEnd, _)) => {
+            Ok((Event::DocumentEnd { .. }, _)) => {
                 unreachable!("Document end before any error, invalid YAML");
             }
             Err(_err) => {

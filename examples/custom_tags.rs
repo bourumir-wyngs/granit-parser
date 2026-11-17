@@ -7,9 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (event, span) = next?;
 
         let node_kind = match &event {
-            Event::Scalar(..) => "scalar",
-            Event::SequenceStart(..) => "sequence",
-            Event::MappingStart(..) => "mapping",
+            Event::Scalar { .. } => "scalar",
+            Event::SequenceStart { .. } => "sequence",
+            Event::MappingStart { .. } => "mapping",
             _ => continue,
         };
 

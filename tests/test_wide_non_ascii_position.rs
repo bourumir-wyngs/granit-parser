@@ -5,17 +5,20 @@ fn test_wide_non_ascii_positions() {
     let yaml = "emoji: \u{1F602}\nnext: item";
     let mut parser = Parser::new_from_str(yaml);
 
-    while !matches!(parser.next().unwrap().unwrap().0, Event::MappingStart(..)) {}
+    while !matches!(
+        parser.next().unwrap().unwrap().0,
+        Event::MappingStart { .. }
+    ) {}
 
     // key: "emoji"
     let (event, span) = parser.next().unwrap().unwrap();
-    assert!(matches!(event, Event::Scalar(ref v, ..) if v == "emoji"));
+    assert!(matches!(event, Event::Scalar { value: ref v, .. } if v == "emoji"));
     assert_eq!(span.start.index(), 0);
     assert_eq!(span.end.index(), 5);
 
     // value: "\u{1F602}"
     let (event, span) = parser.next().unwrap().unwrap();
-    if let Event::Scalar(v, _, _, _) = event {
+    if let Event::Scalar { value: v, .. } = event {
         assert_eq!(v, "\u{1F602}");
         assert_eq!(span.start.index(), 7);
         assert_eq!(span.end.index(), 8);
@@ -28,7 +31,7 @@ fn test_wide_non_ascii_positions() {
 
     // next key: "next"
     let (event, span) = parser.next().unwrap().unwrap();
-    if let Event::Scalar(v, _, _, _) = event {
+    if let Event::Scalar { value: v, .. } = event {
         assert_eq!(v, "next");
         assert_eq!(span.start.index(), 9);
         assert_eq!(span.start.byte_offset(), Some(12));
@@ -42,10 +45,12 @@ fn test_wide_chars_in_comments() {
     let yaml = "key: value # \u{1F602} emoji comment\nnext: item";
     let mut parser = Parser::new_from_str(yaml);
 
-    while !matches!(parser.next().unwrap().unwrap().0, Event::Scalar(ref v, ..) if v == "value") {}
+    while !matches!(parser.next().unwrap().unwrap().0, Event::Scalar { value: ref v, .. } if v == "value")
+    {
+    }
 
     let (event, span) = parser.next().unwrap().unwrap();
-    if let Event::Scalar(v, ..) = event {
+    if let Event::Scalar { value: v, .. } = event {
         assert_eq!(v, "next");
         assert_eq!(span.start.line(), 2);
         assert_eq!(span.start.col(), 0);
@@ -58,10 +63,12 @@ fn test_wide_chars_in_comments() {
 fn test_block_scalar_wide_chars() {
     let yaml = "key: |\n  \u{1F602}\n  \u{1F680}";
     let mut parser = Parser::new_from_str(yaml);
-    while !matches!(parser.next().unwrap().unwrap().0, Event::Scalar(ref v, ..) if v == "key") {}
+    while !matches!(parser.next().unwrap().unwrap().0, Event::Scalar { value: ref v, .. } if v == "key")
+    {
+    }
 
     let (event, span) = parser.next().unwrap().unwrap();
-    if let Event::Scalar(v, _, _, _) = event {
+    if let Event::Scalar { value: v, .. } = event {
         assert_eq!(v, "\u{1F602}\n\u{1F680}\n");
         assert_eq!(span.start.line(), 2);
         assert_eq!(span.start.col(), 2);

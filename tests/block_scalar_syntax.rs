@@ -1,0 +1,794 @@
+#![cfg(feature = "extended_details")]
+
+mod support;
+
+use granit_parser::{
+    BlockScalarSyntax, BorrowedInput, Chomping, ErrorKind, Event, Marker, Options, Parser,
+    ScalarKind, ScalarStyle, Scanner, Span, StrInput, TokenType,
+};
+
+fn events(source: &str) -> Vec<(Event<'_>, Span)> {
+    Parser::new_from_str(source)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("valid YAML")
+}
+
+fn block_scalar<'events>(
+    events: &'events [(Event<'_>, Span)],
+) -> (&'events str, ScalarStyle, BlockScalarSyntax, Span) {
+    events
+        .iter()
+        .find_map(|(event, span)| match event {
+            Event::Scalar {
+                value,
+                style:
+                    style @ (ScalarStyle::Literal {
+                        syntax: Some(syntax),
+                        ..
+                    }
+                    | ScalarStyle::Folded {
+                        syntax: Some(syntax),
+                        ..
+                    }),
+                ..
+            } => Some((value.as_ref(), *style, *syntax, *span)),
+            _ => None,
+        })
+        .expect("a block scalar")
+}
+
+#[test]
+fn headers_preserve_style_chomping_digits_and_both_indicator_orders() {
+    for indicator in ['|', '>'] {
+        for (suffix, chomping, digit, chomp_offset, indent_offset, tail) in [
+            ("", Chomping::Clip, None, None, None, "\n"),
+            ("-", Chomping::Strip, None, Some(1), None, ""),
+            ("+", Chomping::Keep, None, Some(1), None, "\n\n"),
+            ("2", Chomping::Clip, Some(2), None, Some(1), "\n"),
+            ("2-", Chomping::Strip, Some(2), Some(2), Some(1), ""),
+            ("-2", Chomping::Strip, Some(2), Some(1), Some(2), ""),
+            ("2+", Chomping::Keep, Some(2), Some(2), Some(1), "\n\n"),
+            ("+2", Chomping::Keep, Some(2), Some(1), Some(2), "\n\n"),
+        ] {
+            let header = format!("{indicator}{suffix}");
+            let source =
+                format!("message: {header} # explanation\n  first\n  second\n\nnext: end\n");
+            let parsed = events(&source);
+            let (value, style, syntax, span) = block_scalar(&parsed);
+            let separator = if indicator == '|' { "\n" } else { " " };
+            assert_eq!(value, format!("first{separator}second{tail}"), "{header}");
+            assert_eq!(style.is_literal(), indicator == '|');
+            assert_eq!(style.is_folded(), indicator == '>');
+            assert_eq!(syntax.chomping, chomping);
+            assert_eq!(syntax.indentation_indicator, digit);
+            assert_eq!(syntax.chomping_offset(), chomp_offset);
+            assert_eq!(syntax.indentation_offset(), indent_offset);
+            assert_eq!(syntax.digit_first, matches!(suffix, "2-" | "2+"));
+            assert_eq!(syntax.content_indent, 2);
+
+            let start = source.find(&header).unwrap();
+            assert_eq!(
+                syntax.header_char_range(&span),
+                Some(start..start + header.len())
+            );
+            assert_eq!(
+                syntax.header_byte_range(&span),
+                Some(start..start + header.len())
+            );
+            assert_eq!(&source[syntax.header_byte_range(&span).unwrap()], header);
+            assert_eq!(syntax.header_slice(&span, &source), Some(header.as_str()));
+            for (offset, character_range, byte_range) in [
+                (
+                    chomp_offset,
+                    syntax.chomping_char_range(&span),
+                    syntax.chomping_byte_range(&span),
+                ),
+                (
+                    indent_offset,
+                    syntax.indentation_char_range(&span),
+                    syntax.indentation_byte_range(&span),
+                ),
+            ] {
+                let expected = offset.map(|offset| std::ops::Range {
+                    start: start + usize::from(offset),
+                    end: start + usize::from(offset) + 1,
+                });
+                assert_eq!(character_range, expected);
+                assert_eq!(byte_range, expected);
+            }
+
+            // Retain the existing body span, independently of the new header range.
+            let body_start = source.find("first").unwrap();
+            assert_eq!(span.start.index(), body_start);
+            assert_eq!(span.start.byte_offset(), Some(body_start));
+            assert_eq!(span.start.line(), 2);
+            assert_eq!(span.start.col(), 2);
+            assert_eq!(span.end.byte_offset(), source.find("next:"));
+            assert_eq!(
+                syntax.header_chars_before_span,
+                u32::try_from(body_start - start).unwrap()
+            );
+            assert_eq!(
+                syntax.header_bytes_before_span,
+                u32::try_from(body_start - start).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn unicode_comments_and_crlf_use_distinct_byte_and_character_distances() {
+    let source = "clé: >-2 # žąsis 🦀\r\n  日本\r\n  été\r\nnext: end\r\n";
+    let parsed = events(source);
+    let (value, _, syntax, span) = block_scalar(&parsed);
+    assert_eq!(value, "日本 été");
+    let header_byte = source.find('>').unwrap();
+    let header_char = source[..header_byte].chars().count();
+    let body_byte = source.find("日本").unwrap();
+    let body_char = source[..body_byte].chars().count();
+    assert_eq!(
+        syntax.header_byte_range(&span),
+        Some(header_byte..header_byte + 3)
+    );
+    assert_eq!(
+        syntax.header_char_range(&span),
+        Some(header_char..header_char + 3)
+    );
+    assert_eq!(
+        syntax.header_bytes_before_span,
+        u32::try_from(body_byte - header_byte).unwrap()
+    );
+    assert_eq!(
+        syntax.header_chars_before_span,
+        u32::try_from(body_char - header_char).unwrap()
+    );
+    assert!(syntax.header_bytes_before_span > syntax.header_chars_before_span);
+    assert_eq!(span.start.line(), 2);
+    assert_eq!(span.start.col(), 2);
+    assert_eq!(
+        syntax.chomping_byte_range(&span),
+        Some(header_byte + 1..header_byte + 2)
+    );
+    assert_eq!(
+        syntax.indentation_char_range(&span),
+        Some(header_char + 2..header_char + 3)
+    );
+
+    for streamed in [
+        Parser::new_from_iter(source.chars())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+        Parser::new_from_fallible_iter(source.chars().map(Ok::<_, ErrorKind>))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+    ] {
+        let (stream_value, stream_style, stream_syntax, stream_span) = block_scalar(&streamed);
+        assert_eq!(stream_value, value);
+        assert!(stream_style.is_folded());
+        assert_eq!(stream_syntax, syntax);
+        assert_eq!(stream_span, span);
+        assert_eq!(
+            stream_syntax.header_char_range(&stream_span),
+            syntax.header_char_range(&span)
+        );
+        assert_eq!(stream_syntax.header_byte_range(&stream_span), None);
+        assert_eq!(stream_syntax.chomping_byte_range(&stream_span), None);
+        assert_eq!(stream_syntax.indentation_byte_range(&stream_span), None);
+    }
+}
+
+#[test]
+fn explicit_indent_is_relative_to_the_parent_not_the_header_column() {
+    for header in ["|2-", "|-2", "|-"] {
+        let source = format!("outer:\n  a_long_key: {header}\n    value\n  next: end\n");
+        let parsed = events(&source);
+        let (value, _, syntax, span) = block_scalar(&parsed);
+        assert_eq!(value, "value");
+        assert_eq!(syntax.content_indent, 4);
+        assert_eq!(
+            syntax.indentation_indicator,
+            header.contains('2').then_some(2)
+        );
+        assert_eq!(&source[syntax.header_byte_range(&span).unwrap()], header);
+        // The next mapping key remains a separate source node.
+        let next = parsed
+            .iter()
+            .find_map(|(event, span)| match event {
+                Event::Scalar { value, .. } if value == "next" => Some(span),
+                _ => None,
+            })
+            .unwrap();
+        assert!(syntax.header_byte_range(&span).unwrap().end <= next.start.byte_offset().unwrap());
+        assert_eq!(next.slice(&source), Some("next"));
+    }
+}
+
+#[test]
+fn empty_and_blank_only_scalars_keep_header_locations_at_eof() {
+    for (source, header, value) in [
+        ("value: |", "|", ""),
+        ("value: >-2", ">-2", ""),
+        ("value: |+\n", "|+", ""),
+        ("value: |+\n\n", "|+", "\n"),
+        ("value: >-\n  \n", ">-", ""),
+        ("value: |+ # žąsis\r\n\r\n", "|+", "\n"),
+    ] {
+        let parsed = events(source);
+        let (actual, _, syntax, span) = block_scalar(&parsed);
+        assert_eq!(actual, value, "{source:?}");
+        let start = source.find(header).unwrap();
+        // The existing EOF-only empty-scalar branch returns a span at the header.
+        assert_eq!(span.start.byte_offset(), Some(start), "{source:?}");
+        assert_eq!(syntax.header_chars_before_span, 0);
+        assert_eq!(syntax.header_bytes_before_span, 0);
+        assert_eq!(
+            syntax.header_byte_range(&span),
+            Some(start..start + header.len())
+        );
+        assert_eq!(&source[syntax.header_byte_range(&span).unwrap()], header);
+    }
+}
+
+#[test]
+fn empty_scalars_before_other_nodes_retain_the_correct_header() {
+    for source in [
+        "value: |\nnext: end\n",
+        "value: >-2\n\nnext: end\n",
+        "|2-\n---\nnext\n",
+        ">+\n\n...\n",
+    ] {
+        let parsed = events(source);
+        let (_, _, syntax, span) = block_scalar(&parsed);
+        let start = source.find(['|', '>']).unwrap();
+        let end = source[start..].find('\n').unwrap() + start;
+        assert_eq!(
+            syntax.header_byte_range(&span),
+            Some(start..end),
+            "{source:?}"
+        );
+        assert_eq!(
+            syntax.header_char_range(&span),
+            Some(start..end),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn tag_anchor_order_and_comment_emission_do_not_change_header_metadata() {
+    for properties in ["&message !note", "!note &message"] {
+        let source = format!("value: {properties} >2- # žąsis 🦀\n  first\n  second\nnext: end\n");
+        let mut baseline = None;
+        for emit_comments in [false, true] {
+            let mut options = Options::default();
+            options.emit_comments = emit_comments;
+            let parsed = Parser::new_from_str_with_options(&source, options)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let (value, _, syntax, span) = block_scalar(&parsed);
+            assert_eq!(value, "first second");
+            assert_eq!(&source[syntax.header_byte_range(&span).unwrap()], ">2-");
+            assert_eq!(span.tag_span().unwrap().slice(&source), Some("!note"));
+            let metadata = (syntax, span);
+            if let Some(expected) = baseline {
+                assert_eq!(metadata, expected);
+            } else {
+                baseline = Some(metadata);
+            }
+        }
+    }
+}
+
+#[test]
+fn scanner_and_parser_expose_identical_header_ranges() {
+    let source = "outer:\n  value: &a !note |+2 # žąsis\n    content\n\n  next: end\n";
+    let parsed = events(source);
+    let (_, parser_style, parser_syntax, parser_span) = block_scalar(&parsed);
+    let tokens = Scanner::new(StrInput::new(source))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let (scanner_style, scanner_syntax, scanner_span) = tokens
+        .iter()
+        .find_map(|token| match token.token_type() {
+            TokenType::Scalar {
+                style:
+                    style @ ScalarStyle::Literal {
+                        syntax: Some(syntax),
+                        ..
+                    },
+                ..
+            } => Some((*style, *syntax, token.span())),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(scanner_style, parser_style);
+    assert_eq!(scanner_syntax, parser_syntax);
+    assert_eq!(
+        scanner_syntax.header_byte_range(&scanner_span),
+        parser_syntax.header_byte_range(&parser_span)
+    );
+    assert_eq!(
+        scanner_syntax.header_char_range(&scanner_span),
+        parser_syntax.header_char_range(&parser_span)
+    );
+    assert_eq!(scanner_span.start, parser_span.start);
+    assert_eq!(scanner_span.end, parser_span.end);
+}
+
+#[test]
+fn checked_ranges_reject_underflow_and_overflow() {
+    let mut syntax = BlockScalarSyntax::default();
+    let zero = Span::empty(Marker::new(0, 1, 0).with_byte_offset(Some(0)));
+    syntax.header_chars_before_span = 1;
+    syntax.header_bytes_before_span = 1;
+    assert_eq!(syntax.header_char_range(&zero), None);
+    assert_eq!(syntax.header_byte_range(&zero), None);
+
+    let syntax = BlockScalarSyntax::default();
+    let maximum = Span::empty(Marker::new(usize::MAX, 1, 0).with_byte_offset(Some(usize::MAX)));
+    assert_eq!(syntax.header_char_range(&maximum), None);
+    assert_eq!(syntax.header_byte_range(&maximum), None);
+
+    for digit_first in [false, true] {
+        let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+        syntax.digit_first = digit_first;
+        syntax.header_chars_before_span = 1;
+        syntax.header_bytes_before_span = 1;
+        assert_eq!(syntax.chomping_char_range(&zero), None);
+        assert_eq!(syntax.chomping_byte_range(&zero), None);
+        assert_eq!(syntax.indentation_char_range(&zero), None);
+        assert_eq!(syntax.indentation_byte_range(&zero), None);
+    }
+
+    let syntax = BlockScalarSyntax::default();
+    let inside_utf8 = Span::empty(Marker::new(0, 1, 0).with_byte_offset(Some(1)));
+    assert_eq!(syntax.header_slice(&inside_utf8, "é"), None);
+    assert_eq!(syntax.header_slice(&maximum, ""), None);
+}
+
+#[test]
+fn maximum_compact_offsets_and_indentation_remain_available() {
+    let maximum = usize::try_from(u32::MAX).unwrap();
+    let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), maximum).unwrap();
+    syntax.header_chars_before_span = u32::MAX;
+    syntax.header_bytes_before_span = u32::MAX;
+    assert_eq!(syntax.content_indent, u32::MAX);
+
+    let span = Span::empty(Marker::new(maximum, 1, 0).with_byte_offset(Some(maximum)));
+    assert_eq!(syntax.header_char_range(&span), Some(0..3));
+    assert_eq!(syntax.header_byte_range(&span), Some(0..3));
+    assert_eq!(syntax.chomping_char_range(&span), Some(1..2));
+    assert_eq!(syntax.indentation_byte_range(&span), Some(2..3));
+
+    let before_header =
+        Span::empty(Marker::new(maximum - 1, 1, 0).with_byte_offset(Some(maximum - 1)));
+    assert_eq!(syntax.header_char_range(&before_header), None);
+    assert_eq!(syntax.header_byte_range(&before_header), None);
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn synthetic_indentation_above_u32_is_unavailable_instead_of_truncated() {
+    let too_large = usize::try_from(u32::MAX).unwrap() + 1;
+    assert!(BlockScalarSyntax::new(Chomping::Clip, None, too_large).is_none());
+    assert!(BlockScalarSyntax::new(Chomping::Keep, Some(9), usize::MAX).is_none());
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn compact_distances_support_absolute_positions_above_four_gib() {
+    let header_character = usize::try_from(u32::MAX).unwrap() + 100;
+    let header_byte = header_character + 50;
+    let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+    syntax.header_chars_before_span = 6;
+    syntax.header_bytes_before_span = 9;
+    let span = Span::empty(
+        Marker::new(header_character + 6, 2, 2).with_byte_offset(Some(header_byte + 9)),
+    );
+
+    assert_eq!(
+        syntax.header_char_range(&span),
+        Some(header_character..header_character + 3)
+    );
+    assert_eq!(
+        syntax.header_byte_range(&span),
+        Some(header_byte..header_byte + 3)
+    );
+    assert_eq!(
+        syntax.chomping_char_range(&span),
+        Some(header_character + 1..header_character + 2)
+    );
+    assert_eq!(
+        syntax.indentation_byte_range(&span),
+        Some(header_byte + 2..header_byte + 3)
+    );
+}
+
+#[test]
+fn editing_indicators_keeps_derived_offsets_and_ranges_consistent() {
+    let mut syntax = BlockScalarSyntax::new(Chomping::Keep, Some(9), 9).unwrap();
+    let span = Span::empty(Marker::new(3, 1, 3).with_byte_offset(Some(4)));
+    for (chomping, digit, sign_first, digit_first) in [
+        (Chomping::Clip, None, "|", "|"),
+        (Chomping::Clip, Some(2), "|2", "|2"),
+        (Chomping::Strip, None, "|-", "|-"),
+        (Chomping::Strip, Some(2), "|-2", "|2-"),
+        (Chomping::Keep, None, "|+", "|+"),
+        (Chomping::Keep, Some(2), "|+2", "|2+"),
+    ] {
+        syntax.chomping = chomping;
+        syntax.indentation_indicator = digit;
+        for (digit_first, header) in [(false, sign_first), (true, digit_first)] {
+            syntax.digit_first = digit_first;
+            let source = format!("é: {header}");
+            assert_eq!(syntax.header_len(), header.len());
+            assert_eq!(syntax.header_char_range(&span), Some(3..3 + header.len()));
+            assert_eq!(syntax.header_byte_range(&span), Some(4..4 + header.len()));
+            assert_eq!(syntax.header_slice(&span, &source), Some(header));
+            for (expected_offset, actual_offset, character_range, byte_range) in [
+                (
+                    header.find(['-', '+']),
+                    syntax.chomping_offset(),
+                    syntax.chomping_char_range(&span),
+                    syntax.chomping_byte_range(&span),
+                ),
+                (
+                    header.find('2'),
+                    syntax.indentation_offset(),
+                    syntax.indentation_char_range(&span),
+                    syntax.indentation_byte_range(&span),
+                ),
+            ] {
+                assert_eq!(actual_offset.map(usize::from), expected_offset, "{header}");
+                assert_eq!(
+                    character_range,
+                    expected_offset.map(|offset| std::ops::Range {
+                        start: 3 + offset,
+                        end: 4 + offset,
+                    }),
+                    "{header}"
+                );
+                assert_eq!(
+                    byte_range,
+                    expected_offset.map(|offset| std::ops::Range {
+                        start: 4 + offset,
+                        end: 5 + offset,
+                    }),
+                    "{header}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn synthetic_syntax_validates_digits_and_preserves_equality_contracts() {
+    for invalid in [0, 10, u8::MAX] {
+        assert_eq!(
+            BlockScalarSyntax::new(Chomping::Clip, Some(invalid), 0),
+            None
+        );
+    }
+    for digit in [None, Some(1), Some(9)] {
+        let syntax = BlockScalarSyntax::new(Chomping::Keep, digit, 9).unwrap();
+        assert_eq!(syntax.indentation_indicator, digit);
+        assert_eq!(syntax.chomping_offset(), Some(1));
+        assert_eq!(syntax.indentation_offset(), digit.map(|_| 2));
+        assert!(!syntax.digit_first);
+        assert_eq!(syntax.header_len(), if digit.is_some() { 3 } else { 2 });
+    }
+
+    let original = BlockScalarSyntax::new(Chomping::Strip, Some(2), 4).unwrap();
+    let mut other_bytes = original;
+    other_bytes.header_bytes_before_span = 17;
+    assert_eq!(original, other_bytes);
+
+    let mut other_characters = original;
+    other_characters.header_chars_before_span = 17;
+    assert_ne!(original, other_characters);
+}
+
+#[test]
+fn indicator_order_affects_identity_only_when_both_indicators_are_present() {
+    for chomping in [Chomping::Clip, Chomping::Strip, Chomping::Keep] {
+        for digit in [None, Some(2)] {
+            let sign_first = BlockScalarSyntax::new(chomping, digit, 2).unwrap();
+            let mut digit_first = sign_first;
+            digit_first.digit_first = true;
+            let order_matters = chomping != Chomping::Clip && digit.is_some();
+            assert_eq!(sign_first == digit_first, !order_matters);
+        }
+    }
+}
+
+#[test]
+fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
+    for (source, expected_value, expected_kind, expected_implicit) in [
+        ("key:\n", "~", ScalarKind::Plain, true),
+        ("key: &a\n", "~", ScalarKind::Plain, true),
+        ("key: !note\n", "", ScalarKind::Plain, true),
+        ("key: !!str\n", "", ScalarKind::Plain, true),
+        ("key: ~\n", "~", ScalarKind::Plain, false),
+        ("key: null\n", "null", ScalarKind::Plain, false),
+        ("key: !note ~\n", "~", ScalarKind::Plain, false),
+        ("key: ''\n", "", ScalarKind::SingleQuoted, false),
+        ("key: \"\"\n", "", ScalarKind::DoubleQuoted, false),
+        ("key: !note \"\"\n", "", ScalarKind::DoubleQuoted, false),
+        ("key: |-\n", "", ScalarKind::Literal, false),
+        ("key: >-\n", "", ScalarKind::Folded, false),
+    ] {
+        let parsed = events(source);
+        let (value, style, implicit) = parsed
+            .iter()
+            .rev()
+            .find_map(|(event, _)| match event {
+                Event::Scalar { value, style, .. } => Some((
+                    value.as_ref(),
+                    *style,
+                    matches!(style, ScalarStyle::Plain { implicit: true, .. }),
+                )),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(value, expected_value, "{source:?}");
+        assert_eq!(style.kind(), expected_kind, "{source:?}");
+        assert_eq!(implicit, expected_implicit, "{source:?}");
+
+        let streaming = Parser::new_from_iter(source.chars())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(parsed, streaming, "{source:?}");
+        support::metadata::assert_parser_details_eq(&parsed, &streaming);
+    }
+}
+
+#[test]
+fn omitted_collection_nodes_and_empty_documents_are_implicit() {
+    for (source, expected) in [
+        ("-\n- ~\n", vec![("~", true), ("~", false)]),
+        ("{key:}\n", vec![("key", false), ("~", true)]),
+        ("{: value}\n", vec![("~", true), ("value", false)]),
+        ("?\n: value\n", vec![("~", true), ("value", false)]),
+        ("---\n...\n", vec![("~", true)]),
+    ] {
+        let parsed = events(source);
+        let scalars: Vec<_> = parsed
+            .iter()
+            .filter_map(|(event, _)| match event {
+                Event::Scalar {
+                    value,
+                    style: ScalarStyle::Plain { implicit, .. },
+                    ..
+                } => Some((value.as_ref(), *implicit)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(scalars, expected, "{source:?}");
+    }
+}
+
+#[test]
+fn plain_style_patterns_keep_matching_omitted_nulls() {
+    let source = "omitted:\nwritten: ~\nquoted: \"~\"\n";
+    let parsed = events(source);
+    let scalars: Vec<_> = parsed
+        .iter()
+        .filter_map(|(event, _)| match event {
+            Event::Scalar { value, style, .. } if value == "~" => Some((
+                event,
+                *style,
+                matches!(style, ScalarStyle::Plain { implicit: true, .. }),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(scalars.len(), 3);
+    assert_eq!(
+        scalars
+            .iter()
+            .map(|(_, style, _)| matches!(style, ScalarStyle::Plain { .. }))
+            .collect::<Vec<_>>(),
+        [true, true, false],
+    );
+    assert_eq!(
+        scalars
+            .iter()
+            .map(|(_, _, implicit)| *implicit)
+            .collect::<Vec<_>>(),
+        [true, false, false],
+    );
+    assert_eq!(
+        scalars[0].0.scalar().unwrap().0,
+        scalars[1].0.scalar().unwrap().0
+    );
+    assert_eq!(*scalars[0].0, *scalars[1].0);
+
+    let tokens = Scanner::new(StrInput::new(source))
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        tokens
+            .iter()
+            .filter(|token| matches!(token.token_type(),
+                TokenType::Scalar { value, style, .. }
+                    if value == "~" && matches!(style, ScalarStyle::Plain { .. })
+            ))
+            .count(),
+        1,
+        "the scanner only emits the written plain null",
+    );
+}
+
+#[test]
+fn document_end_metadata_reports_actual_markers_only() {
+    for (source, expected) in [
+        ("value", vec![false]),
+        ("value\n...\n", vec![true]),
+        ("---\n...\n", vec![true]),
+        ("one\n---\ntwo\n", vec![false, false]),
+        ("one\n...\n---\ntwo\n...\n", vec![true, true]),
+        ("key: \"...\" # ...\n", vec![false]),
+    ] {
+        let parsed = events(source);
+        let ends: Vec<_> = parsed
+            .iter()
+            .filter_map(|(event, span)| match event {
+                Event::DocumentEnd { explicit, .. } => {
+                    if *explicit {
+                        assert_eq!(span.slice(source), Some("..."));
+                    } else {
+                        assert!(span.is_empty());
+                    }
+                    Some(*explicit)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, expected, "{source:?}");
+    }
+}
+
+#[test]
+fn header_only_eof_uses_minimum_inferred_content_indent() {
+    for indicator in ['|', '>'] {
+        for (prefix, minimum_indent, explicit_indent) in
+            [("", 0, 2), ("value: ", 1, 2), ("outer:\n  value: ", 3, 4)]
+        {
+            for comment in ["", " # explanation", " # žodis 🦀"] {
+                for (digit, expected_indent) in [("", minimum_indent), ("2", explicit_indent)] {
+                    let source = format!("{prefix}{indicator}{digit}{comment}");
+                    let parsed = events(&source);
+                    let (value, _, syntax, span) = block_scalar(&parsed);
+                    assert_eq!(value, "", "{source:?}");
+                    assert_eq!(syntax.content_indent, expected_indent, "{source:?}");
+                    assert_eq!(syntax.header_chars_before_span, 0, "{source:?}");
+                    assert_eq!(syntax.header_bytes_before_span, 0, "{source:?}");
+                    assert_eq!(
+                        syntax.header_slice(&span, &source),
+                        Some(format!("{indicator}{digit}").as_str()),
+                        "{source:?}",
+                    );
+                    let streaming = Parser::new_from_iter(source.chars())
+                        .collect::<Result<Vec<_>, _>>()
+                        .expect("valid header-only YAML");
+                    assert_eq!(parsed, streaming, "{source:?}");
+                    support::metadata::assert_parser_details_eq(&parsed, &streaming);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn recovered_block_headers_keep_the_original_source_origin_on_every_backend() {
+    fn recover<'input, I: BorrowedInput<'input>>(
+        mut parser: Parser<'input, I>,
+    ) -> Vec<(Event<'input>, Span)> {
+        parser
+            .by_ref()
+            .find_map(Result::err)
+            .expect("the first document has an invalid escape");
+        parser.proceed_next_document().unwrap();
+        parser.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    for (header, kind, expected, digit_first) in [
+        ("|2-", ScalarKind::Literal, "日本\nété", true),
+        (">-2", ScalarKind::Folded, "日本 été", false),
+    ] {
+        let source = format!(
+            "prefix: |+2\n  🦀\nbroken: \"\\q\"\n---\nresult: {header} # žąsis\r\n  日本\r\n  été\r\n...\r\n"
+        );
+        let header_byte = source.find(header).unwrap();
+        let header_char = source[..header_byte].chars().count();
+        let body_byte = source.find("日本").unwrap();
+        let body_char = source[..body_byte].chars().count();
+        for (has_bytes, parsed) in [
+            (true, recover(Parser::new_from_str(&source))),
+            (false, recover(Parser::new_from_iter(source.chars()))),
+            (
+                false,
+                recover(Parser::new_from_fallible_iter(
+                    source.chars().map(Ok::<_, ErrorKind>),
+                )),
+            ),
+        ] {
+            let (value, style, syntax, span) = block_scalar(&parsed);
+            assert_eq!(value, expected);
+            assert_eq!(style.kind(), kind);
+            assert_eq!(syntax.chomping, Chomping::Strip);
+            assert_eq!(syntax.indentation_indicator, Some(2));
+            assert_eq!(syntax.digit_first, digit_first);
+            assert_eq!(syntax.content_indent, 2);
+            assert_eq!(span.start.index(), body_char);
+            assert_eq!(span.start.byte_offset(), has_bytes.then_some(body_byte));
+            assert_eq!(
+                syntax.header_char_range(&span),
+                Some(header_char..header_char + 3)
+            );
+            assert_eq!(
+                syntax.header_byte_range(&span),
+                has_bytes.then_some(header_byte..header_byte + 3)
+            );
+            assert_eq!(
+                syntax.header_slice(&span, &source),
+                has_bytes.then_some(header)
+            );
+            assert!(parsed
+                .iter()
+                .any(|(event, _)| matches!(event, Event::DocumentEnd { explicit: true, .. })));
+        }
+    }
+}
+
+#[test]
+fn eof_newline_suppression_preserves_header_metadata_and_spans() {
+    for header in ["|2+", ">+2"] {
+        for (body, default_value, suppressed_value) in [
+            ("  text", "text\n", "text"),
+            ("  ", "\n", ""),
+            ("  \r\n", "\n", "\n"),
+            ("", "", ""),
+        ] {
+            let source = format!("clé: {header} # žąsis\r\n{body}");
+            let header_byte = source.find(header).unwrap();
+            let mut baseline = None;
+            for suppress_newline in [false, true] {
+                let mut options = Options::default();
+                options.block_scalar_eof_without_line_feed = suppress_newline;
+                let parsed = Parser::new_from_str_with_options(&source, options)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                let (value, _, syntax, span) = block_scalar(&parsed);
+                assert_eq!(
+                    value,
+                    if suppress_newline {
+                        suppressed_value
+                    } else {
+                        default_value
+                    }
+                );
+                assert_eq!(syntax.chomping, Chomping::Keep);
+                assert_eq!(syntax.indentation_indicator, Some(2));
+                assert_eq!(syntax.content_indent, 2);
+                assert_eq!(syntax.header_slice(&span, &source), Some(header));
+                assert_eq!(
+                    syntax.header_byte_range(&span),
+                    Some(header_byte..header_byte + 3)
+                );
+                assert_eq!(span.end.byte_offset(), Some(source.len()));
+                let metadata = (
+                    syntax,
+                    span,
+                    span.start.byte_offset(),
+                    span.end.byte_offset(),
+                );
+                if let Some(expected) = baseline {
+                    assert_eq!(metadata, expected, "source: {source:?}");
+                } else {
+                    baseline = Some(metadata);
+                }
+            }
+        }
+    }
+}

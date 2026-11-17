@@ -8,7 +8,7 @@ fn misplaced_closing_bracket() {
 
     for next in parser {
         match next {
-            Ok((Event::DocumentEnd, _)) => {
+            Ok((Event::DocumentEnd { .. }, _)) => {
                 unreachable!("Document end before any error");
             }
             Err(err) => {

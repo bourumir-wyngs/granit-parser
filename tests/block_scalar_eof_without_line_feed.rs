@@ -7,7 +7,7 @@ fn last_scalar(yaml: &str, options: Options) -> [(&'static str, Result<String, S
     ) -> Result<String, ScanError> {
         let mut last = None;
         for event in events {
-            if let (Event::Scalar(value, ..), _) = event? {
+            if let (Event::Scalar { value, .. }, _) = event? {
                 last = Some(value.into_owned());
             }
         }

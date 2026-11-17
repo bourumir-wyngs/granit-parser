@@ -7,7 +7,7 @@ fn run_parser_and_deref_scalar_spans(input: &str) -> Result<Vec<(String, String)
     let mut events = vec![];
     for x in Parser::new_from_str(input) {
         let x = x?;
-        if let Event::Scalar(s, ..) = x.0 {
+        if let Event::Scalar { value: s, .. } = x.0 {
             let input_s =
                 x.1.slice(input)
                     .expect("string-parser scalar spans must slice the original input");
@@ -24,8 +24,8 @@ fn run_parser_and_deref_seq_spans(input: &str) -> Result<Vec<String>, ScanError>
     for x in Parser::new_from_str(input) {
         let x = x?;
         match x.0 {
-            Event::SequenceStart(..) => start_stack.push(x.1.start),
-            Event::SequenceEnd => {
+            Event::SequenceStart { .. } => start_stack.push(x.1.start),
+            Event::SequenceEnd { .. } => {
                 let start = start_stack.pop().unwrap();
                 let input_s = Span::new(start, x.1.end)
                     .slice(input)
@@ -89,7 +89,7 @@ fn indentless_sequence_end_span_is_empty_before_the_next_key() {
         let spans = event_spans(yaml);
         let end = spans
             .iter()
-            .find(|(event, _)| matches!(event, Event::SequenceEnd))
+            .find(|(event, _)| matches!(event, Event::SequenceEnd { .. }))
             .map(|(_, span)| span.byte_range())
             .unwrap();
         assert_eq!(end, Some(at..at), "{yaml:?}");
@@ -128,7 +128,7 @@ fn indentless_sequence_end_spans_preserve_unicode_and_document_boundaries() {
         }
         let ends: Vec<_> = from_str
             .iter()
-            .filter_map(|(event, span)| matches!(event, Event::SequenceEnd).then_some(span))
+            .filter_map(|(event, span)| matches!(event, Event::SequenceEnd { .. }).then_some(span))
             .collect();
         assert_eq!(ends.len(), 1, "{yaml:?}");
         let span = ends[0];
@@ -169,15 +169,16 @@ fn stream_and_block_collection_end_spans_use_physical_eof() {
         }
         let marker = Marker::new(yaml.chars().count(), line, col);
         let (last, stream_end) = from_str.last().expect("stream must have an end event");
-        assert_eq!(last, &Event::StreamEnd);
+        assert_eq!(last, &Event::stream_end());
 
         // Flow endings cover their closing delimiter; block endings and StreamEnd
         // are empty spans at the actual end of the input, including its last line.
         let block_ends: Vec<_> = from_str
             .iter()
             .filter_map(|(event, span)| {
-                (matches!(event, Event::SequenceEnd | Event::MappingEnd) && span.is_empty())
-                    .then_some(span)
+                (matches!(event, Event::SequenceEnd { .. } | Event::MappingEnd { .. })
+                    && span.is_empty())
+                .then_some(span)
             })
             .collect();
         assert_eq!(block_ends.len(), block_end_count, "{yaml:?}");
@@ -195,25 +196,33 @@ fn flow_collection_event_spans_cover_only_the_indicators() {
     assert_eq!(
         first_event_slice("[ # c\n  a]\n", |event| matches!(
             event,
-            Event::SequenceStart(..)
+            Event::SequenceStart { .. }
         ))
         .as_deref(),
         Some("[")
     );
     assert_eq!(
-        first_event_slice("[a] # c\n", |event| matches!(event, Event::SequenceEnd)).as_deref(),
+        first_event_slice("[a] # c\n", |event| matches!(
+            event,
+            Event::SequenceEnd { .. }
+        ))
+        .as_deref(),
         Some("]")
     );
     assert_eq!(
         first_event_slice("{ # c\n  a: b}\n", |event| matches!(
             event,
-            Event::MappingStart(..)
+            Event::MappingStart { .. }
         ))
         .as_deref(),
         Some("{")
     );
     assert_eq!(
-        first_event_slice("{a: b} # c\n", |event| matches!(event, Event::MappingEnd)).as_deref(),
+        first_event_slice("{a: b} # c\n", |event| matches!(
+            event,
+            Event::MappingEnd { .. }
+        ))
+        .as_deref(),
         Some("}")
     );
 }
@@ -226,7 +235,7 @@ fn tagged_block_collection_reports_tag_start_on_tag_line() {
         .find(|(event, _span)| {
             matches!(
                 event,
-                Event::MappingStart(_, _, Some(tag)) if tag.suffix() == "omap"
+                Event::MappingStart { tag: Some(tag), .. } if tag.suffix() == "omap"
             )
         })
         .expect("expected tagged block mapping");
@@ -249,7 +258,7 @@ fn tag_start_uses_tag_token_when_anchor_precedes_tag() {
         .find(|(event, _span)| {
             matches!(
                 event,
-                Event::Scalar(value, _, _, Some(tag))
+                Event::Scalar { value, tag: Some(tag), .. }
                     if value.as_ref() == "value" && tag.suffix() == "str"
             )
         })
@@ -271,7 +280,7 @@ fn tag_start_uses_tag_token_when_tag_precedes_anchor() {
         .find(|(event, _span)| {
             matches!(
                 event,
-                Event::Scalar(value, _, _, Some(tag))
+                Event::Scalar { value, tag: Some(tag), .. }
                     if value.as_ref() == "value" && tag.suffix() == "str"
             )
         })
@@ -415,7 +424,7 @@ fn tag_spans_ignore_property_lookalikes_and_aliases() {
         .filter_map(|(event, span)| span.tag_span().map(|tag_span| (event, tag_span)))
         .collect();
     assert_eq!(with_tag.len(), 1);
-    assert!(matches!(with_tag[0].0, Event::Scalar(value, ..) if value == "hello"));
+    assert!(matches!(with_tag[0].0, Event::Scalar { value, .. } if value == "hello"));
     assert_eq!(with_tag[0].1.slice(yaml), Some("!note"));
     let (_, alias_span) = events.iter().find(|(event, _)| event.is_alias()).unwrap();
     assert_eq!(alias_span.slice(yaml), Some("*msg"));
@@ -500,7 +509,7 @@ fn parser_spans_use_byte_offsets_for_non_ascii_input() {
     let scalars: Vec<_> = Parser::new_from_str(source)
         .filter_map(|parsed| {
             let (event, span) = parsed.unwrap();
-            if let Event::Scalar(value, ..) = event {
+            if let Event::Scalar { value, .. } = event {
                 Some((
                     value.into_owned(),
                     span.byte_range(),
@@ -540,7 +549,7 @@ fn tagged_empty_scalar_span_stays_at_tag_end() {
         .find(|(event, _span)| {
             matches!(
                 event,
-                Event::Scalar(value, _, _, Some(tag))
+                Event::Scalar { value, tag: Some(tag), .. }
                     if value.is_empty() && tag.suffix() == "str"
             )
         })
@@ -561,7 +570,7 @@ fn implicit_document_end_span_stays_at_previous_document_end() {
     let events = event_spans(yaml);
     let (_event, span) = events
         .iter()
-        .find(|(event, _span)| matches!(event, Event::DocumentEnd))
+        .find(|(event, _span)| matches!(event, Event::DocumentEnd { .. }))
         .expect("expected implicit document end");
 
     let foo_end = yaml.find('\n').unwrap();
@@ -580,7 +589,7 @@ fn block_missing_value_span_is_empty_at_next_token_start() {
     let empty_value_spans: Vec<_> = events
         .iter()
         .filter_map(|(event, span)| {
-            matches!(event, Event::Scalar(value, ..) if value == "~").then_some(*span)
+            matches!(event, Event::Scalar { value, .. } if value == "~").then_some(*span)
         })
         .collect();
 
@@ -599,7 +608,7 @@ fn span_slice_returns_none_for_buffered_input_spans_without_byte_offsets() {
 
     for parsed in Parser::new_from_iter(source.chars()) {
         let (event, span) = parsed.unwrap();
-        if matches!(event, Event::Scalar(..)) {
+        if matches!(event, Event::Scalar { .. }) {
             scalar_slices.push(span.slice(source));
         }
     }
@@ -749,7 +758,7 @@ fn span_slice_for_quoted_scalar_excludes_trailing_comment() {
     let slices: Vec<_> = Parser::new_from_str(yaml)
         .filter_map(|parsed| {
             let (event, span) = parsed.unwrap();
-            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
+            matches!(event, Event::Scalar { .. }).then(|| span.slice(yaml).unwrap().to_string())
         })
         .collect();
 
@@ -762,7 +771,7 @@ fn span_slice_for_single_quoted_scalar_excludes_trailing_comment() {
     let slices: Vec<_> = Parser::new_from_str(yaml)
         .filter_map(|parsed| {
             let (event, span) = parsed.unwrap();
-            matches!(event, Event::Scalar(..)).then(|| span.slice(yaml).unwrap().to_string())
+            matches!(event, Event::Scalar { .. }).then(|| span.slice(yaml).unwrap().to_string())
         })
         .collect();
 

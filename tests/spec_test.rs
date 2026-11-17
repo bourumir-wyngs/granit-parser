@@ -26,20 +26,24 @@ struct YamlChecker {
 impl EventReceiver<'_> for YamlChecker {
     fn on_event(&mut self, ev: Event) {
         let tev = match ev {
-            Event::DocumentStart(..) => TestEvent::OnDocumentStart,
-            Event::DocumentEnd => TestEvent::OnDocumentEnd,
-            Event::SequenceStart(..) => TestEvent::OnSequenceStart,
-            Event::SequenceEnd => TestEvent::OnSequenceEnd,
-            Event::MappingStart(..) => TestEvent::OnMapStart,
-            Event::MappingEnd => TestEvent::OnMapEnd,
-            Event::Scalar(ref v, style, _, _) => {
-                if v == "~" && style == ScalarStyle::Plain {
+            Event::DocumentStart { .. } => TestEvent::OnDocumentStart,
+            Event::DocumentEnd { .. } => TestEvent::OnDocumentEnd,
+            Event::SequenceStart { .. } => TestEvent::OnSequenceStart,
+            Event::SequenceEnd { .. } => TestEvent::OnSequenceEnd,
+            Event::MappingStart { .. } => TestEvent::OnMapStart,
+            Event::MappingEnd { .. } => TestEvent::OnMapEnd,
+            Event::Scalar {
+                value: ref v,
+                style,
+                ..
+            } => {
+                if v == "~" && matches!(style, ScalarStyle::Plain { .. }) {
                     TestEvent::OnNull
                 } else {
                     TestEvent::OnScalar
                 }
             }
-            Event::Alias(_) => TestEvent::OnAlias,
+            Event::Alias { .. } => TestEvent::OnAlias,
             _ => return, // ignore other events
         };
         self.evs.push(tev);

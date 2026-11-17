@@ -10,7 +10,7 @@ fn assert_comment_free_value(events: &[(Event<'_>, granit_parser::Span)]) {
         .all(|(event, _)| !support::is_comment_event(event)));
     assert!(events
         .iter()
-        .any(|(event, _)| { matches!(event, Event::Scalar(value, ..) if value == "value") }));
+        .any(|(event, _)| { matches!(event, Event::Scalar { value, .. } if value == "value") }));
 }
 
 #[test]
@@ -99,9 +99,9 @@ fn comment_emission_option_is_available_with_and_without_comments() {
                     .count(),
                 if expect_comments { 2 } else { 0 },
             );
-            assert!(events
-                .iter()
-                .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+            assert!(events.iter().any(
+                |(event, _)| matches!(event, Event::Scalar { value, .. } if value == "value")
+            ));
         }
 
         for tokens in [
@@ -245,7 +245,7 @@ fn zero_comment_limit_still_precedes_indentless_sequence_start() {
     assert!(
         events
             .iter()
-            .all(|event| !matches!(event, Event::SequenceStart(..))),
+            .all(|event| !matches!(event, Event::SequenceStart { .. })),
         "the resource-limit error must not be deferred behind the sequence start"
     );
 }
@@ -306,7 +306,7 @@ fn flow_nesting_limit_can_be_raised_above_previous_type_limit() {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::SequenceStart(..)))
+            .filter(|(event, _)| matches!(event, Event::SequenceStart { .. }))
             .count(),
         256
     );
@@ -345,7 +345,7 @@ fn default_options_reject_excessive_compact_block_nesting() {
 
     let error = Parser::new(StrInput::new(&yaml))
         .find_map(|result| match result {
-            Ok((Event::SequenceStart(..), _)) => {
+            Ok((Event::SequenceStart { .. }, _)) => {
                 starts += 1;
                 None
             }
@@ -372,7 +372,7 @@ fn block_nesting_limit_can_be_raised() {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::SequenceStart(..)))
+            .filter(|(event, _)| matches!(event, Event::SequenceStart { .. }))
             .count(),
         256
     );
@@ -418,7 +418,7 @@ fn scanner_enforces_block_nesting_limit_for_compact_collections() {
                 Ok(token)
                     if matches!(
                         token.token_type(),
-                        TokenType::BlockSequenceStart | TokenType::BlockMappingStart
+                        TokenType::BlockSequenceStart { .. } | TokenType::BlockMappingStart { .. }
                     ) =>
                 {
                     starts += 1;

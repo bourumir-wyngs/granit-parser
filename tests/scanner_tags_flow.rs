@@ -147,7 +147,12 @@ fn first_tagged_scalar(events: &[Event<'_>]) -> (String, Tag) {
     events
         .iter()
         .find_map(|event| {
-            if let Event::Scalar(value, _, _, Some(tag)) = event {
+            if let Event::Scalar {
+                value,
+                tag: Some(tag),
+                ..
+            } = event
+            {
                 Some((value.to_string(), tag.clone().into_owned()))
             } else {
                 None
@@ -246,7 +251,7 @@ fn primary_handle_overrides_are_scoped_to_documents_with_nested_non_specific_tag
     assert_eq!(
         events
             .iter()
-            .filter(|event| matches!(event, Event::DocumentStart(..)))
+            .filter(|event| matches!(event, Event::DocumentStart { .. }))
             .count(),
         3,
     );
@@ -404,7 +409,14 @@ fn no_borrow_input_scans_anchor_and_alias_as_owned() {
     let anchor_id = events
         .iter()
         .find_map(|event| {
-            if let Event::Scalar(value, ScalarStyle::Plain, anchor_id, None) = event {
+            if let Event::Scalar {
+                value,
+                style: ScalarStyle::Plain { .. },
+                anchor_id,
+                tag: None,
+                ..
+            } = event
+            {
                 (value == "1").then_some(*anchor_id)
             } else {
                 None
@@ -413,7 +425,9 @@ fn no_borrow_input_scans_anchor_and_alias_as_owned() {
         .expect("expected the anchored scalar");
     assert_ne!(anchor_id, 0, "anchored scalar must be assigned an id");
     assert!(
-        events.contains(&Event::Alias(anchor_id)),
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Alias { anchor_id: id, .. } if *id == anchor_id)),
         "alias must reference the anchored scalar id"
     );
 }

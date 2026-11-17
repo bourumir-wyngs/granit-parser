@@ -59,7 +59,7 @@ impl<'input> ParserTrait<'input> for ReplayParser<'input> {
     ) -> Result<(), ScanError> {
         while let Some(res) = self.next_event() {
             let (ev, span) = res?;
-            let is_doc_end = matches!(ev, Event::DocumentEnd);
+            let is_doc_end = matches!(ev, Event::DocumentEnd { .. });
             let is_stream_end = matches!(ev, Event::StreamEnd);
             recv.on_event(ev, span);
             if is_stream_end {
@@ -397,12 +397,12 @@ where
         self.parsers.push(AnyParser::Custom { parser, name });
         #[cfg(feature = "comments")]
         {
-            self.current = if self.options.emit_comments || !matches!(current.0, Event::Comment(..))
-            {
-                Some(current)
-            } else {
-                None
-            };
+            self.current =
+                if self.options.emit_comments || !matches!(current.0, Event::Comment { .. }) {
+                    Some(current)
+                } else {
+                    None
+                };
         }
         #[cfg(not(feature = "comments"))]
         {
@@ -463,6 +463,8 @@ where
         self.propagate_anchor_offset_from_popped(&popped);
     }
 
+    // Keep source transitions and their comment-aware completion checks together.
+    #[allow(clippy::too_many_lines)]
     fn next_event_impl(&mut self) -> Result<(Event<'input>, Span), ScanError> {
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
@@ -483,7 +485,7 @@ where
             if let Some(&(depth, span)) = self.pending_document_ends.last() {
                 if depth == self.parsers.len()
                     && matches!(&res, Some(Ok((event, _)))
-                        if !matches!(event, Event::Comment(..) | Event::StreamEnd))
+                        if !matches!(event, Event::Comment { .. } | Event::StreamEnd))
                 {
                     let error = self.contextualize_error(ScanError::from_kind(
                         span.start,
@@ -495,10 +497,10 @@ where
             }
 
             match res {
-                Some(Ok((Event::StreamEnd, span))) => {
+                Some(Ok((event @ Event::StreamEnd, span))) => {
                     if self.parsers.len() == 1 {
                         self.parsers.pop();
-                        return Ok((Event::StreamEnd, span));
+                        return Ok((event, span));
                     }
                     self.pop_parser_and_propagate_anchor_offset();
                 }
@@ -517,9 +519,9 @@ where
                     self.pop_parser_and_propagate_anchor_offset();
                     return e.into_result();
                 }
-                Some(Ok((Event::DocumentEnd, span))) => {
+                Some(Ok((event @ Event::DocumentEnd { .. }, span))) => {
                     if self.parsers.len() == 1 {
-                        return Ok((Event::DocumentEnd, span));
+                        return Ok((event, span));
                     }
 
                     #[cfg(feature = "comments")]
@@ -560,11 +562,11 @@ where
                 }
                 Some(Ok(event)) => {
                     #[cfg(feature = "comments")]
-                    if !self.options.emit_comments && matches!(event.0, Event::Comment(..)) {
+                    if !self.options.emit_comments && matches!(event.0, Event::Comment { .. }) {
                         continue;
                     }
                     if self.parsers.len() > 1
-                        && matches!(event.0, Event::StreamStart | Event::DocumentStart(..))
+                        && matches!(event.0, Event::StreamStart | Event::DocumentStart { .. })
                     {
                         continue;
                     }
@@ -651,7 +653,7 @@ where
             let (ev, span) = res?;
 
             // Track whether to stop based on `multi`.
-            let is_doc_end = matches!(ev, Event::DocumentEnd);
+            let is_doc_end = matches!(ev, Event::DocumentEnd { .. });
             let is_stream_end = matches!(ev, Event::StreamEnd);
 
             recv.on_event(ev, span);

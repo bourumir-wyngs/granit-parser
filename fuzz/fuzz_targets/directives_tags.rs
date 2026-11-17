@@ -126,17 +126,18 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
     let tokens = Scanner::with_options(StrInput::new(&yaml), options.clone())
         .collect::<Result<Vec<_>, _>>()
         .expect("comment text and separation must not consume directive limits");
-    assert_eq!(
+    assert!(matches!(
         tokens[1].token_type(),
-        &TokenType::ReservedDirective("FUTURE".into(), parameters.clone()),
-    );
+        TokenType::ReservedDirective { name, parameters: actual, .. }
+            if name == "FUTURE" && actual == &parameters
+    ));
     #[cfg(feature = "comments")]
     {
         let comments = tokens
             .iter()
             .filter_map(|token| match token.token_type() {
                 #[cfg(feature = "comments")]
-                TokenType::Comment(comment) => Some((comment, token.span())),
+                TokenType::Comment { comment, .. } => Some((comment, token.span())),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -157,7 +158,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
     assert_eq!(
         events
             .iter()
-            .filter(|(event, _)| matches!(event, Event::Comment(..)))
+            .filter(|(event, _)| matches!(event, Event::Comment { .. }))
             .count(),
         usize::from(cfg!(feature = "comments") && options.emit_comments),
     );
@@ -165,7 +166,7 @@ fn check_reserved_directive_comment(selector: u8, payload: &str) {
         events
             .iter()
             .filter_map(|(event, _)| match event {
-                Event::Scalar(value, ..) => Some(value.as_ref()),
+                Event::Scalar { value, .. } => Some(value.as_ref()),
                 _ => None,
             })
             .collect::<Vec<_>>(),

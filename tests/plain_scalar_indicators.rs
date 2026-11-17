@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, Parser, ScalarStyle, ScanError, Scanner, StrInput,
     StructureStyle, TokenType,
@@ -32,17 +33,17 @@ fn colon_without_space_is_part_of_scalar_value() {
     // Here the value should be the single scalar "a:b".
     let s = "k: a:b\n";
     let events: Vec<_> = Parser::new_from_str(s).map(|r| r.unwrap().0).collect();
-    assert_eq!(
+    support::assert_events_eq!(
         events,
-        vec![
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::MappingStart(StructureStyle::Block, 0, None),
-            Event::Scalar("k".into(), ScalarStyle::Plain, 0, None),
-            Event::Scalar("a:b".into(), ScalarStyle::Plain, 0, None),
-            Event::MappingEnd,
-            Event::DocumentEnd,
-            Event::StreamEnd,
+        [
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::mapping_start(StructureStyle::Block, 0, None),
+            Event::new_scalar("k".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("a:b".into(), ScalarStyle::plain(), 0, None),
+            Event::mapping_end(),
+            support::document_end(false),
+            Event::stream_end(),
         ]
     );
 }
@@ -65,17 +66,17 @@ fn plain_scalar_dash_before_flow_delimiter() {
                 .into_iter()
                 .map(|(event, _)| event)
                 .collect();
-            assert_eq!(
+            support::assert_events_eq!(
                 events,
                 [
-                    Event::StreamStart,
-                    Event::DocumentStart(false, None),
-                    Event::SequenceStart(StructureStyle::Flow, 0, None),
-                    Event::Scalar(expected_first.into(), ScalarStyle::Plain, 0, None),
-                    Event::Scalar("after".into(), ScalarStyle::Plain, 0, None),
-                    Event::SequenceEnd,
-                    Event::DocumentEnd,
-                    Event::StreamEnd,
+                    Event::stream_start(),
+                    Event::document_start(false, None),
+                    Event::sequence_start(StructureStyle::Flow, 0, None),
+                    Event::new_scalar(expected_first.into(), ScalarStyle::plain(), 0, None),
+                    Event::new_scalar("after".into(), ScalarStyle::plain(), 0, None),
+                    Event::sequence_end(),
+                    support::document_end(false),
+                    Event::stream_end(),
                 ],
                 "input: {yaml:?}",
             );
@@ -99,13 +100,13 @@ fn plain_scalar_dash_is_included_in_token_before_flow_delimiter() {
             assert_eq!(
                 types,
                 [
-                    TokenType::StreamStart,
-                    TokenType::FlowSequenceStart,
-                    TokenType::Scalar(ScalarStyle::Plain, first.into()),
-                    TokenType::FlowEntry,
-                    TokenType::Scalar(ScalarStyle::Plain, "after".into()),
-                    TokenType::FlowSequenceEnd,
-                    TokenType::StreamEnd,
+                    TokenType::stream_start(),
+                    TokenType::flow_sequence_start(),
+                    TokenType::scalar(ScalarStyle::plain(), first.into()),
+                    TokenType::flow_entry(),
+                    TokenType::scalar(ScalarStyle::plain(), "after".into()),
+                    TokenType::flow_sequence_end(),
+                    TokenType::stream_end(),
                 ],
                 "input: {yaml:?}",
             );
@@ -123,7 +124,7 @@ fn plain_scalar_dash_before_closing_flow_delimiter() {
         ] {
             let events = result.unwrap_or_else(|error| panic!("input: {yaml:?}: {error}"));
             assert!(events.iter().any(|(event, _)| {
-                matches!(event, Event::Scalar(value, ScalarStyle::Plain, ..) if value == "a -")
+                matches!(event, Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "a -")
             }));
         }
     }

@@ -1,0 +1,18 @@
+[package]
+name = "granit-parser-api-contract"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.81.0"
+publish = false
+
+# A separate consumer avoids feature unification with the library's dev-dependency.
+[workspace]
+
+[features]
+default = ["comments"]
+comments = ["granit-parser/comments"]
+extended_details = ["granit-parser/extended_details"]
+test_equality = ["granit-parser/test_equality"]
+
+[dependencies]
+granit-parser = { path = "../..", default-features = false, features = ["std", "error_messages"] }

@@ -7,11 +7,24 @@ use std::borrow::Cow;
 fn replay_tracks_anchor_metadata_ids_without_reassigning_them() {
     let span = Span::empty(Marker::new(0, 1, 0));
     // A replay can start after the defining node was consumed elsewhere.
-    let events = vec![
-        (Event::Anchor(7, "name".into()), span),
-        (Event::Alias(99), span),
-        (Event::Anchor(0, "unassigned".into()), span),
-    ];
+    let events = Parser::new_from_str_with_options(
+        "[&name value, *name, &unassigned other]",
+        options! { emit_anchor_events: true },
+    )
+    .map(Result::unwrap)
+    .filter_map(|(mut event, _)| {
+        match &mut event {
+            Event::Anchor {
+                anchor_id, name, ..
+            } => {
+                *anchor_id = if name == "name" { 7 } else { 0 };
+            }
+            Event::Alias { anchor_id, .. } => *anchor_id = 99,
+            _ => return None,
+        }
+        Some((event, span))
+    })
+    .collect::<Vec<_>>();
     let mut replay = ReplayParser::new(events.clone(), 2);
 
     assert_eq!(replay.peek().unwrap().unwrap(), &events[0]);
@@ -30,9 +43,9 @@ fn stack_preserves_caller_parser_and_replay_anchor_events() {
     let events = Parser::new_from_str_with_options(source, options! { emit_anchor_events: true })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert!(events
-        .iter()
-        .any(|(event, _)| matches!(event, Event::Anchor(1, name) if name == "name")));
+    assert!(events.iter().any(
+        |(event, _)| matches!(event, Event::Anchor { anchor_id: 1, name, .. } if name == "name")
+    ));
 
     let mut stack: ParserStack<'_> = ParserStack::new();
     stack.push_str_parser(
@@ -54,7 +67,7 @@ fn stack_does_not_enable_metadata_on_caller_supplied_parsers() {
     let events = stack.collect::<Result<Vec<_>, _>>().unwrap();
     assert!(!events
         .iter()
-        .any(|(event, _)| matches!(event, Event::Anchor(..))));
+        .any(|(event, _)| matches!(event, Event::Anchor { .. })));
 }
 
 #[test]
@@ -86,7 +99,11 @@ fn included_anchor_events_follow_options_with_local_ranges_and_inherited_ids() {
             let anchors: Vec<_> = events
                 .iter()
                 .filter_map(|(event, span)| match event {
-                    Event::Anchor(id, name) => Some((*id, name, span)),
+                    Event::Anchor {
+                        anchor_id: id,
+                        name,
+                        ..
+                    } => Some((*id, name, span)),
                     _ => None,
                 })
                 .collect();
@@ -103,10 +120,10 @@ fn included_anchor_events_follow_options_with_local_ranges_and_inherited_ids() {
             }
             assert!(events
                 .iter()
-                .any(|(event, _)| matches!(event, Event::Alias(2))));
+                .any(|(event, _)| matches!(event, Event::Alias { anchor_id: 2, .. })));
             assert!(events
                 .iter()
-                .any(|(event, _)| matches!(event, Event::Scalar(_, _, 3, _))));
+                .any(|(event, _)| matches!(event, Event::Scalar { anchor_id: 3, .. })));
         }
     }
 }
@@ -132,11 +149,11 @@ fn included_anchor_events_preserve_a_zero_offset_from_an_empty_replay() {
         assert_eq!(
             events.iter().map(|(event, _)| event).collect::<Vec<_>>(),
             [
-                &Event::SequenceStart(StructureStyle::Flow, 0, None),
-                &Event::Anchor(0, "inc".into()),
-                &Event::Alias(0),
-                &Event::SequenceEnd,
-                &Event::StreamEnd,
+                &Event::sequence_start(StructureStyle::Flow, 0, None),
+                &Event::anchor(0, "inc".into()),
+                &Event::alias(0),
+                &Event::sequence_end(),
+                &Event::stream_end(),
             ]
         );
         assert_eq!((events[1].1.start.index(), events[1].1.end.index()), (0, 4));

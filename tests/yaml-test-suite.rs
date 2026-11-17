@@ -459,16 +459,29 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
         self.last_span = Some((ev.clone(), span));
 
         let line: String = match ev {
-            Event::StreamStart => "+STR".into(),
-            Event::StreamEnd => "-STR".into(),
+            Event::StreamStart { .. } => "+STR".into(),
+            Event::StreamEnd { .. } => "-STR".into(),
 
-            Event::DocumentStart(explicit, _) => if explicit { "+DOC ---" } else { "+DOC" }.into(),
-            Event::DocumentEnd => "-DOC".into(),
+            Event::DocumentStart { explicit, .. } => {
+                if explicit { "+DOC ---" } else { "+DOC" }.into()
+            }
+            #[cfg(feature = "extended_details")]
+            Event::DocumentEnd { explicit, .. } => {
+                if explicit { "-DOC ..." } else { "-DOC" }.into()
+            }
+            #[cfg(not(feature = "extended_details"))]
+            Event::DocumentEnd { .. } => "-DOC".into(),
 
-            Event::SequenceStart(style, idx, tag) => {
+            Event::SequenceStart {
+                style,
+                anchor_id: idx,
+                tag,
+                ..
+            } => {
                 let style = match style {
                     StructureStyle::Block => "",
                     StructureStyle::Flow => " []",
+                    _ => panic!("unknown collection style"),
                 };
                 format!(
                     "+SEQ{style}{}{}",
@@ -476,12 +489,18 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::SequenceEnd => "-SEQ".into(),
+            Event::SequenceEnd { .. } => "-SEQ".into(),
 
-            Event::MappingStart(style, idx, tag) => {
+            Event::MappingStart {
+                style,
+                anchor_id: idx,
+                tag,
+                ..
+            } => {
                 let style = match style {
                     StructureStyle::Block => "",
                     StructureStyle::Flow => " {}",
+                    _ => panic!("unknown collection style"),
                 };
                 format!(
                     "+MAP{style}{}{}",
@@ -489,26 +508,40 @@ impl<'input> SpannedEventReceiver<'input> for EventReporter<'input> {
                     format_tag(tag.as_ref())
                 )
             }
-            Event::MappingEnd => "-MAP".into(),
+            Event::MappingEnd { .. } => "-MAP".into(),
 
-            Event::Scalar(ref text, style, idx, ref tag) => {
+            Event::Scalar {
+                value: ref text,
+                style,
+                anchor_id: idx,
+                ref tag,
+                ..
+            } => {
                 let kind = match style {
-                    ScalarStyle::Plain => ":",
-                    ScalarStyle::SingleQuoted => "'",
-                    ScalarStyle::DoubleQuoted => r#"""#,
-                    ScalarStyle::Literal => "|",
-                    ScalarStyle::Folded => ">",
+                    ScalarStyle::Plain { .. } => ":",
+                    ScalarStyle::SingleQuoted { .. } => "'",
+                    ScalarStyle::DoubleQuoted { .. } => r#"""#,
+                    ScalarStyle::Literal { .. } => "|",
+                    ScalarStyle::Folded { .. } => ">",
+                    _ => panic!("unknown scalar style"),
                 };
-                format!(
+                let line = format!(
                     "=VAL{}{} {kind}{}",
                     format_index(idx),
                     format_tag(tag.as_ref()),
                     escape_text(text)
-                )
+                );
+                #[cfg(feature = "extended_details")]
+                let line = if let ScalarStyle::Plain { implicit, .. } = style {
+                    format!("{line} [implicit={implicit}]")
+                } else {
+                    line
+                };
+                line
             }
-            Event::Alias(idx) => format!("=ALI *{idx}"),
+            Event::Alias { anchor_id: idx, .. } => format!("=ALI *{idx}"),
             #[cfg(feature = "comments")]
-            Event::Comment(..) => unreachable!("comments are ignored above"),
+            Event::Comment { .. } => unreachable!("comments are ignored above"),
             _ => return,
         };
         self.events.push(line);
@@ -586,8 +619,9 @@ fn visual_to_raw(yaml: &str) -> String {
 
 /// Adapt suite events to the parser's public event representation.
 ///
-/// Anchors use numeric IDs, missing untagged nodes use `~`, and document ends
-/// do not expose whether the marker was explicit. Preserve the other metadata.
+/// Anchors use numeric IDs and missing untagged nodes use `~`. With extended details,
+/// preserve document-end markers and compare omitted-node flags against empty plain suite
+/// values, including tagged or anchored omissions. Without it, normalize unavailable details.
 fn expected_events(expected_tree: &str) -> Vec<String> {
     let mut anchors = vec![];
     expected_tree
@@ -615,8 +649,11 @@ fn expected_events(expected_tree: &str) -> Vec<String> {
                     .0;
                 s = s.replace(&s[start..], &format!("*{}", idx + 1));
             }
-            match &*s {
-                // The public event does not carry document-end explicitness.
+            #[cfg(feature = "extended_details")]
+            let implicit = expected_plain_implicit(&s);
+            let line = match &*s {
+                // The marker flag is available only with extended details.
+                #[cfg(not(feature = "extended_details"))]
                 "-DOC ..." => "-DOC".into(),
                 // The parser represents untagged missing/null scalars as a plain "~" event.
                 // Normalize the YAML test-suite's canonical empty-content form to that local
@@ -626,7 +663,27 @@ fn expected_events(expected_tree: &str) -> Vec<String> {
                     format!("{s}~")
                 }
                 s => s.into(),
-            }
+            };
+            #[cfg(feature = "extended_details")]
+            let line = if let Some(implicit) = implicit {
+                format!("{line} [implicit={implicit}]")
+            } else {
+                line
+            };
+            line
         })
         .collect()
+}
+
+/// Read a plain scalar's omission flag from the suite's canonical event representation.
+#[cfg(feature = "extended_details")]
+fn expected_plain_implicit(event: &str) -> Option<bool> {
+    let mut value = event.strip_prefix("=VAL ")?;
+    if value.starts_with('&') {
+        value = value.split_once(' ')?.1;
+    }
+    if value.starts_with('<') {
+        value = value.split_once("> ")?.1;
+    }
+    value.strip_prefix(':').map(str::is_empty)
 }

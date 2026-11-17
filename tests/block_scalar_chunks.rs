@@ -1,6 +1,7 @@
+mod support;
 use granit_parser::{
-    ErrorKind, Event, InputIoError, Marker, Parser, ScalarStyle, ScanError, Span, StructureStyle,
-    Tag,
+    ErrorKind, Event, InputIoError, Marker, Parser, ScalarKind, ScalarStyle, ScanError, Span,
+    StructureStyle, Tag,
 };
 use std::borrow::Cow;
 
@@ -27,9 +28,11 @@ fn block_scalar<'events>(
     events
         .iter()
         .find_map(|(event, span)| match event {
-            Event::Scalar(value, style @ (ScalarStyle::Literal | ScalarStyle::Folded), ..) => {
-                Some((value.as_ref(), *style, *span))
-            }
+            Event::Scalar {
+                value,
+                style: style @ (ScalarStyle::Literal { .. } | ScalarStyle::Folded { .. }),
+                ..
+            } => Some((value.as_ref(), *style, *span)),
             _ => None,
         })
         .expect("expected a block scalar")
@@ -67,8 +70,8 @@ fn error_all_inputs(source: &str) -> ScanError {
 fn long_lines_preserve_folding_chomping_indentation_and_line_breaks() {
     let run = "abcdefgh01234567".repeat(256);
     for (indicator, style, separator) in [
-        ('|', ScalarStyle::Literal, "\n"),
-        ('>', ScalarStyle::Folded, " "),
+        ('|', ScalarKind::Literal, "\n"),
+        ('>', ScalarKind::Folded, " "),
     ] {
         for newline in ["\n", "\r", "\r\n"] {
             for indent in ["", "2"] {
@@ -79,10 +82,10 @@ fn long_lines_preserve_folding_chomping_indentation_and_line_breaks() {
                     let events = parse_all_inputs(&source);
                     let (value, actual_style, _) = block_scalar(&events);
                     assert_eq!(value, format!("{run}{separator}{run}{tail}"));
-                    assert_eq!(actual_style, style);
+                    assert_eq!(actual_style.kind(), style);
                     assert!(events.iter().any(|(event, _)| matches!(
                         event,
-                        Event::Scalar(value, ScalarStyle::Plain, ..) if value == "tail"
+                        Event::Scalar { value, style: ScalarStyle::Plain { .. }, .. } if value == "tail"
                     )));
                 }
             }
@@ -113,7 +116,7 @@ fn unicode_lines_keep_character_markers_and_byte_offsets_distinct() {
         assert_eq!(span.slice(&source), Some(&source[prefix.len()..end_byte]));
         let (_, next_span) = events
             .iter()
-            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "fin"))
+            .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "fin"))
             .expect("mapping continues after the block scalar");
         assert_eq!(next_span.start, span.end);
         assert_eq!(next_span.start.byte_offset(), Some(end_byte));
@@ -182,7 +185,7 @@ fn eof_indentation_preserves_real_blank_lines_and_more_indented_content() {
 fn empty_block_scalar_at_eof_preserves_yaml_suite_chomping() {
     // JEF9-02 expects keep chomping to retain one newline for a whitespace-only scalar
     // at EOF, even when the final spaces have no terminating line break.
-    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for newline in ["\n", "\r", "\r\n"] {
             for (empty_lines, kept) in [(0, "\n"), (1, "\n"), (2, "\n\n")] {
                 for (header, expected) in [
@@ -200,7 +203,7 @@ fn empty_block_scalar_at_eof_preserves_yaml_suite_chomping() {
                     let events = parse_all_inputs(&source);
                     let (value, actual_style, span) = block_scalar(&events);
                     assert_eq!(value, expected, "{source:?}");
-                    assert_eq!(actual_style, style);
+                    assert_eq!(actual_style.kind(), style);
                     assert_eq!(
                         span.end,
                         Marker::new(source.chars().count(), empty_lines + 2, 2)
@@ -306,29 +309,31 @@ fn source_failures_during_long_block_lines_remain_terminal() {
 
 #[test]
 fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof() {
-    for (indicator, style) in [('|', ScalarStyle::Literal), ('>', ScalarStyle::Folded)] {
+    for (indicator, style) in [('|', ScalarKind::Literal), ('>', ScalarKind::Folded)] {
         for newline in ["\n", "\r\n"] {
             for (chomp, expected_value) in [("-", "é"), ("", "é\n"), ("+", "é\n")] {
                 let source = format!("- !custom &a {indicator}2{chomp}{newline}  é{newline}  ");
                 let events = parse_all_inputs(&source);
-                assert_eq!(
+                let (_, actual_style, _) = block_scalar(&events);
+                assert_eq!(actual_style.kind(), style);
+                support::assert_events_eq!(
                     events
                         .iter()
                         .map(|(event, _)| event.clone())
                         .collect::<Vec<_>>(),
-                    vec![
-                        Event::StreamStart,
-                        Event::DocumentStart(false, None),
-                        Event::SequenceStart(StructureStyle::Block, 0, None),
-                        Event::Scalar(
+                    [
+                        Event::stream_start(),
+                        Event::document_start(false, None),
+                        Event::sequence_start(StructureStyle::Block, 0, None),
+                        Event::new_scalar(
                             expected_value.into(),
-                            style,
+                            actual_style,
                             1,
-                            Some(Cow::Owned(Tag::new("!", "custom"))),
+                            Some(Cow::Owned(Tag::new("!", "custom")))
                         ),
-                        Event::SequenceEnd,
-                        Event::DocumentEnd,
-                        Event::StreamEnd,
+                        Event::sequence_end(),
+                        support::document_end(false),
+                        Event::stream_end(),
                     ],
                     "{source:?}"
                 );

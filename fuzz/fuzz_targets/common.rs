@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../tests/support/metadata.rs"]
+pub mod metadata;
+
 use std::collections::BTreeSet;
 
 use granit_parser::{
@@ -42,6 +45,7 @@ pub fn parse_with_options(input: &str, options: Options) {
         string.items, buffered.items,
         "StrInput and BufferedInput emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&string.items, &buffered.items);
     assert_eq!(
         string.error, buffered.error,
         "StrInput and BufferedInput returned different parser errors"
@@ -50,6 +54,7 @@ pub fn parse_with_options(input: &str, options: Options) {
         string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&string.items, &fallible.items);
     assert_eq!(
         string.error, fallible.error,
         "infallible and all-Ok fallible inputs returned different parser errors"
@@ -81,6 +86,7 @@ pub fn scan_with_options(input: &str, options: Options) {
         string.items, buffered.items,
         "StrInput and BufferedInput emitted different scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&string.items, &buffered.items);
     assert_eq!(
         string.error, buffered.error,
         "StrInput and BufferedInput returned different scanner errors"
@@ -89,6 +95,7 @@ pub fn scan_with_options(input: &str, options: Options) {
         string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&string.items, &fallible.items);
     assert_eq!(
         string.error, fallible.error,
         "infallible and all-Ok fallible inputs returned different scanner errors"
@@ -133,6 +140,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         parser_non_comments, parser_without.items,
         "comment suppression changed non-comment parser events"
     );
+    metadata::assert_parser_details_eq(&parser_non_comments, &parser_without.items);
     assert_eq!(
         parser_with.error, parser_without.error,
         "comment suppression changed the parser error"
@@ -155,6 +163,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         scanner_non_comments, scanner_without.items,
         "comment suppression changed non-comment scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&scanner_non_comments, &scanner_without.items);
     assert_eq!(
         scanner_with.error, scanner_without.error,
         "comment suppression changed the scanner error"
@@ -189,6 +198,7 @@ fn check_load_matches_iterator<'input>(
         sink.items, expected.items,
         "`load` and the iterator emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&sink.items, &expected.items);
     assert_eq!(
         error, expected.error,
         "`load` and the iterator returned different parser errors"
@@ -212,7 +222,7 @@ fn check_load_matches_iterator<'input>(
         );
     } else {
         assert!(
-            matches!(repeated, [(Event::StreamEnd, _)]),
+            matches!(repeated, [(Event::StreamEnd { .. }, _)]),
             "expected only a repeated StreamEnd after a clean end: {repeated:?}"
         );
     }
@@ -249,7 +259,7 @@ fn validate_string_parser_trace(input: &str, trace: &Trace<(Event<'_>, Span)>) {
     let byte_offsets = byte_offsets(input);
     for (event, span) in &trace.items {
         validate_string_span(input, &byte_offsets, *span);
-        if let Event::Anchor(_, name) = event {
+        if let Event::Anchor { name, .. } = event {
             assert_eq!(
                 span.slice(input).and_then(|token| token.strip_prefix('&')),
                 Some(name.as_ref()),
@@ -350,13 +360,13 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     if complete || !events.is_empty() {
         assert!(
-            matches!(events.first(), Some((Event::StreamStart, _))),
+            matches!(events.first(), Some((Event::StreamStart { .. }, _))),
             "parser trace does not start with StreamStart"
         );
     }
     if complete {
         assert!(
-            matches!(events.last(), Some((Event::StreamEnd, _))),
+            matches!(events.last(), Some((Event::StreamEnd { .. }, _))),
             "successful parser trace does not end with StreamEnd"
         );
     }
@@ -367,8 +377,8 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
 
     for (index, (event, _)) in events.iter().enumerate() {
         match event {
-            Event::StreamStart => assert_eq!(index, 0, "duplicate StreamStart event"),
-            Event::StreamEnd => {
+            Event::StreamStart { .. } => assert_eq!(index, 0, "duplicate StreamStart event"),
+            Event::StreamEnd { .. } => {
                 assert!(complete, "StreamEnd preceded a parser error");
                 assert_eq!(index + 1, events.len(), "early StreamEnd event");
                 assert!(!document_open, "StreamEnd occurred inside a document");
@@ -377,45 +387,55 @@ fn validate_parser_structure(events: &[(Event<'_>, Span)], complete: bool) {
                     "StreamEnd occurred inside a collection"
                 );
             }
-            Event::DocumentStart(..) => {
+            Event::DocumentStart { .. } => {
                 assert!(!document_open, "nested DocumentStart event");
                 assert_eq!(collections, Vec::<Collection>::new());
                 document_open = true;
                 anchors.clear();
             }
-            Event::DocumentEnd => {
+            Event::DocumentEnd { .. } => {
                 assert!(document_open, "DocumentEnd without DocumentStart");
                 assert!(collections.is_empty(), "document ended inside a collection");
                 document_open = false;
             }
-            Event::SequenceStart(_, anchor, _) => {
+            Event::SequenceStart {
+                anchor_id: anchor, ..
+            } => {
                 assert!(document_open, "sequence outside a document");
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Sequence);
             }
-            Event::SequenceEnd => {
+            Event::SequenceEnd { .. } => {
                 assert_eq!(collections.pop(), Some(Collection::Sequence));
             }
-            Event::MappingStart(_, anchor, _) => {
+            Event::MappingStart {
+                anchor_id: anchor, ..
+            } => {
                 assert!(document_open, "mapping outside a document");
                 remember_anchor(&mut anchors, *anchor);
                 collections.push(Collection::Mapping);
             }
-            Event::MappingEnd => {
+            Event::MappingEnd { .. } => {
                 assert_eq!(collections.pop(), Some(Collection::Mapping));
             }
-            Event::Scalar(_, _, anchor, _) => {
+            Event::Scalar {
+                anchor_id: anchor, ..
+            } => {
                 assert!(document_open, "scalar outside a document");
                 remember_anchor(&mut anchors, *anchor);
             }
-            Event::Alias(anchor) => {
+            Event::Alias {
+                anchor_id: anchor, ..
+            } => {
                 assert!(document_open, "alias outside a document");
                 assert!(
                     anchors.contains(anchor),
                     "alias refers to an anchor not yet defined in this document"
                 );
             }
-            Event::Anchor(anchor, _) => {
+            Event::Anchor {
+                anchor_id: anchor, ..
+            } => {
                 assert!(document_open, "anchor metadata outside a document");
                 let (node, _) = &events[index - 1];
                 assert!(
@@ -454,7 +474,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.first().map(Token::token_type),
-                Some(TokenType::StreamStart)
+                Some(TokenType::StreamStart { .. })
             ),
             "scanner trace does not start with StreamStart"
         );
@@ -463,7 +483,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
         assert!(
             matches!(
                 tokens.last().map(Token::token_type),
-                Some(TokenType::StreamEnd)
+                Some(TokenType::StreamEnd { .. })
             ),
             "successful scanner trace does not end with StreamEnd"
         );
@@ -471,7 +491,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamStart))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamStart { .. }))
             .count(),
         usize::from(!tokens.is_empty()),
         "scanner emitted multiple StreamStart tokens"
@@ -479,7 +499,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
     assert_eq!(
         tokens
             .iter()
-            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd))
+            .filter(|token| matches!(token.token_type(), TokenType::StreamEnd { .. }))
             .count(),
         usize::from(complete),
         "scanner must emit StreamEnd exactly once on success and never before an error"
@@ -489,7 +509,7 @@ fn validate_scanner_bounds(tokens: &[Token<'_>], complete: bool) {
 pub fn is_comment_event(event: &Event<'_>) -> bool {
     #[cfg(feature = "comments")]
     {
-        matches!(event, Event::Comment(..))
+        matches!(event, Event::Comment { .. })
     }
     #[cfg(not(feature = "comments"))]
     {
@@ -501,7 +521,7 @@ pub fn is_comment_event(event: &Event<'_>) -> bool {
 pub fn is_comment_token(token: &TokenType<'_>) -> bool {
     #[cfg(feature = "comments")]
     {
-        matches!(token, TokenType::Comment(_))
+        matches!(token, TokenType::Comment { .. })
     }
     #[cfg(not(feature = "comments"))]
     {

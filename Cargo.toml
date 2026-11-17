@@ -19,18 +19,25 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bourumir-wyngs/granit-parser"
 
 rust-version = "1.81.0"
-version = "2.2.0"
+
+version = "3.0.0"
+
 exclude = [
   # Exclude the `yaml-test-suite` from the package. This removes the need to
   # add its license to the package.
   "/tests/yaml-test-suite",
   # These repository-only checks import the separate fuzz package, which Cargo omits.
   "/tests/fuzz_targets.rs",
+  # This independent consumer checks feature isolation in the repository's CI.
+  "/tests/api-contract",
   # We don't need the documents either.
   "/documents",
   # Benchmarks are internal tools
   "/tools/codspeed"
 ]
+
+[package.metadata.docs.rs]
+features = ["extended_details"]
 
 [features]
 default = ["error_messages", "std", "comments"]
@@ -39,6 +46,10 @@ comments = []
 error_messages = []
 std = []
 debug_prints = ["std"]
+# Retain optional block-header syntax, omitted-node flags, and document-end markers.
+extended_details = []
+# Opt in to core-output equality for tests, ignoring optional extended source details.
+test_equality = []
 
 [dependencies]
 arraydeque = { version = "0.5.1", default-features = false }
@@ -46,6 +57,8 @@ smallvec = {  version = ">=1.6.1, < 2.0.0" }
 
 [dev-dependencies]
 libtest-mimic = "0.8.2"
+# Cargo unifies this only for development targets, keeping normal library builds comparison-free.
+granit-parser = { path = ".", default-features = false, features = ["test_equality"] }
 
 [[test]]
 name = "yaml-test-suite"

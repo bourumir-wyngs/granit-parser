@@ -1,4 +1,6 @@
-use granit_parser::{options, Event, Parser, ScanError};
+#![cfg(feature = "extended_details")]
+
+use granit_parser::{options, Event, Parser, ScalarStyle, ScanError};
 
 const README: &str = include_str!("../README.md");
 
@@ -34,12 +36,49 @@ fn render_readme_example(yaml: &str) -> Result<String, ScanError> {
         let (event, span) = next?;
 
         match &event {
-            Event::Anchor(id, name) => {
+            Event::Anchor {
+                anchor_id: id,
+                name,
+                ..
+            } => {
                 lines.push(format!("anchor: id={id} name={name:?}"));
             }
-            Event::Alias(id) => lines.push(format!("alias: target id={id}")),
-            Event::UnresolvedAlias(name) => {
+            Event::Alias { anchor_id: id, .. } => lines.push(format!("alias: target id={id}")),
+            Event::UnresolvedAlias { name, .. } => {
                 lines.push(format!("undefined anchor: {name:?}"));
+            }
+            Event::Scalar { value, style, .. } => {
+                if let ScalarStyle::Plain { implicit, .. } = style {
+                    if value == "~" {
+                        lines.push(format!("plain scalar: value={value:?} implicit={implicit}"));
+                    }
+                }
+                if let Some(syntax) = style.block_syntax() {
+                    lines.push(format!(
+                        "block header: style={:?} text={:?} chars={:?} bytes={:?}",
+                        style.kind(),
+                        syntax.header_slice(&span, yaml),
+                        syntax.header_char_range(&span),
+                        syntax.header_byte_range(&span)
+                    ));
+                    lines.push(format!(
+                        "  chomping={:?} indentation_indicator={:?} content_indent={}",
+                        syntax.chomping, syntax.indentation_indicator, syntax.content_indent
+                    ));
+                    lines.push(format!(
+                        "  chomping indicator: chars={:?} bytes={:?}",
+                        syntax.chomping_char_range(&span),
+                        syntax.chomping_byte_range(&span)
+                    ));
+                    lines.push(format!(
+                        "  indentation indicator: chars={:?} bytes={:?}",
+                        syntax.indentation_char_range(&span),
+                        syntax.indentation_byte_range(&span)
+                    ));
+                }
+            }
+            Event::DocumentEnd { explicit, .. } => {
+                lines.push(format!("document end: explicit={explicit}"));
             }
             _ => {}
         }
@@ -79,7 +118,7 @@ fn minimal_example_output_matches_readme() {
     let yaml = extract_yaml_input(section);
     let expected = extract_expected_output(section)
         .lines()
-        .filter(|line| cfg!(feature = "comments") || !line.starts_with("Comment("))
+        .filter(|line| cfg!(feature = "comments") || !line.starts_with("Comment {"))
         .collect::<Vec<_>>()
         .join("\n");
     let actual =

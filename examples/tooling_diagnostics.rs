@@ -46,13 +46,15 @@ fn inspect_for_lint(yaml: &str) -> Result<usize, ScanError> {
         // Propagate genuine parse failures instead of treating a partial traversal as success.
         let (event, span) = next?;
         match event {
-            Event::DocumentStart(explicit, version) => {
+            Event::DocumentStart {
+                explicit, version, ..
+            } => {
                 // Version information already comes from DocumentStart; no directive prescan is
                 // needed for this purpose. None means no version was declared for this document.
                 // Reporting the version does not select a schema or convert scalar values.
                 println!("document start: explicit={explicit}, declared version={version:?}");
             }
-            Event::UnresolvedAlias(name) => {
+            Event::UnresolvedAlias { name, .. } => {
                 unresolved_count += 1;
                 // This span covers the complete *name token. String input supplies byte offsets,
                 // so slice() can recover its spelling from the SAME source used by the parser.
@@ -60,7 +62,7 @@ fn inspect_for_lint(yaml: &str) -> Result<usize, ScanError> {
                 // A later definition cannot repair this occurrence. If building structure, this
                 // event consumes a node slot just like a resolved alias; see event_walker.rs.
             }
-            Event::Scalar(value, ..) => {
+            Event::Scalar { value, .. } => {
                 // Seeing "later" in the sample output demonstrates that traversal continued past
                 // the unresolved alias. The value here is decoded scalar text, not raw source.
                 println!("scalar: {value:?}");
@@ -112,7 +114,7 @@ fn main() -> Result<(), ScanError> {
     let mut found_healthy = false;
     while let Some(next) = parser.next_event() {
         match next {
-            Ok((Event::Scalar(value, ..), span)) if value == "healthy" => {
+            Ok((Event::Scalar { value, .. }, span)) if value == "healthy" => {
                 found_healthy = true;
                 assert_eq!(span.start.line(), 3); // Position in the original input.
             }

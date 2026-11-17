@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScalarStyle, ScanError,
     Scanner, StrInput, StructureStyle, Tag,
@@ -307,7 +308,7 @@ fn strict_rejects_under_indented_quoted_continuations_in_block_context() {
                         );
                         let value = Parser::new_from_str(&yaml)
                             .filter_map(|result| match result.expect("valid relaxed input").0 {
-                                Event::Scalar(value, ..) => Some(value),
+                                Event::Scalar { value, .. } => Some(value),
                                 _ => None,
                             })
                             .last();
@@ -592,25 +593,25 @@ fn strict_flow_indentation_follows_dedents_and_document_boundaries() {
 fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
     // YAML 1.2.2 [112] discards the escaped break but retains each l-empty [70].
     // Empty lines may contain fewer spaces than the required flow prefix [69].
-    let expected = vec![
-        Event::StreamStart,
-        Event::DocumentStart(false, None),
-        Event::MappingStart(StructureStyle::Block, 0, None),
-        Event::Scalar("outer".into(), ScalarStyle::Plain, 0, None),
-        Event::MappingStart(StructureStyle::Block, 0, None),
-        Event::Scalar("key".into(), ScalarStyle::Plain, 0, None),
-        Event::Scalar(
+    let expected = [
+        Event::stream_start(),
+        Event::document_start(false, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
+        Event::new_scalar("outer".into(), ScalarStyle::plain(), 0, None),
+        Event::mapping_start(StructureStyle::Block, 0, None),
+        Event::new_scalar("key".into(), ScalarStyle::plain(), 0, None),
+        Event::new_scalar(
             "é\n字".into(),
-            ScalarStyle::DoubleQuoted,
+            ScalarStyle::double_quoted(),
             1,
             Some(Cow::Owned(Tag::new("!", "custom"))),
         ),
-        Event::Scalar("copy".into(), ScalarStyle::Plain, 0, None),
-        Event::Alias(1),
-        Event::MappingEnd,
-        Event::MappingEnd,
-        Event::DocumentEnd,
-        Event::StreamEnd,
+        Event::new_scalar("copy".into(), ScalarStyle::plain(), 0, None),
+        Event::alias(1),
+        Event::mapping_end(),
+        Event::mapping_end(),
+        support::document_end(false),
+        Event::stream_end(),
     ];
     for newline in ["\n", "\r\n"] {
         for empty_line in ["", " ", "   \t"] {
@@ -619,7 +620,7 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
             );
             for strict in [false, true] {
                 for result in events_with_inputs(&yaml, strict) {
-                    assert_eq!(
+                    support::assert_events_eq!(
                         result.unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
                         expected,
                         "strict={strict}, {yaml:?}"

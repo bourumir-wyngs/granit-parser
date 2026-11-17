@@ -29,17 +29,17 @@ fn outline(trace: &[Result<(Event<'_>, Span), ScanError>]) -> Vec<String> {
     trace
         .iter()
         .map(|entry| match entry {
-            Ok((Event::Scalar(value, ..), _)) => format!("scalar:{value}"),
+            Ok((Event::Scalar { value, .. }, _)) => format!("scalar:{value}"),
             #[cfg(feature = "comments")]
-            Ok((Event::Comment(value, ..), _)) => format!("comment:{value}"),
-            Ok((Event::StreamStart, _)) => "+STR".into(),
-            Ok((Event::StreamEnd, _)) => "-STR".into(),
-            Ok((Event::DocumentStart(..), _)) => "+DOC".into(),
-            Ok((Event::DocumentEnd, _)) => "-DOC".into(),
-            Ok((Event::SequenceStart(..), _)) => "+SEQ".into(),
-            Ok((Event::SequenceEnd, _)) => "-SEQ".into(),
-            Ok((Event::MappingStart(..), _)) => "+MAP".into(),
-            Ok((Event::MappingEnd, _)) => "-MAP".into(),
+            Ok((Event::Comment { value, .. }, _)) => format!("comment:{value}"),
+            Ok((Event::StreamStart { .. }, _)) => "+STR".into(),
+            Ok((Event::StreamEnd { .. }, _)) => "-STR".into(),
+            Ok((Event::DocumentStart { .. }, _)) => "+DOC".into(),
+            Ok((Event::DocumentEnd { .. }, _)) => "-DOC".into(),
+            Ok((Event::SequenceStart { .. }, _)) => "+SEQ".into(),
+            Ok((Event::SequenceEnd { .. }, _)) => "-SEQ".into(),
+            Ok((Event::MappingStart { .. }, _)) => "+MAP".into(),
+            Ok((Event::MappingEnd { .. }, _)) => "-MAP".into(),
             other => format!("{other:?}"),
         })
         .collect()
@@ -69,15 +69,17 @@ fn outer_key_remains_active_after_all_nested_candidates_are_removed() {
     for depth in [1, 2, 8, 9, 64, 255] {
         let source = format!("{}leaf{}: value\n", "[".repeat(depth), "]".repeat(depth));
         let events = parse_all_inputs(&source, Options::default());
-        assert!(matches!(events[2].0, Event::MappingStart(..)));
+        assert!(matches!(events[2].0, Event::MappingStart { .. }));
         assert!(events[3..3 + depth]
             .iter()
-            .all(|(event, _)| matches!(event, Event::SequenceStart(..))));
-        assert!(matches!(&events[3 + depth].0, Event::Scalar(value, ..) if value == "leaf"));
+            .all(|(event, _)| matches!(event, Event::SequenceStart { .. })));
+        assert!(matches!(&events[3 + depth].0, Event::Scalar { value, .. } if value == "leaf"));
         assert!(events[4 + depth..4 + 2 * depth]
             .iter()
-            .all(|(event, _)| matches!(event, Event::SequenceEnd)));
-        assert!(matches!(&events[4 + 2 * depth].0, Event::Scalar(value, ..) if value == "value"));
+            .all(|(event, _)| matches!(event, Event::SequenceEnd { .. })));
+        assert!(
+            matches!(&events[4 + 2 * depth].0, Event::Scalar { value, .. } if value == "value")
+        );
         assert_eq!(events[3].1.start, Marker::new(0, 1, 0));
         assert_eq!(events[3 + depth].1.byte_range(), Some(depth..depth + 4));
     }
@@ -110,7 +112,7 @@ fn key_length_limit_is_strictly_greater_than_character_count_not_byte_count() {
         let events = parse_all_inputs(&source, options);
         let (_, span) = events
             .iter()
-            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == key))
+            .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == key))
             .expect("the key at the character limit is accepted");
         assert_eq!(span.start, Marker::new(5, 2, 0));
         assert_eq!(span.end, Marker::new(9, 2, 4));
@@ -213,7 +215,7 @@ fn comments_and_document_markers_preserve_event_order() {
         );
         #[cfg(feature = "comments")]
         for entry in &trace {
-            if let Ok((Event::Comment(value, ..), span)) = entry {
+            if let Ok((Event::Comment { value, .. }, span)) = entry {
                 assert_eq!(span.slice(source), Some(format!("#{value}").as_str()));
             }
         }

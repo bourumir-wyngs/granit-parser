@@ -1,5 +1,6 @@
 #![cfg(not(feature = "comments"))]
 
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ParserStack,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
@@ -50,7 +51,7 @@ fn default_scanners_and_parsers_ignore_comments_for_all_input_backends() {
         assert_eq!(string, fallible, "{yaml:?}");
         assert!(string
             .iter()
-            .any(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "value")));
+            .any(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "value")));
 
         let string = Scanner::new(StrInput::new(yaml))
             .collect::<Result<Vec<_>, _>>()
@@ -66,7 +67,7 @@ fn default_scanners_and_parsers_ignore_comments_for_all_input_backends() {
         assert_eq!(string, buffered, "{yaml:?}");
         assert_eq!(string, fallible, "{yaml:?}");
         assert!(string.iter().any(|token| {
-            matches!(token.token_type(), TokenType::Scalar(_, value) if value == "value")
+            matches!(token.token_type(), TokenType::Scalar { value, .. } if value == "value")
         }));
     }
 }
@@ -119,14 +120,14 @@ fn ignored_unicode_comments_preserve_following_token_and_event_positions() {
         .unwrap();
     let token = tokens
         .iter()
-        .find(|token| matches!(token.token_type(), TokenType::Scalar(_, value) if value == "next"))
+        .find(|token| matches!(token.token_type(), TokenType::Scalar { value, .. } if value == "next"))
         .unwrap();
     let events = Parser::new_from_str(yaml)
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let (_, span) = events
         .iter()
-        .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "next"))
+        .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "next"))
         .unwrap();
     for span in [token.span(), *span] {
         assert_eq!(span.start.index(), character_offset);
@@ -146,7 +147,7 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
         .unwrap()
         .into_iter()
         .filter_map(|(event, _)| match event {
-            Event::Scalar(value, ..) => Some(value.into_owned()),
+            Event::Scalar { value, .. } => Some(value.into_owned()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -158,7 +159,7 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
         Parser::new_from_str("# header\nchild\n... # tail\n# after\n"),
         "child".into(),
     );
-    assert_eq!(
+    support::assert_events_eq!(
         stack
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
@@ -166,13 +167,13 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
             .map(|(event, _)| event)
             .collect::<Vec<_>>(),
         [
-            Event::Scalar("child".into(), ScalarStyle::Plain, 0, None),
-            Event::StreamStart,
-            Event::DocumentStart(false, None),
-            Event::Scalar("parent".into(), ScalarStyle::Plain, 0, None),
-            Event::DocumentEnd,
-            Event::StreamEnd,
-        ],
+            Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
+            Event::stream_start(),
+            Event::document_start(false, None),
+            Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
+            support::document_end(false),
+            Event::stream_end(),
+        ]
     );
 }
 
@@ -187,7 +188,7 @@ fn ignored_comments_preserve_empty_node_spans() {
         let events = parsed_events(yaml);
         let (_, span) = events
             .iter()
-            .find(|(event, _)| matches!(event, Event::Scalar(value, ..) if value == "~"))
+            .find(|(event, _)| matches!(event, Event::Scalar { value, .. } if value == "~"))
             .expect("comment-separated empty node should be emitted");
         assert_eq!(span.start, expected, "{yaml:?}");
         assert_eq!(span.end, expected, "{yaml:?}");
@@ -240,8 +241,12 @@ fn ignored_comments_preserve_collection_entry_order() {
         let values = events
             .iter()
             .filter_map(|(event, _)| match event {
-                Event::Scalar(value, ScalarStyle::Plain, ..) => Some(value.as_ref()),
-                Event::SequenceEnd => Some("<sequence end>"),
+                Event::Scalar {
+                    value,
+                    style: ScalarStyle::Plain { .. },
+                    ..
+                } => Some(value.as_ref()),
+                Event::SequenceEnd { .. } => Some("<sequence end>"),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -256,9 +261,12 @@ fn ignored_comments_preserve_complementary_node_properties() {
         let (anchor_id, tag) = events
             .iter()
             .find_map(|(event, _)| match event {
-                Event::Scalar(value, _, anchor_id, Some(tag)) if value == "value" => {
-                    Some((*anchor_id, tag.original()))
-                }
+                Event::Scalar {
+                    value,
+                    anchor_id,
+                    tag: Some(tag),
+                    ..
+                } if value == "value" => Some((*anchor_id, tag.original())),
                 _ => None,
             })
             .expect("comment-separated value should retain both node properties");
@@ -280,7 +288,7 @@ fn ignored_anchor_comments_preserve_aliases_and_self_reference() {
             .expect("comment-separated node should retain its anchor");
         assert!(
             events.iter().any(|(event, _)| {
-                matches!(event, Event::Alias(alias_id) if *alias_id == anchor_id)
+                matches!(event, Event::Alias { anchor_id: alias_id, .. } if *alias_id == anchor_id)
             }),
             "{yaml:?}"
         );

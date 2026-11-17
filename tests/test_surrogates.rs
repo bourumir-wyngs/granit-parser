@@ -5,7 +5,7 @@ fn test_valid_surrogate_pair() {
     let parser = Parser::new_from_str(r#""\uD834\uDD1E""#);
     let mut events = vec![];
     for event in parser.flatten() {
-        if event.0 == Event::StreamEnd {
+        if matches!(event.0, Event::StreamEnd { .. }) {
             break;
         }
         events.push(event.0);
@@ -14,7 +14,12 @@ fn test_valid_surrogate_pair() {
     // Check that we got a single Scalar event with the correct character
     let mut found = false;
     for ev in events {
-        if let Event::Scalar(val, _style, _, _) = ev {
+        if let Event::Scalar {
+            value: val,
+            style: _style,
+            ..
+        } = ev
+        {
             assert_eq!(val, "\u{1D11E}");
             found = true;
         }
@@ -32,7 +37,7 @@ fn test_unpaired_high_surrogate() {
                 err = Some(e);
                 break;
             }
-            Ok((Event::StreamEnd, _)) => break,
+            Ok((Event::StreamEnd { .. }, _)) => break,
             _ => {}
         }
     }
@@ -49,7 +54,7 @@ fn test_unpaired_low_surrogate() {
                 err = Some(e);
                 break;
             }
-            Ok((Event::StreamEnd, _)) => break,
+            Ok((Event::StreamEnd { .. }, _)) => break,
             _ => {}
         }
     }
@@ -66,7 +71,7 @@ fn test_reversed_surrogate_pair() {
                 err = Some(e);
                 break;
             }
-            Ok((Event::StreamEnd, _)) => break,
+            Ok((Event::StreamEnd { .. }, _)) => break,
             _ => {}
         }
     }
@@ -83,7 +88,7 @@ fn test_unpaired_high_surrogate_from_iter() {
                 err = Some(e);
                 break;
             }
-            Ok((Event::StreamEnd, _)) => break,
+            Ok((Event::StreamEnd { .. }, _)) => break,
             _ => {}
         }
     }

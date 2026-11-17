@@ -33,7 +33,7 @@
 //!
 //! for next in Parser::new_from_str(yaml) {
 //!     let (event, span) = next?;
-//!     if let Event::Comment(text, placement) = event {
+//!     if let Event::Comment { value: text, placement, .. } = event {
 //!         comments.push((
 //!             text.into_owned(),
 //!             placement,
@@ -88,11 +88,11 @@
 //!         assert_eq!(tag_span.slice(yaml), Some("!note"));
 //!     }
 //!     match event {
-//!         Event::Anchor(id, name) => {
+//!         Event::Anchor { anchor_id: id, name, .. } => {
 //!             assert_eq!(span.slice(yaml), Some("&msg"));
 //!             anchors.insert(id, (name, span));
 //!         }
-//!         Event::Alias(id) => {
+//!         Event::Alias { anchor_id: id, .. } => {
 //!             let (name, definition_span) = &anchors[&id];
 //!             assert_eq!(name, "msg");
 //!             assert_eq!(definition_span.slice(yaml), Some("&msg"));
@@ -146,6 +146,23 @@
 //! `Options::max_buffered_comment_events`, and `Input::may_contain_comments` are available only
 //! with this feature.
 //!
+//! #### `extended_details` (disabled by default)
+//! Adds block-scalar header syntax, the plain-scalar `implicit` flag, and the document-end
+//! `explicit` flag. Their fields, accessors, builders, and metadata capture are compiled out
+//! without the feature. Decoded values, event spans, and basic style classification are unchanged.
+//! `BlockScalarSyntax` and `Chomping` are public only with this feature.
+//!
+//! Basic constructors have the same signatures in either configuration. Synthetic block styles
+//! start with unknown syntax (`None`); opt-in `with_*` methods attach known metadata.
+//!
+//! #### `test_equality` (disabled by default)
+//! Enables `PartialEq` and `Eq` for parser output in regression tests. Equality ignores optional
+//! `extended_details` metadata: synthetic values may lack source information, and another
+//! dependency enabling its capture must not change comparisons. Tests of source syntax should
+//! compare those fields explicitly. This feature does not enable `extended_details`, hashing,
+//! or ordering. Classify variants with `matches!` and `{ .. }` in application code so future
+//! metadata fields do not alter those checks.
+//!
 //! #### `error_messages` (enabled by default)
 //! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and
 //! [`ScanError::info`]. Disabling this feature makes both render an empty string while retaining
@@ -184,6 +201,7 @@ mod macros;
 mod options;
 mod parser;
 mod parser_stack;
+mod scalar_style;
 mod scanner;
 
 pub use crate::error::{ErrorKind, InputIoError, ScanError};
@@ -194,13 +212,16 @@ pub use crate::parser::{
     Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
 pub use crate::parser_stack::{ParserStack, ReplayParser};
+pub use crate::scalar_style::ScalarKind;
+#[cfg(feature = "extended_details")]
+pub use crate::scalar_style::{BlockScalarSyntax, Chomping};
 #[cfg(feature = "comments")]
 pub use crate::scanner::{Comment, Placement};
 pub use crate::scanner::{Marker, ScalarStyle, Scanner, Span, Token, TokenType};
 
-// Keep every Rust example in the package README covered by `cargo test --doc` without duplicating
-// the README in the rendered crate-level documentation.
-#[cfg(doctest)]
+// The README demonstrates the opt-in metadata API. Test its examples with that feature enabled
+// without duplicating the README in the rendered crate-level documentation.
+#[cfg(all(doctest, feature = "extended_details"))]
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
 
@@ -229,3 +250,19 @@ mod readme_doctests {}
 /// let _ = <StrInput<'_> as Input>::may_contain_comments(&StrInput::new(""));
 /// ```
 mod comments_disabled_doctests {}
+
+// Verify that additional source-detail APIs are absent from ordinary builds.
+#[cfg(all(doctest, not(feature = "extended_details")))]
+/// ```compile_fail
+/// use granit_parser::BlockScalarSyntax;
+/// ```
+/// ```compile_fail
+/// use granit_parser::Chomping;
+/// ```
+/// ```compile_fail
+/// let _ = granit_parser::ScalarStyle::literal().block_syntax();
+/// ```
+/// ```compile_fail
+/// if let granit_parser::ScalarStyle::Plain { implicit, .. } = granit_parser::ScalarStyle::plain() {}
+/// ```
+mod extended_details_disabled_doctests {}

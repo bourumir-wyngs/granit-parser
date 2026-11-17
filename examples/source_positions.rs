@@ -103,7 +103,7 @@ fn main() -> Result<(), ScanError> {
 
     for next in Parser::new_from_str(yaml) {
         let (event, span) = next?;
-        let Event::Scalar(value, ..) = event else {
+        let Event::Scalar { value, .. } = event else {
             continue;
         };
 
@@ -176,7 +176,7 @@ fn main() -> Result<(), ScanError> {
     // let your application track source positions while decoding the input.
     for next in Parser::new_from_iter(yaml.chars()) {
         let (event, span) = next?;
-        if let Event::Scalar(..) = event {
+        if let Event::Scalar { .. } = event {
             assert_eq!(span.byte_range(), None);
             assert_eq!(positions.utf16_position(span.start), None);
         }

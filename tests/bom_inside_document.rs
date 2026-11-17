@@ -7,7 +7,7 @@ fn scalars(yaml: &str, options: Options) -> [(&'static str, Result<Vec<String>, 
     ) -> Result<Vec<String>, ScanError> {
         let mut values = Vec::new();
         for event in events {
-            if let (Event::Scalar(value, ..), _) = event? {
+            if let (Event::Scalar { value, .. }, _) = event? {
                 values.push(value.into_owned());
             }
         }

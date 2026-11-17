@@ -28,30 +28,10 @@ use crate::{
     Options,
 };
 
-/// The source style used for a YAML scalar.
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash, PartialOrd, Ord)]
-pub enum ScalarStyle {
-    /// A YAML plain scalar.
-    Plain,
-    /// A YAML single quoted scalar.
-    SingleQuoted,
-    /// A YAML double quoted scalar.
-    DoubleQuoted,
-
-    /// A YAML literal block (`|` block).
-    ///
-    /// See [8.1.2](https://yaml.org/spec/1.2.2/#812-literal-style).
-    /// In literal blocks, any indented character is content, including white space characters.
-    /// There is no way to escape characters, nor to break a long line.
-    Literal,
-    /// A YAML folded block (`>` block).
-    ///
-    /// See [8.1.3](https://yaml.org/spec/1.2.2/#813-folded-style).
-    /// In folded blocks, any indented character is content, including white space characters.
-    /// There is no way to escape characters. Content is subject to line folding, allowing breaking
-    /// long lines.
-    Folded,
-}
+#[cfg(feature = "extended_details")]
+use crate::scalar_style::BlockScalarSyntax;
+use crate::scalar_style::Chomping;
+pub use crate::scalar_style::ScalarStyle;
 
 /// Offset information for a [`Marker`].
 ///
@@ -375,7 +355,7 @@ impl Span {
 /// # Last
 /// ```
 #[non_exhaustive]
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Eq)]
 #[cfg(feature = "comments")]
 pub enum Placement {
     /// An own-line comment immediately before another YAML token.
@@ -472,91 +452,319 @@ impl AsRef<str> for Comment<'_> {
 }
 
 /// The contents of a scanner token.
+///
+/// Use `matches!`, `if let`, or `match` with `{ .. }` to inspect a token variant. Every
+/// variant is non-exhaustive, even if it currently has no fields, so the library can add
+/// metadata without changing those patterns. A complete match also needs a fallback arm.
+/// Normal builds provide no whole-token equality; the opt-in `test_equality` feature enables
+/// equality for tests. It compares token variants and payloads, but scalar styles compare only
+/// their notation category, ignoring optional `extended_details` source metadata. This keeps
+/// equality independent of whether a dependency enables metadata capture; compare syntax
+/// fields explicitly when they matter. Constructors support synthetic token streams and
+/// scanner adapters.
+///
+/// ```
+/// use granit_parser::{Scanner, StrInput, TokenType};
+/// let token = Scanner::new(StrInput::new("value")).next().unwrap().unwrap();
+/// assert!(matches!(token.token_type(), TokenType::StreamStart { .. }));
+/// ```
+///
+#[cfg_attr(
+    not(feature = "test_equality"),
+    doc = r#"
+```compile_fail,E0369
+use granit_parser::TokenType;
+fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
+    left == right
+}
+```
+"#
+)]
+///
+/// ```
+/// use granit_parser::TokenType;
+/// let token = TokenType::alias("name".into());
+/// assert!(matches!(token, TokenType::Alias { name, .. } if name == "name"));
+/// ```
 #[non_exhaustive]
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub enum TokenType<'input> {
-    /// The start of the stream. Sent first, before even [`TokenType::DocumentStart`].
+    /// Start of the stream.
+    #[non_exhaustive]
     StreamStart,
-    /// The end of the stream, EOF.
+    /// End of the stream.
+    #[non_exhaustive]
     StreamEnd,
     /// A YAML version directive.
-    VersionDirective(
+    #[non_exhaustive]
+    VersionDirective {
         /// Major version number.
-        u32,
+        major: u32,
         /// Minor version number.
-        u32,
-    ),
-    /// A YAML tag directive (e.g.: `!!str`, `!foo!bar`, ...).
-    TagDirective(
-        /// Tag directive handle, such as `!` or `!app!`.
-        Cow<'input, str>,
-        /// Tag URI prefix associated with the handle.
-        Cow<'input, str>,
-    ),
-    /// The start of a YAML document (`---`).
+        minor: u32,
+    },
+    /// A YAML tag directive.
+    #[non_exhaustive]
+    TagDirective {
+        /// Tag handle.
+        handle: Cow<'input, str>,
+        /// Tag URI prefix.
+        prefix: Cow<'input, str>,
+    },
+    /// Explicit document start marker (`---`).
+    #[non_exhaustive]
     DocumentStart,
-    /// The end of a YAML document (`...`).
+    /// Explicit document end marker (`...`).
+    #[non_exhaustive]
     DocumentEnd,
-    /// The start of a sequence block.
-    ///
-    /// Sequence blocks are arrays starting with a `-`.
+    /// Start of a block sequence.
+    #[non_exhaustive]
     BlockSequenceStart,
-    /// The start of a block mapping.
-    ///
-    /// Block mappings are key-value collections written with `key: value` entries.
+    /// Start of a block mapping.
+    #[non_exhaustive]
     BlockMappingStart,
-    /// End of the corresponding `BlockSequenceStart` or `BlockMappingStart`.
+    /// End of a block collection.
+    #[non_exhaustive]
     BlockEnd,
-    /// Start of an inline sequence (`[ a, b ]`).
+    /// Opening `[` of a flow sequence.
+    #[non_exhaustive]
     FlowSequenceStart,
-    /// End of an inline sequence.
+    /// Closing `]` of a flow sequence.
+    #[non_exhaustive]
     FlowSequenceEnd,
-    /// Start of an inline mapping (`{ a: b, c: d }`).
+    /// Opening `{` of a flow mapping.
+    #[non_exhaustive]
     FlowMappingStart,
-    /// End of an inline mapping.
+    /// Closing `}` of a flow mapping.
+    #[non_exhaustive]
     FlowMappingEnd,
-    /// An entry in a block sequence (see [`TokenType::BlockSequenceStart`]).
+    /// Block sequence entry indicator.
+    #[non_exhaustive]
     BlockEntry,
-    /// An entry in a flow sequence (see [`TokenType::FlowSequenceStart`]).
+    /// Flow collection entry separator.
+    #[non_exhaustive]
     FlowEntry,
-    /// A key in a mapping.
+    /// Mapping key indicator.
+    #[non_exhaustive]
     Key,
-    /// A value in a mapping.
+    /// Mapping value indicator.
+    #[non_exhaustive]
     Value,
-    /// A reference to a previously defined anchor.
-    Alias(Cow<'input, str>),
-    /// A YAML anchor definition introduced by `&`.
-    Anchor(Cow<'input, str>),
-    /// A YAML tag (starting with bangs `!`).
-    Tag(
-        /// The handle of the tag.
-        Cow<'input, str>,
-        /// The suffix of the tag.
-        Cow<'input, str>,
-    ),
-    /// A regular YAML scalar.
-    Scalar(ScalarStyle, Cow<'input, str>),
-    /// A YAML source comment.
-    ///
-    /// The token payload carries the raw text exactly after `#` and an initial [`Placement`] hint.
-    /// The companion [`Token`] span covers the whole source comment, including `#` and excluding the
-    /// line break.
+    /// Alias name without the leading `*`.
+    #[non_exhaustive]
+    Alias {
+        /// Original name without an indicator.
+        name: Cow<'input, str>,
+    },
+    /// Anchor name without the leading `&`.
+    #[non_exhaustive]
+    Anchor {
+        /// Original name without an indicator.
+        name: Cow<'input, str>,
+    },
+    /// A YAML tag.
+    #[non_exhaustive]
+    Tag {
+        /// Tag handle.
+        handle: Cow<'input, str>,
+        /// Tag suffix.
+        suffix: Cow<'input, str>,
+    },
+    /// A decoded YAML scalar and its source syntax.
+    #[non_exhaustive]
+    Scalar {
+        /// Scalar source syntax.
+        style: ScalarStyle,
+        /// Decoded scalar value.
+        value: Cow<'input, str>,
+    },
+    /// A source comment, including its placement hint.
     #[cfg(feature = "comments")]
-    Comment(
+    #[non_exhaustive]
+    Comment {
         /// Captured comment metadata.
-        Comment<'input>,
-    ),
-    /// A reserved YAML directive.
-    ReservedDirective(
-        /// Directive name.
-        String,
-        /// Directive parameters, split on YAML whitespace.
-        Vec<String>,
-    ),
+        comment: Comment<'input>,
+    },
+    /// A reserved directive and its whitespace-separated parameters.
+    #[non_exhaustive]
+    ReservedDirective {
+        /// Original name without an indicator.
+        name: String,
+        /// Directive parameters split on YAML whitespace.
+        parameters: Vec<String>,
+    },
+}
+
+impl<'input> TokenType<'input> {
+    /// Return a [`Self::StreamStart`] token payload.
+    #[must_use]
+    pub const fn stream_start() -> Self {
+        Self::StreamStart
+    }
+
+    /// Return a [`Self::StreamEnd`] token payload.
+    #[must_use]
+    pub const fn stream_end() -> Self {
+        Self::StreamEnd
+    }
+
+    /// Return a [`Self::DocumentStart`] token payload.
+    #[must_use]
+    pub const fn document_start() -> Self {
+        Self::DocumentStart
+    }
+
+    /// Return a [`Self::DocumentEnd`] token payload.
+    #[must_use]
+    pub const fn document_end() -> Self {
+        Self::DocumentEnd
+    }
+
+    /// Return a [`Self::BlockSequenceStart`] token payload.
+    #[must_use]
+    pub const fn block_sequence_start() -> Self {
+        Self::BlockSequenceStart
+    }
+
+    /// Return a [`Self::BlockMappingStart`] token payload.
+    #[must_use]
+    pub const fn block_mapping_start() -> Self {
+        Self::BlockMappingStart
+    }
+
+    /// Return a [`Self::BlockEnd`] token payload.
+    #[must_use]
+    pub const fn block_end() -> Self {
+        Self::BlockEnd
+    }
+
+    /// Return a [`Self::FlowSequenceStart`] token payload.
+    #[must_use]
+    pub const fn flow_sequence_start() -> Self {
+        Self::FlowSequenceStart
+    }
+
+    /// Return a [`Self::FlowSequenceEnd`] token payload.
+    #[must_use]
+    pub const fn flow_sequence_end() -> Self {
+        Self::FlowSequenceEnd
+    }
+
+    /// Return a [`Self::FlowMappingStart`] token payload.
+    #[must_use]
+    pub const fn flow_mapping_start() -> Self {
+        Self::FlowMappingStart
+    }
+
+    /// Return a [`Self::FlowMappingEnd`] token payload.
+    #[must_use]
+    pub const fn flow_mapping_end() -> Self {
+        Self::FlowMappingEnd
+    }
+
+    /// Return a [`Self::BlockEntry`] token payload.
+    #[must_use]
+    pub const fn block_entry() -> Self {
+        Self::BlockEntry
+    }
+
+    /// Return a [`Self::FlowEntry`] token payload.
+    #[must_use]
+    pub const fn flow_entry() -> Self {
+        Self::FlowEntry
+    }
+
+    /// Return a [`Self::Key`] token payload.
+    #[must_use]
+    pub const fn key() -> Self {
+        Self::Key
+    }
+
+    /// Return a [`Self::Value`] token payload.
+    #[must_use]
+    pub const fn value() -> Self {
+        Self::Value
+    }
+
+    /// Return a [`Self::VersionDirective`] token payload.
+    ///
+    /// * `major`: Major version number.
+    /// * `minor`: Minor version number.
+    #[must_use]
+    pub fn version_directive(major: u32, minor: u32) -> Self {
+        Self::VersionDirective { major, minor }
+    }
+
+    /// Return a [`Self::TagDirective`] token payload.
+    ///
+    /// * `handle`: Tag handle.
+    /// * `prefix`: Tag URI prefix.
+    #[must_use]
+    pub fn tag_directive(handle: Cow<'input, str>, prefix: Cow<'input, str>) -> Self {
+        Self::TagDirective { handle, prefix }
+    }
+
+    /// Return a [`Self::Alias`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    #[must_use]
+    pub fn alias(name: Cow<'input, str>) -> Self {
+        Self::Alias { name }
+    }
+
+    /// Return a [`Self::Anchor`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    #[must_use]
+    pub fn anchor(name: Cow<'input, str>) -> Self {
+        Self::Anchor { name }
+    }
+
+    /// Return a [`Self::Tag`] token payload.
+    ///
+    /// * `handle`: Tag handle.
+    /// * `suffix`: Tag suffix.
+    #[must_use]
+    pub fn tag(handle: Cow<'input, str>, suffix: Cow<'input, str>) -> Self {
+        Self::Tag { handle, suffix }
+    }
+
+    /// Return a [`Self::Scalar`] token payload.
+    ///
+    /// * `style`: Scalar source syntax.
+    /// * `value`: Decoded scalar value.
+    #[must_use]
+    pub fn scalar(style: ScalarStyle, value: Cow<'input, str>) -> Self {
+        Self::Scalar { style, value }
+    }
+
+    /// Return a [`Self::Comment`] token payload.
+    ///
+    /// * `comment`: Captured comment metadata.
+    #[cfg(feature = "comments")]
+    #[must_use]
+    pub fn comment(comment: Comment<'input>) -> Self {
+        Self::Comment { comment }
+    }
+
+    /// Return a [`Self::ReservedDirective`] token payload.
+    ///
+    /// * `name`: Original name without an indicator.
+    /// * `parameters`: Directive parameters split on YAML whitespace.
+    #[must_use]
+    pub fn reserved_directive(name: String, parameters: Vec<String>) -> Self {
+        Self::ReservedDirective { name, parameters }
+    }
 }
 
 /// A scanner token.
-#[derive(Clone, PartialEq, Debug, Eq)]
+///
+/// With `test_equality`, equality compares the span and token payload. Like [`TokenType`], it
+/// ignores optional `extended_details` metadata; optional byte coordinates are also ignored
+/// by [`Span`] equality so tokens can be compared across input backends.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub struct Token<'input>(Span, TokenType<'input>);
 
 impl<'input> Token<'input> {
@@ -588,7 +796,8 @@ impl<'input> Token<'input> {
 /// Token payload used in the scanner's internal queue.
 ///
 /// Public [`Token`] values are reconstructed when the scanner emits them.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub(crate) enum QueuedTokenType<'input> {
     StreamStart,
     StreamEnd,
@@ -621,8 +830,8 @@ impl<'input> QueuedTokenType<'input> {
         match self {
             Self::StreamStart => TokenType::StreamStart,
             Self::StreamEnd => TokenType::StreamEnd,
-            Self::VersionDirective(major, minor) => TokenType::VersionDirective(major, minor),
-            Self::TagDirective(handle, prefix) => TokenType::TagDirective(handle, prefix),
+            Self::VersionDirective(major, minor) => TokenType::VersionDirective { major, minor },
+            Self::TagDirective(handle, prefix) => TokenType::TagDirective { handle, prefix },
             Self::DocumentStart => TokenType::DocumentStart,
             Self::DocumentEnd => TokenType::DocumentEnd,
             Self::BlockSequenceStart => TokenType::BlockSequenceStart,
@@ -636,13 +845,16 @@ impl<'input> QueuedTokenType<'input> {
             Self::FlowEntry => TokenType::FlowEntry,
             Self::Key => TokenType::Key,
             Self::Value => TokenType::Value,
-            Self::Alias(name) => TokenType::Alias(name),
-            Self::Anchor(name) => TokenType::Anchor(name),
-            Self::Tag(handle, suffix) => TokenType::Tag(handle, suffix),
-            Self::Scalar(style, value) => TokenType::Scalar(style, value),
+            Self::Alias(name) => TokenType::Alias { name },
+            Self::Anchor(name) => TokenType::Anchor { name },
+            Self::Tag(handle, suffix) => TokenType::Tag { handle, suffix },
+            Self::Scalar(style, value) => TokenType::Scalar { style, value },
             #[cfg(feature = "comments")]
-            Self::Comment(comment) => TokenType::Comment(comment),
-            Self::ReservedDirective(name, params) => TokenType::ReservedDirective(name, params),
+            Self::Comment(comment) => TokenType::Comment { comment },
+            Self::ReservedDirective(name, params) => TokenType::ReservedDirective {
+                name,
+                parameters: params,
+            },
         }
     }
 }
@@ -652,8 +864,8 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
         match token {
             TokenType::StreamStart => Self::StreamStart,
             TokenType::StreamEnd => Self::StreamEnd,
-            TokenType::VersionDirective(major, minor) => Self::VersionDirective(major, minor),
-            TokenType::TagDirective(handle, prefix) => Self::TagDirective(handle, prefix),
+            TokenType::VersionDirective { major, minor } => Self::VersionDirective(major, minor),
+            TokenType::TagDirective { handle, prefix } => Self::TagDirective(handle, prefix),
             TokenType::DocumentStart => Self::DocumentStart,
             TokenType::DocumentEnd => Self::DocumentEnd,
             TokenType::BlockSequenceStart => Self::BlockSequenceStart,
@@ -667,19 +879,23 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
             TokenType::FlowEntry => Self::FlowEntry,
             TokenType::Key => Self::Key,
             TokenType::Value => Self::Value,
-            TokenType::Alias(name) => Self::Alias(name),
-            TokenType::Anchor(name) => Self::Anchor(name),
-            TokenType::Tag(handle, suffix) => Self::Tag(handle, suffix),
-            TokenType::Scalar(style, value) => Self::Scalar(style, value),
+            TokenType::Alias { name } => Self::Alias(name),
+            TokenType::Anchor { name } => Self::Anchor(name),
+            TokenType::Tag { handle, suffix } => Self::Tag(handle, suffix),
+            TokenType::Scalar { style, value } => Self::Scalar(style, value),
             #[cfg(feature = "comments")]
-            TokenType::Comment(comment) => Self::Comment(comment),
-            TokenType::ReservedDirective(name, params) => Self::ReservedDirective(name, params),
+            TokenType::Comment { comment } => Self::Comment(comment),
+            TokenType::ReservedDirective {
+                name,
+                parameters: params,
+            } => Self::ReservedDirective(name, params),
         }
     }
 }
 
 /// A compact token stored by the scanner before it is emitted publicly.
-#[derive(Clone, PartialEq, Debug, Eq)]
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenType<'input>);
 
 impl<'input> QueuedToken<'input> {
@@ -2488,7 +2704,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
                 Token(
                     Span::new(start_mark, self.mark),
-                    TokenType::ReservedDirective(name, params),
+                    TokenType::ReservedDirective {
+                        name,
+                        parameters: params,
+                    },
                 )
             }
         };
@@ -2532,7 +2751,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         Ok(Token(
             Span::new(*mark, self.mark),
-            TokenType::VersionDirective(major, minor),
+            TokenType::VersionDirective { major, minor },
         ))
     }
 
@@ -2662,7 +2881,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if self.input.next_is_blank_or_breakz() {
             Ok(Token(
                 Span::new(*mark, self.mark),
-                TokenType::TagDirective(handle, prefix),
+                TokenType::TagDirective { handle, prefix },
             ))
         } else {
             Err(ScanError::from_kind(
@@ -2733,7 +2952,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // delimiter follows.
             Ok(Token(
                 Span::new(start_mark, self.mark),
-                TokenType::Tag(handle, suffix),
+                TokenType::Tag { handle, suffix },
             ))
         } else {
             Err(ScanError::from_kind(
@@ -2823,7 +3042,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             // delimiter follows.
             Ok(Token(
                 Span::new(*start_mark, self.mark),
-                TokenType::Tag(handle.into(), suffix.into()),
+                TokenType::Tag {
+                    handle: handle.into(),
+                    suffix: suffix.into(),
+                },
             ))
         } else {
             Err(ScanError::from_kind(
@@ -3152,9 +3374,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             };
 
             let tok = if alias {
-                TokenType::Alias(cow)
+                TokenType::Alias { name: cow }
             } else {
-                TokenType::Anchor(cow)
+                TokenType::Anchor { name: cow }
             };
             return Ok(Token(Span::new(start_mark, self.mark), tok));
         }
@@ -3173,9 +3395,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let tok = if alias {
-            TokenType::Alias(string.into())
+            TokenType::Alias {
+                name: string.into(),
+            }
         } else {
-            TokenType::Anchor(string.into())
+            TokenType::Anchor {
+                name: string.into(),
+            }
         };
         Ok(Token(Span::new(start_mark, self.mark), tok))
     }
@@ -3196,7 +3422,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         self.skip_non_blank();
         let end_mark = self.mark;
 
-        if tok == TokenType::FlowMappingStart {
+        if matches!(tok, TokenType::FlowMappingStart) {
             self.flow_mapping_started.push(true);
         } else {
             self.flow_mapping_started.push(false);
@@ -3395,16 +3621,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     #[allow(clippy::too_many_lines)]
     fn scan_block_scalar(&mut self, literal: bool) -> Result<Token<'input>, ScanError> {
         let start_mark = self.mark;
+        #[cfg(feature = "extended_details")]
+        let header_start = start_mark;
+        #[cfg(feature = "extended_details")]
+        let mut digit_first = false;
         let mut chomping = Chomping::Clip;
-        let mut increment: usize = 0;
+        let mut increment: u8 = 0;
         let mut indent: usize = 0;
         let mut trailing_blank: bool;
         let mut leading_blank: bool = false;
-        let style = if literal {
-            ScalarStyle::Literal
-        } else {
-            ScalarStyle::Folded
-        };
 
         let mut string = String::new();
         let mut leading_break = false;
@@ -3430,7 +3655,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                         ErrorKind::ZeroBlockScalarIndent,
                     ));
                 }
-                increment = (self.input.peek() as usize) - ('0' as usize);
+                increment = (self.input.peek() as u8) - b'0';
                 self.skip_non_blank();
             }
         } else if self.input.next_is_digit() {
@@ -3441,10 +3666,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 ));
             }
 
-            increment = (self.input.peek() as usize) - ('0' as usize);
+            increment = (self.input.peek() as u8) - b'0';
             self.skip_non_blank();
             self.input.lookahead(1);
             if self.input.peek() == '+' || self.input.peek() == '-' {
+                #[cfg(feature = "extended_details")]
+                {
+                    digit_first = true;
+                }
                 if self.input.peek() == '+' {
                     chomping = Chomping::Keep;
                 } else {
@@ -3483,9 +3712,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         if increment > 0 {
             indent = if self.indent >= 0 {
-                (self.indent + increment as isize) as usize
+                (self.indent + isize::from(increment)) as usize
             } else {
-                increment
+                usize::from(increment)
             }
         }
 
@@ -3496,6 +3725,26 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_block_scalar_indent(indent, &mut trailing_breaks);
         }
 
+        // Without a header line break there are no content lines from which to infer
+        // indentation. The scanner's cursor is still on the header (possibly after a
+        // comment), so its column must not become the reported content indentation.
+        #[cfg(feature = "extended_details")]
+        let syntax = {
+            let content_indent = if increment == 0 && self.mark.line() == header_start.line() {
+                (self.indent + 1).max(0) as usize
+            } else {
+                indent
+            };
+            BlockScalarSyntax::new(
+                chomping,
+                (increment > 0).then_some(increment),
+                content_indent,
+            )
+            .map(|mut syntax| {
+                syntax.digit_first = digit_first;
+                syntax
+            })
+        };
         self.ensure_current_char_is_printable()?;
 
         // We have an end-of-stream with no content, e.g.:
@@ -3523,9 +3772,19 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 Chomping::Keep => "\n".repeat(trailing_breaks),
             };
 
+            let style = if literal {
+                ScalarStyle::literal()
+            } else {
+                ScalarStyle::folded()
+            };
+            #[cfg(feature = "extended_details")]
+            let style = syntax.map_or(style, |syntax| style.with_block_syntax(syntax));
             return Ok(Token(
                 Span::new(start_mark, self.mark),
-                TokenType::Scalar(style, contents.into()),
+                TokenType::Scalar {
+                    style,
+                    value: contents.into(),
+                },
             ));
         }
 
@@ -3548,6 +3807,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let start_mark = self.mark;
+        #[cfg(feature = "extended_details")]
+        let syntax = syntax.and_then(|syntax| {
+            let header_chars_before_span = start_mark.index() - header_start.index();
+            let header_bytes_before_span = start_mark
+                .byte_offset()
+                .zip(header_start.byte_offset())
+                .map_or(0, |(body, header)| body - header);
+            syntax.with_header_offsets(header_chars_before_span, header_bytes_before_span)
+        });
         while self.mark.col == indent && !self.input.next_is_z() {
             self.ensure_current_char_is_printable()?;
 
@@ -3633,7 +3901,20 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             Span::new(start_mark, self.mark).with_indent(Some(indent))
         };
 
-        Ok(Token(span, TokenType::Scalar(style, string.into())))
+        let style = if literal {
+            ScalarStyle::literal()
+        } else {
+            ScalarStyle::folded()
+        };
+        #[cfg(feature = "extended_details")]
+        let style = syntax.map_or(style, |syntax| style.with_block_syntax(syntax));
+        Ok(Token(
+            span,
+            TokenType::Scalar {
+                style,
+                value: string.into(),
+            },
+        ))
     }
 
     /// Retrieve the contents of the line, parsing it as a block scalar.
@@ -3998,7 +4279,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         Ok(Token(
             Span::new(start_mark, end_mark),
-            TokenType::Scalar(style, contents),
+            TokenType::Scalar {
+                style,
+                value: contents,
+            },
         ))
     }
 
@@ -4451,7 +4735,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
             Ok(Token(
                 Span::new(start_mark, end_mark),
-                TokenType::Scalar(ScalarStyle::Plain, contents),
+                TokenType::Scalar {
+                    style: ScalarStyle::plain(),
+                    value: contents,
+                },
             ))
         } else {
             // `fetch_plain_scalar` must absolutely consume at least one byte. Otherwise,
@@ -4872,19 +5159,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     }
 }
 
-/// Chomping, how final line breaks and trailing empty lines are interpreted.
-///
-/// See YAML spec 8.1.1.2.
-#[derive(PartialEq, Eq)]
-enum Chomping {
-    /// The final line break and any trailing empty lines are excluded.
-    Strip,
-    /// The final line break is preserved, but trailing empty lines are excluded.
-    Clip,
-    /// The final line break and trailing empty lines are included.
-    Keep,
-}
-
 #[cfg(test)]
 mod test {
     use alloc::{
@@ -4947,7 +5221,7 @@ mod test {
         assert_eq!(token.0.start.line(), 6);
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar(_, ref value) if value == "healthy"
+            TokenType::Scalar { style: _, ref value } if value == "healthy"
         ));
     }
 
@@ -4988,7 +5262,7 @@ mod test {
         );
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar(_, ref value) if value == "second"
+            TokenType::Scalar { style: _, ref value } if value == "second"
         ));
     }
 
@@ -5237,7 +5511,7 @@ mod test {
         let token = scanner.next_token().unwrap().unwrap();
         assert!(matches!(
             token.1,
-            TokenType::Scalar(_, ref value) if value == "start"
+            TokenType::Scalar { style: _, ref value } if value == "start"
         ));
         assert!(
             read.get() < total_chars,
@@ -5257,9 +5531,13 @@ mod test {
         let scalar = scanner
             .find_map(
                 |token| match token.expect("valid YAML should scan without errors") {
-                    Token(_, TokenType::Scalar(ScalarStyle::Literal, value)) => {
-                        Some(value.into_owned())
-                    }
+                    Token(
+                        _,
+                        TokenType::Scalar {
+                            style: ScalarStyle::Literal { .. },
+                            value,
+                        },
+                    ) => Some(value.into_owned()),
                     _ => None,
                 },
             )
@@ -5275,9 +5553,13 @@ mod test {
         let scalar = scanner
             .find_map(
                 |token| match token.expect("valid YAML should scan without errors") {
-                    Token(_, TokenType::Scalar(ScalarStyle::Plain, value)) => {
-                        Some(value.into_owned())
-                    }
+                    Token(
+                        _,
+                        TokenType::Scalar {
+                            style: ScalarStyle::Plain { .. },
+                            value,
+                        },
+                    ) => Some(value.into_owned()),
                     _ => None,
                 },
             )
@@ -5363,7 +5645,9 @@ mod test {
         let token = scanner.scan_comment_token().unwrap();
 
         assert!(scanner.leading_whitespace);
-        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " comment"));
+        assert!(
+            matches!(token.1, TokenType::Comment { ref comment } if comment.text == " comment")
+        );
 
         let mut scanner = Scanner::new(BufferedInput::new("# streaming\n".chars()));
         scanner.input.lookahead(1);
@@ -5371,7 +5655,9 @@ mod test {
         let token = scanner.scan_comment_token().unwrap();
 
         assert!(scanner.leading_whitespace);
-        assert!(matches!(token.1, TokenType::Comment(ref comment) if comment.text == " streaming"));
+        assert!(
+            matches!(token.1, TokenType::Comment { ref comment } if comment.text == " streaming")
+        );
     }
 
     #[test]
@@ -5383,7 +5669,7 @@ mod test {
 
         let token = scanner.scan_comment_token().unwrap();
 
-        assert!(matches!(token.1, TokenType::Comment(ref comment)
+        assert!(matches!(token.1, TokenType::Comment { ref comment }
             if matches!(comment.text, Cow::Owned(ref text) if text == " sliced")));
     }
 
@@ -5412,10 +5698,10 @@ mod test {
         #[cfg(feature = "comments")]
         assert!(tokens
             .iter()
-            .all(|token| !matches!(token.1, TokenType::Comment(_))));
+            .all(|token| !matches!(token.1, TokenType::Comment { comment: _ })));
         assert!(tokens.iter().any(|token| matches!(
             token.1,
-            TokenType::Scalar(ScalarStyle::Plain, ref text) if text == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { .. }, value: ref text } if text == "value"
         )));
     }
 
@@ -5425,10 +5711,13 @@ mod test {
         let tokens = [
             Token(span, TokenType::StreamStart),
             Token(span, TokenType::StreamEnd),
-            Token(span, TokenType::VersionDirective(1, 2)),
+            Token(span, TokenType::VersionDirective { major: 1, minor: 2 }),
             Token(
                 span,
-                TokenType::TagDirective(Cow::Borrowed("!app!"), Cow::Borrowed("tag:app.example,")),
+                TokenType::TagDirective {
+                    handle: Cow::Borrowed("!app!"),
+                    prefix: Cow::Borrowed("tag:app.example,"),
+                },
             ),
             Token(span, TokenType::DocumentStart),
             Token(span, TokenType::DocumentEnd),
@@ -5443,29 +5732,46 @@ mod test {
             Token(span, TokenType::FlowEntry),
             Token(span, TokenType::Key),
             Token(span, TokenType::Value),
-            Token(span, TokenType::Alias(Cow::Borrowed("alias"))),
-            Token(span, TokenType::Anchor(Cow::Borrowed("anchor"))),
             Token(
                 span,
-                TokenType::Tag(Cow::Borrowed("!"), Cow::Borrowed("tag")),
+                TokenType::Alias {
+                    name: Cow::Borrowed("alias"),
+                },
             ),
             Token(
                 span,
-                TokenType::Scalar(ScalarStyle::Literal, Cow::Borrowed("scalar")),
+                TokenType::Anchor {
+                    name: Cow::Borrowed("anchor"),
+                },
+            ),
+            Token(
+                span,
+                TokenType::Tag {
+                    handle: Cow::Borrowed("!"),
+                    suffix: Cow::Borrowed("tag"),
+                },
+            ),
+            Token(
+                span,
+                TokenType::Scalar {
+                    style: ScalarStyle::literal(),
+                    value: Cow::Borrowed("scalar"),
+                },
             ),
             #[cfg(feature = "comments")]
             Token(
                 span,
-                TokenType::Comment(
-                    Comment::new(Cow::Borrowed(" comment")).with_placement(Placement::Right),
-                ),
+                TokenType::Comment {
+                    comment: Comment::new(Cow::Borrowed(" comment"))
+                        .with_placement(Placement::Right),
+                },
             ),
             Token(
                 span,
-                TokenType::ReservedDirective(
-                    "reserved".to_owned(),
-                    vec!["one".to_owned(), "two".to_owned()],
-                ),
+                TokenType::ReservedDirective {
+                    name: "reserved".to_owned(),
+                    parameters: vec!["one".to_owned(), "two".to_owned()],
+                },
             ),
         ];
 
@@ -5560,7 +5866,7 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar(ScalarStyle::Plain, ref value) if value == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { .. }, ref value } if value == "value"
         ));
         #[cfg(feature = "comments")]
         assert!(scanner
@@ -5580,12 +5886,12 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " first"
+            TokenType::Comment { ref comment } if comment.text == " first"
         ));
         assert!(scanner.tokens.is_empty());
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " second"
+            TokenType::Comment { ref comment } if comment.text == " second"
         ));
     }
 
@@ -5600,11 +5906,11 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar(ScalarStyle::DoubleQuoted, ref value) if value == "key"
+            TokenType::Scalar { style: ScalarStyle::DoubleQuoted, ref value } if value == "key"
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " quoted"
+            TokenType::Comment { ref comment } if comment.text == " quoted"
         ));
     }
 
@@ -5653,11 +5959,11 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " first"
+            TokenType::Comment { ref comment } if comment.text == " first"
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Comment(ref comment) if comment.text == " second"
+            TokenType::Comment { ref comment } if comment.text == " second"
         ));
 
         let error = scanner.next_token().unwrap_err();
@@ -5678,7 +5984,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Anchor(name) = tok.1 {
+            if let TokenType::Anchor { name } = tok.1 {
                 assert!(matches!(name, Cow::Borrowed("anch")));
                 break;
             }
@@ -5720,7 +6026,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Alias(name) = tok.1 {
+            if let TokenType::Alias { name } = tok.1 {
                 assert!(matches!(name, Cow::Borrowed("anch")));
                 break;
             }
@@ -5737,7 +6043,7 @@ mod test {
                 .expect("scanner must not fail before alias token")
                 .expect("scanner must eventually emit an alias token");
 
-            if let TokenType::Alias(name) = tok.1 {
+            if let TokenType::Alias { name } = tok.1 {
                 assert_eq!(name.as_ref(), "foo:");
                 break;
             }
@@ -5754,7 +6060,7 @@ mod test {
                 .expect("scanner must not fail before anchor token")
                 .expect("scanner must eventually emit an anchor token");
 
-            if let TokenType::Anchor(name) = tok.1 {
+            if let TokenType::Anchor { name } = tok.1 {
                 assert_eq!(name.as_ref(), "foo:");
                 break;
             }
@@ -5771,7 +6077,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+            if let TokenType::TagDirective { handle, prefix } = tok.1 {
                 assert!(matches!(handle, Cow::Borrowed("!e!")));
                 assert!(matches!(prefix, Cow::Borrowed("tag:example.com,2000:app/")));
                 break;
@@ -5790,7 +6096,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+            if let TokenType::TagDirective { handle, prefix } = tok.1 {
                 assert!(matches!(handle, Cow::Owned(_)));
                 assert_eq!(&*handle, "!e!");
                 assert!(matches!(prefix, Cow::Owned(_)));
@@ -5811,7 +6117,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::TagDirective(handle, prefix) = tok.1 {
+            if let TokenType::TagDirective { handle, prefix } = tok.1 {
                 assert_eq!(&*handle, "!e!");
                 assert!(matches!(prefix, Cow::Owned(_)));
                 assert_eq!(&*prefix, "tag:example.com,2000:app/");
@@ -5829,7 +6135,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Tag(handle, suffix) = tok.1 {
+            if let TokenType::Tag { handle, suffix } = tok.1 {
                 assert!(matches!(handle, Cow::Borrowed("!")));
                 assert!(matches!(suffix, Cow::Owned(_)));
                 assert_eq!(&*suffix, "foo bar");
@@ -5859,7 +6165,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Borrowed("foo")));
                 break;
             }
@@ -5875,7 +6181,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Borrowed("foo bar")));
                 break;
             }
@@ -5891,7 +6197,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Borrowed("foo bar")));
                 break;
             }
@@ -5907,7 +6213,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Owned(_)));
                 assert_eq!(&*value, "foo'bar");
                 break;
@@ -5924,7 +6230,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Borrowed("foo bar")));
                 break;
             }
@@ -5940,7 +6246,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Scalar(_, value) = tok.1 {
+            if let TokenType::Scalar { style: _, value } = tok.1 {
                 assert!(matches!(value, Cow::Owned(_)));
                 assert_eq!(&*value, "foo\nbar");
                 break;
@@ -5965,7 +6271,7 @@ mod test {
             if matches!(tok.1, TokenType::Key) {
                 found_key = true;
             } else if found_key {
-                if let TokenType::Scalar(_, value) = tok.1 {
+                if let TokenType::Scalar { style: _, value } = tok.1 {
                     key_value = Some(value);
                     break;
                 }
@@ -5996,7 +6302,7 @@ mod test {
             if matches!(tok.1, TokenType::Key) {
                 found_key = true;
             } else if found_key {
-                if let TokenType::Scalar(_, value) = tok.1 {
+                if let TokenType::Scalar { style: _, value } = tok.1 {
                     key_value = Some(value);
                     break;
                 }
@@ -6021,7 +6327,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Tag(handle, suffix) = tok.1 {
+            if let TokenType::Tag { handle, suffix } = tok.1 {
                 assert!(
                     matches!(handle, Cow::Borrowed("!!")),
                     "tag handle should be borrowed, got: {handle:?}"
@@ -6045,7 +6351,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Tag(handle, suffix) = tok.1 {
+            if let TokenType::Tag { handle, suffix } = tok.1 {
                 assert!(
                     matches!(handle, Cow::Borrowed("!")),
                     "local tag handle should be '!', got: {handle:?}"
@@ -6068,7 +6374,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Tag(handle, suffix) = tok.1 {
+            if let TokenType::Tag { handle, suffix } = tok.1 {
                 assert!(matches!(handle, Cow::Borrowed("!")));
                 assert!(matches!(suffix, Cow::Borrowed("mytag/part")));
                 break;
@@ -6086,7 +6392,7 @@ mod test {
                 .next_token()
                 .expect("valid YAML must scan without errors")
                 .expect("scanner must eventually produce a token");
-            if let TokenType::Tag(handle, suffix) = tok.1 {
+            if let TokenType::Tag { handle, suffix } = tok.1 {
                 assert!(
                     matches!(handle, Cow::Borrowed("!!")),
                     "tag handle should still be borrowed, got: {handle:?}"
@@ -6165,7 +6471,7 @@ mod test {
         let mut scanner = Scanner::new(StrInput::new(input));
         loop {
             match scanner.next_token().expect("scanner should not error") {
-                Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
+                Some(Token(_, TokenType::Scalar { style: _, value })) => return value.into_owned(),
                 Some(_) => {}
                 None => panic!("expected scalar token"),
             }
@@ -6176,7 +6482,7 @@ mod test {
         let mut scanner = Scanner::new(BufferedInput::new(input.chars()));
         loop {
             match scanner.next_token().expect("scanner should not error") {
-                Some(Token(_, TokenType::Scalar(_, value))) => return value.into_owned(),
+                Some(Token(_, TokenType::Scalar { style: _, value })) => return value.into_owned(),
                 Some(_) => {}
                 None => panic!("expected scalar token"),
             }
@@ -6288,7 +6594,7 @@ mod test {
                 .next_token()
                 .expect("valid directive should scan")
                 .expect("scanner must produce a directive token");
-            if let TokenType::TagDirective(handle, prefix) = token.1 {
+            if let TokenType::TagDirective { handle, prefix } = token.1 {
                 assert!(matches!(handle, Cow::Borrowed("!e!")));
                 assert!(matches!(prefix, Cow::Owned(_)));
                 assert_eq!(&*prefix, "tag:example.com,2024:some app/");
@@ -6306,7 +6612,7 @@ mod test {
                 .next_token()
                 .expect("valid tag should scan")
                 .expect("scanner must produce a tag token");
-            if let TokenType::Tag(handle, suffix) = token.1 {
+            if let TokenType::Tag { handle, suffix } = token.1 {
                 assert_eq!(&*handle, "");
                 assert_eq!(&*suffix, "!");
                 break;
@@ -6573,10 +6879,16 @@ mod test {
                 TokenType::StreamStart,
                 TokenType::BlockMappingStart,
                 TokenType::Key,
-                TokenType::Scalar(ScalarStyle::Plain, "a".into()),
+                TokenType::Scalar {
+                    style: ScalarStyle::plain(),
+                    value: "a".into()
+                },
                 TokenType::Value,
                 TokenType::FlowSequenceStart,
-                TokenType::Scalar(ScalarStyle::Plain, "foo".into()),
+                TokenType::Scalar {
+                    style: ScalarStyle::plain(),
+                    value: "foo".into()
+                },
                 TokenType::FlowSequenceEnd,
                 TokenType::BlockEnd,
                 TokenType::StreamEnd,
@@ -6719,7 +7031,7 @@ mod test {
         let token = scanner.next_token().unwrap().unwrap();
 
         assert!(
-            matches!(token.1, TokenType::Alias(ref name) if name.as_ref() == "foo:"),
+            matches!(token.1, TokenType::Alias { ref name } if name.as_ref() == "foo:"),
             "expected `*foo: bar` to start with Alias(\"foo:\"), got {token:?}"
         );
     }
@@ -6736,7 +7048,7 @@ mod test {
         let token = scanner.next_token().unwrap().unwrap();
 
         assert!(
-            matches!(token.1, TokenType::Anchor(ref name) if name.as_ref() == "foo:"),
+            matches!(token.1, TokenType::Anchor { ref name } if name.as_ref() == "foo:"),
             "expected `&foo: bar` to start with Anchor(\"foo:\"), got {token:?}"
         );
     }

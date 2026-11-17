@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.0.0 (breaking changes)
+
+**Source syntax and API migration**
+
+- Add `extended_details` (default off) for new block-header metadata, the plain-scalar
+  `implicit` flag, and the document-end `explicit` flag. Without it, the fields and their
+  metadata capture code are absent; decoding, existing spans, and basic styles stay available.
+  `BlockScalarSyntax`, the public `Chomping` type, and detail accessors/builders require it.
+- Keep basic constructor signatures the same with or without the feature. `literal()`,
+  `folded()`, and `document_end()` take no arguments. With details enabled, synthetic block
+  styles default to `syntax: None`, plain styles to `implicit: false`, and document ends to
+  `explicit: false`. Use `with_block_syntax`, `with_implicit`, and `with_explicit_end` to set
+  optional metadata; parsed block scalars contain `Some(syntax)` when representable.
+
+- With `extended_details`, expose optional `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
+  `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
+  [#42, section 3](https://github.com/bourumir-wyngs/granit-parser/issues/42).
+  Retain chomping, the explicit indentation digit, their order, and effective content
+  indentation. Compute indicator offsets from these values instead of storing redundant
+  positions. Header positions use compact backward character/byte distances from
+  the accompanying span, rather than an additional `Marker`. Store both distances and content
+  indentation as `u32`; unrepresentable details yield `syntax: None` without changing decoding
+  or spans. Preserve the constructor's `usize` indentation parameter with checked conversion.
+  Checked range accessors locate
+  headers and individual indicators without rescanning; byte ranges are unavailable for
+  character-iterator inputs. Existing event spans and decoded scalar values are preserved.
+- Convert public `Event` and `TokenType` payloads to named fields. Make every variant of
+  `Event`, `TokenType`, and `ScalarStyle` non-exhaustive, including variants currently without
+  fields. Use `matches!`, `if let`, or `match` with `{ .. }` so future fields do not break
+  consumers. Normal builds omit whole-value comparison/hash/order traits, including for
+  `Token` and `BlockScalarSyntax`. Keep constructors for synthetic styles, tokens, and events,
+  supporting custom parsers, ownership conversions, and replay. `Event::scalar()` remains an
+  accessor; construct a scalar with `Event::new_scalar(value, style, anchor_id, tag)`.
+  Unit-only enums such as `Chomping`, `ScalarKind`, and `StructureStyle` remain comparable.
+- Add the opt-in `test_equality` feature for `PartialEq`/`Eq` on real output types, enabling
+  integration and downstream regression tests without mirrored test enums. Hashing and ordering
+  remain unavailable for these types. Output equality ignores optional `extended_details`
+  metadata so feature unification cannot change comparisons with synthetic values. Tests of
+  source syntax must compare metadata explicitly. Direct block-header equality ignores optional byte coordinates
+  and irrelevant indicator order; exhaustive field destructuring requires an explicit equality
+  decision whenever new block-header fields are added.
+- With `extended_details`, add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
+  written plain text, retaining the existing decoded representation of empty nodes.
+  Replace `style == ScalarStyle::Plain` with `matches!(style, ScalarStyle::Plain { .. })`
+  to cover both cases. Tags and anchors do not affect whether scalar content was omitted.
+  Add `ScalarKind` and optional style predicates for category checks independent of metadata.
+- With `extended_details`, add `Event::DocumentEnd { explicit }` to distinguish a written
+  `...` marker from an implicit document end.
+
 ## 2.2.0
 
 **Support user cases**

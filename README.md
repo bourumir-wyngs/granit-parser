@@ -10,7 +10,7 @@
 [![Socket Badge](https://badge.socket.dev/cargo/package/granit-parser)](https://socket.dev/cargo/package/granit-parser)
 [![dependency status](https://deps.rs/crate/granit-parser/latest/status.svg)](https://deps.rs/crate/granit-parser/latest)
 
-[![1.3 API compatibility](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
+[![API compatibility](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml/badge.svg)](https://github.com/bourumir-wyngs/granit-parser/actions/workflows/api-compat.yml)
 [![crates.io](https://img.shields.io/crates/l/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/v/granit-parser.svg)](https://crates.io/crates/granit-parser)
 [![crates.io](https://img.shields.io/crates/d/granit-parser.svg)](https://crates.io/crates/granit-parser)
@@ -32,9 +32,11 @@ Its primary goals are:
 * improved support for formatting, linting, syntax highlight and other comparable projects that need additional metadata  
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
-`granit-parser` 1.0 stabilizes the public API after the experimental 0.0.x releases. The 1.0
-migration, including scanner and parser-stack replacements, is documented in
-[`CHANGELOG.md`](CHANGELOG.md).
+`granit-parser` 3.0 uses named, non-exhaustive fields on variants carrying data.
+The optional `extended_details` feature exposes additional source syntax metadata; it is off
+by default. Without it, the new metadata fields and their capture code are compiled out,
+while decoded values, existing spans, and basic style categories remain available. See [Migrating to 3.0](#migrating-to-30) below and
+[`CHANGELOG.md`](CHANGELOG.md) for earlier migrations.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
@@ -42,7 +44,7 @@ See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
 
 [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str) returns an iterator of ([`Event`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html), [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html)) pairs. The event helpers expose common node metadata, and spans provide byte ranges, source slices, and explicit tag-token starts for tagged nodes:
 
-Comments are emitted as [`Event::Comment(text, placement)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
+Comments are emitted as [`Event::Comment { value, placement, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.Comment). They are presentation metadata for tools such as linters and formatters, not YAML data nodes, so consumers that build YAML values should filter them out. The companion [`Span`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html) for a comment covers the whole source comment, including `#` and excluding the line break; when parsing from [`Parser::new_from_str`](https://docs.rs/granit-parser/latest/granit_parser/struct.Parser.html#method.new_from_str), [`span.slice(yaml)`](https://docs.rs/granit-parser/latest/granit_parser/struct.Span.html#method.slice) returns that source comment text.
 
 Applications that do not use comments can disable their capture and emission by setting
 [`Options::emit_comments`](https://docs.rs/granit-parser/latest/granit_parser/struct.Options.html#structfield.emit_comments)
@@ -50,7 +52,20 @@ to `false` or disabling the default `comments` Cargo feature. The field is alway
 defaults to `true` with the feature enabled and `false` without it. Setting it to `true` has no
 effect without the feature. Comments are still recognized and validated as YAML syntax.
 
-Document starts are emitted as [`Event::DocumentStart(explicit, version)`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
+Document starts are emitted as [`Event::DocumentStart { explicit, version, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
+
+Enable `extended_details` to run this example and inspect the additional fields:
+
+```toml
+[dependencies]
+granit-parser = { version = "3", features = ["extended_details"] }
+```
+
+The example also prints literal/folded header syntax: raw indicators, character and byte
+ranges, chomping, explicit indentation, and effective content indentation. The Unicode header
+comment makes character and byte distances differ. Header ranges exclude comments and line
+breaks; the companion scalar span retains its existing meaning. An omitted value and a written
+`~` demonstrate the `implicit` flag, while two documents show explicit and implicit ends.
 
 For editors processing multiple documents, `Parser::proceed_next_document()` resumes after a
 syntax error at the next separated `---` or valid `...` at column zero. Call it after recording the
@@ -65,7 +80,7 @@ events or error nodes. Anchors remain scoped to their document, and source failu
 This recovers later documents, not structure within the broken document.
 
 ```rust
-use granit_parser::{options, Event, Parser};
+use granit_parser::{options, Event, Parser, ScalarStyle};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let yaml = r#"
@@ -89,6 +104,21 @@ favorite: &favorite bread
 order: *favorite
 unavailable: *missing
 dessert: cake
+literal: |
+  first line
+  second line
+folded: >2- # žąsis
+  hello
+  world
+nested:
+  kept: |+2
+    last line
+
+omitted:
+written_null: ~
+...
+---
+last: value
 "#;
 
     let options = options! {
@@ -102,15 +132,46 @@ dessert: cake
         let (event, span) = next?;
 
         match &event {
-            Event::Anchor(id, name) => {
+            Event::Anchor { anchor_id: id, name, .. } => {
                 // Metadata for the preceding node, with a span covering the &name token.
                 println!("anchor: id={id} name={name:?}");
             }
-            Event::Alias(id) => println!("alias: target id={id}"),
-            Event::UnresolvedAlias(name) => {
+            Event::Alias { anchor_id: id, .. } => println!("alias: target id={id}"),
+            Event::UnresolvedAlias { name, .. } => {
                 // Still an invalid reference, with a span covering the *name token.
                 println!("undefined anchor: {name:?}");
             }
+            Event::Scalar { value, style, .. } => {
+                // The same decoded text can represent omitted or explicitly written input.
+                if let ScalarStyle::Plain { implicit, .. } = style {
+                    if value == "~" {
+                        println!("plain scalar: value={value:?} implicit={implicit}");
+                    }
+                }
+                if let Some(syntax) = style.block_syntax() {
+                    // Pass the original companion span to resolve the compact offsets.
+                    println!(
+                        "block header: style={:?} text={:?} chars={:?} bytes={:?}",
+                        style.kind(),
+                        syntax.header_slice(&span, yaml),
+                        syntax.header_char_range(&span),
+                        syntax.header_byte_range(&span)
+                    );
+                    println!(
+                        "  chomping={:?} indentation_indicator={:?} content_indent={}",
+                        syntax.chomping, syntax.indentation_indicator, syntax.content_indent
+                    );
+                    println!(
+                        "  chomping indicator: chars={:?} bytes={:?}",
+                        syntax.chomping_char_range(&span), syntax.chomping_byte_range(&span)
+                    );
+                    println!(
+                        "  indentation indicator: chars={:?} bytes={:?}",
+                        syntax.indentation_char_range(&span), syntax.indentation_byte_range(&span)
+                    );
+                }
+            }
+            Event::DocumentEnd { explicit, .. } => println!("document end: explicit={explicit}"),
             _ => {}
         }
 
@@ -148,52 +209,226 @@ This prints an event stream like:
 
 ```text
 StreamStart bytes=Some(0..0) source=Some("")
-DocumentStart(true, Some(YamlVersion { major: 1, minor: 2 })) bytes=Some(80..83) source=Some("---")
-MappingStart(Block, 0, None) bytes=Some(84..84) source=Some("")
-Scalar("items", Plain, 0, None) bytes=Some(84..89) source=Some("items")
+DocumentStart { explicit: true, version: Some(YamlVersion { major: 1, minor: 2 }) } bytes=Some(80..83) source=Some("---")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(84..84) source=Some("")
+Scalar { value: "items", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(84..89) source=Some("items")
 node tag: !shopping custom=true tag_start(line,col,byte)=Some((6, 7, Some(91)))
-SequenceStart(Block, 0, Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" })) bytes=Some(103..103) source=Some("")
-Scalar("milk", Plain, 0, None) bytes=Some(105..109) source=Some("milk")
+SequenceStart { style: Block, anchor_id: 0, tag: Some(Tag { handle: "!", suffix: "shopping", original_handle: "!" }) } bytes=Some(103..103) source=Some("")
+Scalar { value: "milk", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(105..109) source=Some("milk")
 scalar tag: tag:example.com,2000:sliced core-suffix=None core-str=false tag_start(line,col,byte)=Some((8, 4, Some(114))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" })) bytes=Some(130..135) source=Some("bread")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:example.com,2000:", suffix: "sliced", original_handle: "!example!" }) } bytes=Some(130..135) source=Some("bread")
 scalar tag: tag:yaml.org,2002:str core-suffix=Some("str") core-str=true tag_start(line,col,byte)=Some((9, 4, Some(140))) for "bread"
-Scalar("bread", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" })) bytes=Some(146..151) source=Some("bread")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:", suffix: "str", original_handle: "!!" }) } bytes=Some(146..151) source=Some("bread")
 scalar tag: tag:yaml.org,2002:int core-suffix=Some("int") core-str=false tag_start(line,col,byte)=Some((10, 4, Some(156))) for "1"
-Scalar("1", Plain, 0, Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" })) bytes=Some(165..166) source=Some("1")
+Scalar { value: "1", style: Plain { implicit: false }, anchor_id: 0, tag: Some(Tag { handle: "tag:yaml.org,2002:i", suffix: "nt", original_handle: "!core!" }) } bytes=Some(165..166) source=Some("1")
 SequenceEnd bytes=Some(167..167) source=Some("")
-Scalar("locations", Plain, 0, None) bytes=Some(167..176) source=Some("locations")
-Comment(" Example with composite keys", Right) bytes=Some(178..207) source=Some("# Example with composite keys")
-MappingStart(Block, 0, None) bytes=Some(210..210) source=Some("")
-SequenceStart(Flow, 0, None) bytes=Some(210..211) source=Some("[")
-Scalar("47.3769", Plain, 0, None) bytes=Some(211..218) source=Some("47.3769")
-Scalar("8.5417", Plain, 0, None) bytes=Some(220..226) source=Some("8.5417")
+Scalar { value: "locations", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(167..176) source=Some("locations")
+Comment { value: " Example with composite keys", placement: Right } bytes=Some(178..207) source=Some("# Example with composite keys")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(210..210) source=Some("")
+SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(210..211) source=Some("[")
+Scalar { value: "47.3769", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(211..218) source=Some("47.3769")
+Scalar { value: "8.5417", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(220..226) source=Some("8.5417")
 SequenceEnd bytes=Some(226..227) source=Some("]")
-Scalar("local", Plain, 0, None) bytes=Some(229..234) source=Some("local")
-SequenceStart(Flow, 0, None) bytes=Some(237..238) source=Some("[")
-Scalar("40.7128", Plain, 0, None) bytes=Some(238..245) source=Some("40.7128")
-Scalar("-74.0060", Plain, 0, None) bytes=Some(247..255) source=Some("-74.0060")
+Scalar { value: "local", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(229..234) source=Some("local")
+SequenceStart { style: Flow, anchor_id: 0, tag: None } bytes=Some(237..238) source=Some("[")
+Scalar { value: "40.7128", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(238..245) source=Some("40.7128")
+Scalar { value: "-74.0060", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(247..255) source=Some("-74.0060")
 SequenceEnd bytes=Some(255..256) source=Some("]")
-Scalar("remote", Plain, 0, None) bytes=Some(258..264) source=Some("remote")
-Comment(" JSON-style \\uXXXX surrogate pairs:", Above) bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
+Scalar { value: "remote", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(258..264) source=Some("remote")
+Comment { value: " JSON-style \\uXXXX surrogate pairs:", placement: Above } bytes=Some(266..302) source=Some("# JSON-style \\uXXXX surrogate pairs:")
 MappingEnd bytes=Some(303..303) source=Some("")
-Scalar("music", Plain, 0, None) bytes=Some(303..308) source=Some("music")
-Scalar("𝄞🎵🎶", DoubleQuoted, 0, None) bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
-Scalar("favorite", Plain, 0, None) bytes=Some(350..358) source=Some("favorite")
-Scalar("bread", Plain, 1, None) bytes=Some(370..375) source=Some("bread")
+Scalar { value: "music", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(303..308) source=Some("music")
+Scalar { value: "𝄞🎵🎶", style: DoubleQuoted, anchor_id: 0, tag: None } bytes=Some(310..348) source=Some("\"\\uD834\\uDD1E\\uD83C\\uDFB5\\uD83C\\uDFB6\"")
+Scalar { value: "favorite", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(350..358) source=Some("favorite")
+Scalar { value: "bread", style: Plain { implicit: false }, anchor_id: 1, tag: None } bytes=Some(370..375) source=Some("bread")
 anchor: id=1 name="favorite"
-Anchor(1, "favorite") bytes=Some(360..369) source=Some("&favorite")
-Scalar("order", Plain, 0, None) bytes=Some(376..381) source=Some("order")
+Anchor { anchor_id: 1, name: "favorite" } bytes=Some(360..369) source=Some("&favorite")
+Scalar { value: "order", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(376..381) source=Some("order")
 alias: target id=1
-Alias(1) bytes=Some(383..392) source=Some("*favorite")
-Scalar("unavailable", Plain, 0, None) bytes=Some(393..404) source=Some("unavailable")
+Alias { anchor_id: 1 } bytes=Some(383..392) source=Some("*favorite")
+Scalar { value: "unavailable", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(393..404) source=Some("unavailable")
 undefined anchor: "missing"
-UnresolvedAlias("missing") bytes=Some(406..414) source=Some("*missing")
-Scalar("dessert", Plain, 0, None) bytes=Some(415..422) source=Some("dessert")
-Scalar("cake", Plain, 0, None) bytes=Some(424..428) source=Some("cake")
-MappingEnd bytes=Some(429..429) source=Some("")
-DocumentEnd bytes=Some(429..429) source=Some("")
-StreamEnd bytes=Some(429..429) source=Some("")
+UnresolvedAlias { name: "missing" } bytes=Some(406..414) source=Some("*missing")
+Scalar { value: "dessert", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(415..422) source=Some("dessert")
+Scalar { value: "cake", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(424..428) source=Some("cake")
+Scalar { value: "literal", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(429..436) source=Some("literal")
+block header: style=Literal text=Some("|") chars=Some(438..439) bytes=Some(438..439)
+  chomping=Clip indentation_indicator=None content_indent=2
+  chomping indicator: chars=None bytes=None
+  indentation indicator: chars=None bytes=None
+Scalar { value: "first line\nsecond line\n", style: Literal { syntax: Some(BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 }) }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
+Scalar { value: "folded", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
+block header: style=Folded text=Some(">2-") chars=Some(475..478) bytes=Some(475..478)
+  chomping=Strip indentation_indicator=Some(2) content_indent=2
+  chomping indicator: chars=Some(477..478) bytes=Some(477..478)
+  indentation indicator: chars=Some(476..477) bytes=Some(476..477)
+Scalar { value: "hello world", style: Folded { syntax: Some(BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 }) }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
+Comment { value: " žąsis", placement: Right } bytes=Some(479..488) source=Some("# žąsis")
+Scalar { value: "nested", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(515..515) source=Some("")
+Scalar { value: "kept", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(515..519) source=Some("kept")
+block header: style=Literal text=Some("|+2") chars=Some(519..522) bytes=Some(521..524)
+  chomping=Keep indentation_indicator=Some(2) content_indent=4
+  chomping indicator: chars=Some(520..521) bytes=Some(522..523)
+  indentation indicator: chars=Some(521..522) bytes=Some(523..524)
+Scalar { value: "last line\n\n", style: Literal { syntax: Some(BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 }) }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
+MappingEnd bytes=Some(540..540) source=Some("")
+Scalar { value: "omitted", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
+plain scalar: value="~" implicit=true
+Scalar { value: "~", style: Plain { implicit: true }, anchor_id: 0, tag: None } bytes=Some(547..547) source=Some("")
+Scalar { value: "written_null", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(549..561) source=Some("written_null")
+plain scalar: value="~" implicit=false
+Scalar { value: "~", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(563..564) source=Some("~")
+MappingEnd bytes=Some(565..565) source=Some("")
+document end: explicit=true
+DocumentEnd { explicit: true } bytes=Some(565..568) source=Some("...")
+DocumentStart { explicit: true, version: None } bytes=Some(569..572) source=Some("---")
+MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(573..573) source=Some("")
+Scalar { value: "last", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(573..577) source=Some("last")
+Scalar { value: "value", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(579..584) source=Some("value")
+MappingEnd bytes=Some(585..585) source=Some("")
+document end: explicit=false
+DocumentEnd { explicit: false } bytes=Some(585..585) source=Some("")
+StreamEnd bytes=Some(585..585) source=Some("")
 ```
+
+## Migrating to 3.0
+
+Inspect `Event`, `TokenType`, and `ScalarStyle` with `matches!`, `if let`, or `match`.
+Every variant is non-exhaustive: write `{ .. }` even when it currently has no fields.
+The `..` ignores fields you do not need, so new metadata can be added to a variant without
+breaking your code. A complete `match` also needs a fallback arm because new variants may
+be added. For example, `Event::Scalar(value, style, _, _)` becomes
+`Event::Scalar { value, style, .. }`.
+
+Pattern matching checks the variant without constructing a value to compare against.
+Derived whole-value equality would also compare metadata and could change meaning when fields are
+added. Normal builds therefore provide no equality, hashing, or ordering for these output
+enums, `Token`, or `BlockScalarSyntax`. Inspect only the fields relevant to your application;
+`Event::scalar()` remains a read accessor.
+
+Constructors serve a different purpose: creating synthetic values for custom `ParserTrait`
+implementations, event transformations, ownership conversions, and `ReplayParser` streams.
+Use `Event::new_scalar(value, style, anchor_id, tag)`, `ScalarStyle::plain()`, and the
+corresponding constructors for other variants.
+Unit variants also have constructors, such as `Event::stream_end()`; every variant remains
+non-exhaustive. Construction is supported independently of whether comparison is enabled.
+
+Constructor signatures are stable across feature configurations. `ScalarStyle::literal()`,
+`ScalarStyle::folded()`, and `Event::document_end()` take no arguments. When `extended_details`
+is enabled, synthetic block styles have `syntax: None`, plain styles default to
+`implicit: false`, and synthetic document ends default to `explicit: false`. The parser fills
+`Some(syntax)` for parsed block scalars when their details fit in `u32`, and records the two flags. Use `with_block_syntax`,
+`with_implicit`, and `with_explicit_end` to supply those details explicitly. These builders
+are available only with the feature and leave unrelated variants unchanged.
+`ScalarStyle::implicit_plain()` is a feature-gated shorthand for `plain().with_implicit(true)`.
+Future optional metadata must receive a documented default and an opt-in setter rather than
+adding required parameters to existing constructors.
+
+```rust
+use granit_parser::{BlockScalarSyntax, Chomping, Event, ScalarStyle};
+
+// Requires extended_details; basic constructors also work without it.
+fn synthetic_events() -> (Event<'static>, Event<'static>) {
+    let syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+    let style = ScalarStyle::literal().with_block_syntax(syntax);
+    let scalar = Event::new_scalar("generated".into(), style, 0, None);
+    let end = Event::document_end().with_explicit_end(true);
+    (scalar, end)
+}
+```
+
+The opt-in `test_equality` feature enables `PartialEq` and `Eq` for real output types in
+regression tests. Hashing and ordering remain unavailable. Output equality compares variants
+and their core payloads, including scalar notation categories, but **ignores extended details**:
+plain-scalar `implicit`, block-header `syntax`, and document-end `explicit`. These describe
+optional source information that synthetic events may lack. Comparing them as part of output
+equality would let another dependency enabling `extended_details` change a test's result.
+For example, a synthetic plain `"~"` scalar and an otherwise identical parsed omitted node
+compare equal both with and without extended details. Different scalar values, notation
+categories, anchors, tags, and existing document-start fields still compare unequal.
+
+Tests concerned with source syntax must inspect and compare those fields explicitly.
+`BlockScalarSyntax` itself can be compared with `test_equality`; its equality ignores optional
+byte coordinates across input backends and indicator order when either indicator is absent.
+Token equality still compares spans, whose optional byte coordinates are likewise ignored.
+Metadata is always excluded from output equality, even when both values have it: treating
+missing/default metadata as a wildcard would violate transitivity (two different headers
+could each equal an unknown header while differing from each other).
+Keep this feature in development dependencies: Cargo features are additive, so enabling it
+makes equality available throughout that build. Continue using patterns for classification.
+
+```rust
+use granit_parser::{Event, ScalarStyle};
+
+fn inspect(event: &Event<'_>) {
+    if matches!(event, Event::StreamEnd { .. }) {
+        println!("end of stream");
+    }
+    if let Event::Scalar { value, style, .. } = event {
+        if value == "~" && matches!(style, ScalarStyle::Plain { .. }) {
+            println!("plain tilde or omitted value");
+        }
+    }
+}
+```
+
+Use `matches!(style, ScalarStyle::Plain { .. })` in place of
+`style == ScalarStyle::Plain`. This matches both written and omitted plain scalars.
+Optional predicates such as `style.is_plain()` provide the same category check.
+The unit-only enums `ScalarKind`, `StructureStyle`, `Placement`, and the feature-gated
+`Chomping` retain their comparison traits; they also support matching. For example,
+`matches!(chomping, Chomping::Keep)` is equivalent to `chomping == Chomping::Keep`.
+Use `style.kind()` when an equality-comparable or hashable notation category is needed.
+
+With `extended_details`, `ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
+written content (`key: ~`). An explicit tag or anchor does not make omitted content written.
+Quoted and block styles describe written scalars even when their decoded value is empty.
+Decoded values retain their existing behavior. Document-end events expose `explicit`,
+which is true only for a written `...` marker.
+
+With that feature, literal and folded styles carry `Option<BlockScalarSyntax>`: chomping, an optional explicit
+indentation digit, their order (`digit_first`), and effective content indentation.
+The `chomping_offset()` and `indentation_offset()` methods compute indicator positions
+from these values; the order flag has no effect when either indicator is absent.
+Header locations are stored as backward distances from the accompanying `Span::start`.
+Both distances and content indentation use `u32`. If any recorded value exceeds `u32::MAX`,
+the parser returns `syntax: None` while retaining the decoded scalar and its original span.
+Large absolute source positions are supported as long as these relative values fit.
+Keep the original span with the style; changing its start invalidates those distances.
+The existing span still has its original meaning, and a header range excludes the trailing
+whitespace, comment, and line break.
+
+```rust
+use granit_parser::{Parser, ScalarStyle};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "message: >2- # explanation\n  hello\n  world\n";
+    for result in Parser::new_from_str(source) {
+        let (event, span) = result?;
+        if let Some((_, style)) = event.scalar() {
+            match style {
+                ScalarStyle::Literal { syntax: Some(syntax), .. }
+                | ScalarStyle::Folded { syntax: Some(syntax), .. } => {
+                    let range = syntax.header_byte_range(&span)
+                        .expect("string input provides byte offsets");
+                    assert_eq!(&source[range], ">2-");
+                    assert_eq!(syntax.indentation_indicator, Some(2));
+                    assert_eq!(syntax.content_indent, 2);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+`header_char_range` also works for character-iterator inputs; `header_byte_range` returns
+`None` when the companion span lacks byte offsets. These ranges locate the header without
+reconstructing its line and column. They are not a complete scalar replacement range.
+Use `style.kind()` or predicates such as `style.is_literal()` when comparing notation
+categories without comparing source metadata.
 
 ## Learning examples
 
@@ -443,8 +678,33 @@ Run the tests from a repository checkout with the official YAML suite initialize
 
 ```sh
 git submodule update --init tests/yaml-test-suite
-cargo test
-cargo test --test yaml-test-suite -- ::strict
+cargo test --features test_equality
+cargo test --features test_equality,extended_details
+cargo test --features test_equality --test yaml-test-suite -- ::strict
+```
+
+The repository enables `test_equality` through a development dependency so its unit and
+integration tests compare real parser values. When testing an extracted crate package,
+enable the feature explicitly; the YAML suite still requires a repository checkout.
+Use `support::assert_events_eq!` for expected event traces that include metadata, or
+`support::assert_spanned_events_eq!` when also comparing spans. These repository test helpers
+check extended details explicitly and accept the same optional failure message as `assert_eq!`.
+Ordinary `assert_eq!` deliberately checks only the core output, even when an expected value
+spells out a metadata flag.
+Downstream tests can enable `test_equality` without changing ordinary dependency builds:
+
+```toml
+[dev-dependencies]
+granit-parser = { version = "3", features = ["test_equality"] }
+```
+
+An independent consumer fixture verifies that constructors work and equality remains
+unavailable without the feature, then checks the opt-in comparisons:
+
+```sh
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test_equality
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test_equality
 ```
 
 Strict mode runs every active upstream case without case-specific overrides. The
