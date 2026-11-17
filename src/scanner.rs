@@ -3747,9 +3747,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 _ if self.mark.line == start_mark.line() => String::new(),
                 // With no content lines, the header break is not scalar content.
                 Chomping::Clip => String::new(),
-                // An indented whitespace-only line at EOF is an empty content line.
+                // Preserve the default synthetic break for an indented whitespace-only line
+                // at EOF, unless the caller opted into libyaml's reading.
                 Chomping::Keep if trailing_breaks == 0 && self.mark.col > 0 => {
-                    if chomping_break {
+                    if chomping_break && !self.options.block_scalar_eof_without_line_feed {
                         "\n".into()
                     } else {
                         String::new()
@@ -3854,10 +3855,15 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         if chomping != Chomping::Strip {
             // If we had reached an eof but the last content line wasn't terminated by a line
             // break, check if the last line was indented at least as the rest of the scalar, then
-            // we need to consider there is a newline. When that line already ended with a break
-            // (`leading_break`), the indentation-only remainder at EOF is not a line (it has no
-            // break, so it is no `l-empty`) and adds nothing.
-            if !leading_break && self.input.next_is_z() && self.mark.col >= indent.max(1) {
+            // we need to consider there is a newline, unless the caller opted into libyaml's
+            // reading. When that line already ended with a break (`leading_break`), the
+            // indentation-only remainder at EOF is not a line (it has no break, so it is no
+            // `l-empty`) and adds nothing.
+            if !leading_break
+                && !self.options.block_scalar_eof_without_line_feed
+                && self.input.next_is_z()
+                && self.mark.col >= indent.max(1)
+            {
                 string.push('\n');
             }
             if leading_break {
@@ -4084,13 +4090,17 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 if self.input.next_is_blank() {
                     // Consume a space or a tab character.
                     if leading_blanks {
-                        let indent = if self.options.strict_indentation && self.flow_level > 0 {
-                            self.flow_block_indent() + 1
-                        } else {
-                            self.indent
-                        };
-                        if self.input.peek() == '\t' && (self.mark.col as isize) < indent {
-                            return Err(self.scan_error(ErrorKind::TabInIndentation));
+                        // A continuation line's leading blanks are never content, so relaxed
+                        // mode accepts tabs there, as libyaml, PyYAML and ruamel.yaml do.
+                        if self.options.strict_indentation && self.input.peek() == '\t' {
+                            let indent = if self.flow_level > 0 {
+                                self.flow_block_indent() + 1
+                            } else {
+                                self.indent
+                            };
+                            if (self.mark.col as isize) < indent {
+                                return Err(self.scan_error(ErrorKind::TabInIndentation));
+                            }
                         }
                         self.skip_blank();
                     } else {
@@ -6768,11 +6778,14 @@ mod test {
     }
 
     #[test]
-    fn quoted_scalar_rejects_tab_indentation_after_line_break() {
-        assert_eq!(
-            first_scanner_error_kind("a: \"one\n\tbad\"\n"),
-            ErrorKind::TabInIndentation
-        );
+    fn strict_quoted_scalar_rejects_tab_indentation_after_line_break() {
+        let error = Scanner::with_options(
+            StrInput::new("a: \"one\n\tbad\"\n"),
+            crate::options! { strict_indentation: true },
+        )
+        .find_map(Result::err)
+        .expect("strict mode must reject a tab indenting a quoted continuation");
+        assert_eq!(error.kind(), &ErrorKind::TabInIndentation);
     }
 
     #[test]

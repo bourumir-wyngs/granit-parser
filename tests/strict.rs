@@ -254,6 +254,17 @@ fn strict_rejects_under_indented_escaped_line_breaks_in_block_context() {
 }
 
 #[test]
+fn strict_rejects_tabs_indenting_quoted_continuations_in_block_context() {
+    for quote in ['\'', '"'] {
+        for (prefix, line) in [("key: ", 2), ("outer:\n  key: ", 3), ("- key: ", 2)] {
+            let yaml = format!("{prefix}{quote}first\n\tsecond{quote}\n");
+            let reference = format!("{prefix}{quote}first second{quote}\n");
+            assert_relaxed_only_with_kind(&yaml, &reference, line, 0, &ErrorKind::TabInIndentation);
+        }
+    }
+}
+
+#[test]
 fn strict_rejects_under_indented_quoted_continuations_in_block_context() {
     for quote in ['\'', '"'] {
         for (prefix, parent_indent) in [
