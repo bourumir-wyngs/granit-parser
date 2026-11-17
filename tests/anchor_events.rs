@@ -513,7 +513,7 @@ fn zero_anchor_offset_preserves_empty_scalars_and_tags_across_comments() {
                     assert_eq!(*event, Event::anchor(0, "a".into()));
                     assert_eq!(span.slice(source), Some("&a"));
                 } else {
-                    assert!(anchors.is_empty());
+                    assert_eq!(anchors, []);
                 }
                 if source.contains("*a") {
                     assert!(expected

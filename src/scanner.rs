@@ -353,7 +353,7 @@ impl Span {
 /// # Last
 /// ```
 #[non_exhaustive]
-#[derive(Clone, Copy, PartialEq, Debug, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, Eq)]
 #[cfg(feature = "comments")]
 pub enum Placement {
     /// An own-line comment immediately before another YAML token.
@@ -370,19 +370,13 @@ pub enum Placement {
     /// This is the fallback for comments that are neither same-line comments, immediately above a
     /// following token, nor the final comment in the stream. Consumers should treat `Free` as not
     /// having an obvious neighboring node.
+    #[default]
     Free,
     /// An own-line comment at the end of the input stream.
     ///
     /// A `Last` comment may be followed by blank lines, but no further YAML token appears before
     /// `StreamEnd`.
     Last,
-}
-
-#[cfg(feature = "comments")]
-impl Default for Placement {
-    fn default() -> Self {
-        Self::Free
-    }
 }
 
 /// YAML comment metadata captured from the source.

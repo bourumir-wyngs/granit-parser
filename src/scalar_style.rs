@@ -5,21 +5,16 @@ use core::ops::Range;
 use crate::Span;
 
 /// How a block scalar handles its final line break and trailing empty lines.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 #[non_exhaustive]
 pub enum Chomping {
     /// No sign was written: preserve the final line break, but not trailing empty lines.
+    #[default]
     Clip,
     /// A `-` was written: remove the final line break and trailing empty lines.
     Strip,
     /// A `+` was written: preserve the final line break and trailing empty lines.
     Keep,
-}
-
-impl Default for Chomping {
-    fn default() -> Self {
-        Self::Clip
-    }
 }
 
 /// Source syntax attached to a literal or folded block scalar.

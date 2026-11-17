@@ -273,7 +273,7 @@ fn pending_header_probe_keeps_source_failures_terminal() {
     let mut events = Events::default();
     parser.load(&mut events, true).unwrap();
     parser.try_load(&mut events, true).unwrap();
-    assert!((events.0).is_empty());
+    assert_eq!(events.0, []);
     assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
 }
 
@@ -299,7 +299,7 @@ fn source_failure_while_probing_past_comments_is_terminal() {
         let mut events = Events::default();
         parser.load(&mut events, true).unwrap();
         parser.try_load(&mut events, true).unwrap();
-        assert!((events.0).is_empty());
+        assert_eq!(events.0, []);
         assert_eq!(parser.proceed_next_document().unwrap_err().kind(), &failure);
     }
 }
@@ -326,7 +326,7 @@ fn terminal_probe_error_discards_a_previously_peeked_comment() {
     let mut events = Events::default();
     parser.load(&mut events, true).unwrap();
     parser.try_load(&mut events, true).unwrap();
-    assert!((events.0).is_empty());
+    assert_eq!(events.0, []);
 }
 
 #[cfg(feature = "comments")]
