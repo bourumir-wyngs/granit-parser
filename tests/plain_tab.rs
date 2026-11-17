@@ -59,8 +59,9 @@ fn assert_structural_events_in_all_modes(input: &str, expected: &[Event<'_>]) {
             };
             let events = collect_structural_events_with_options(input, options)
                 .unwrap_or_else(|error| panic!("{input:?}: {error}"));
-            assert_eq!(
-                events, expected,
+            support::assert_events_eq!(
+                events,
+                expected,
                 "{input:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}"
             );
         }
@@ -90,7 +91,7 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
                     ScalarStyle::plain(),
                 ),
             ] {
-                assert_eq!(
+                support::assert_events_eq!(
                     collect_events(&yaml).unwrap(),
                     [
                         Event::stream_start(),
@@ -231,7 +232,7 @@ fn explicit_key_tabs_after_comments_require_space_indentation() {
                         true
                     })
                     .collect();
-                assert_eq!(
+                support::assert_events_eq!(
                     events, expected,
                     "{yaml:?}, emit_comments={emit_comments}, strict_indentation={strict_indentation}",
                 );
@@ -390,7 +391,7 @@ fn explicit_key_property_indentation_is_strict_only() {
                 emit_comments: emit_comments,
                 strict_indentation: false,
             };
-            assert_eq!(
+            support::assert_events_eq!(
                 collect_structural_events_with_options(yaml, relaxed).unwrap(),
                 expected,
                 "{yaml:?}, emit_comments={emit_comments}"
@@ -432,7 +433,7 @@ fn tabs_after_flow_explicit_keys_preserve_collection_keys_and_alias_values() {
                 true
             })
             .collect();
-        assert_eq!(
+        support::assert_events_eq!(
             events,
             [
                 Event::stream_start(),
@@ -523,7 +524,7 @@ fn tabs_after_colons_preserve_tagged_anchors_and_aliases() {
         ("key:\t&a !local value\ncopy:\t*a\n", StructureStyle::Block),
         ("{key:\t&a !local value, copy:\t*a}", StructureStyle::Flow),
     ] {
-        assert_eq!(
+        support::assert_events_eq!(
             collect_events(yaml).unwrap(),
             [
                 Event::stream_start(),

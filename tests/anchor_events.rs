@@ -634,9 +634,12 @@ fn loading_documents_separately_delivers_each_anchor_once() {
             if index == 0 {
                 expected.insert(0, Event::stream_start());
             }
-            assert_eq!(
-                sink.0.iter().map(|(event, _)| event).collect::<Vec<_>>(),
-                expected.iter().collect::<Vec<_>>()
+            support::assert_events_eq!(
+                sink.0
+                    .iter()
+                    .map(|(event, _)| event.clone())
+                    .collect::<Vec<_>>(),
+                expected
             );
             assert_anchor_follows_node(&sink.0);
             let (_, span) = sink
@@ -675,7 +678,7 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
         assert_eq!(span.slice(source), Some("&a"));
         let mut sink = Events::default();
         parser.load(&mut sink, true).unwrap();
-        assert_eq!(
+        support::assert_events_eq!(
             sink.0
                 .iter()
                 .map(|(event, _)| event.clone())
@@ -795,7 +798,7 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
             parser.proceed_next_document().unwrap();
             let events = parser.collect::<Result<Vec<_>, _>>().unwrap();
             assert_anchor_follows_node(&events);
-            assert_eq!(
+            support::assert_events_eq!(
                 events
                     .iter()
                     .map(|(event, _)| event.clone())

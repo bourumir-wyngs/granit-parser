@@ -39,8 +39,7 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
         }
     }
 
-    assert_eq!(str_events, iter_events);
-    support::metadata::assert_parser_details_eq(&str_events, &iter_events);
+    support::assert_spanned_events_eq!(str_events, iter_events, "input: {input:?}");
     assert_eq!(str_error, iter_error);
 
     if let Some(err) = str_error {
@@ -85,7 +84,7 @@ fn root_block_scalars_stop_at_document_markers() {
                     assert_eq!(spanned_events[4].1.slice(&yaml), Some("---"));
                 }
                 let events: Vec<_> = spanned_events.into_iter().map(|(event, _)| event).collect();
-                assert_eq!(
+                support::assert_events_eq!(
                     events,
                     [
                         Event::stream_start(),
@@ -128,7 +127,7 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                 let actual_style = events[2].0.scalar().unwrap().1;
                 assert_eq!(actual_style.kind(), style);
 
-                assert_eq!(
+                support::assert_events_eq!(
                     events
                         .iter()
                         .map(|(event, _)| event.clone())
@@ -191,7 +190,7 @@ fn block_scalars_preserve_content_resembling_document_markers() {
                 .collect();
             let actual_style = events[2].scalar().unwrap().1;
             assert_eq!(actual_style.kind(), style);
-            assert_eq!(
+            support::assert_events_eq!(
                 events,
                 [
                     Event::stream_start(),

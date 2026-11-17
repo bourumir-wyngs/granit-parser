@@ -33,9 +33,9 @@ fn colon_without_space_is_part_of_scalar_value() {
     // Here the value should be the single scalar "a:b".
     let s = "k: a:b\n";
     let events: Vec<_> = Parser::new_from_str(s).map(|r| r.unwrap().0).collect();
-    assert_eq!(
+    support::assert_events_eq!(
         events,
-        vec![
+        [
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
@@ -66,7 +66,7 @@ fn plain_scalar_dash_before_flow_delimiter() {
                 .into_iter()
                 .map(|(event, _)| event)
                 .collect();
-            assert_eq!(
+            support::assert_events_eq!(
                 events,
                 [
                     Event::stream_start(),

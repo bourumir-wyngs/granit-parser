@@ -593,7 +593,7 @@ fn strict_flow_indentation_follows_dedents_and_document_boundaries() {
 fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
     // YAML 1.2.2 [112] discards the escaped break but retains each l-empty [70].
     // Empty lines may contain fewer spaces than the required flow prefix [69].
-    let expected = vec![
+    let expected = [
         Event::stream_start(),
         Event::document_start(false, None),
         Event::mapping_start(StructureStyle::Block, 0, None),
@@ -620,7 +620,7 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
             );
             for strict in [false, true] {
                 for result in events_with_inputs(&yaml, strict) {
-                    assert_eq!(
+                    support::assert_events_eq!(
                         result.unwrap_or_else(|error| panic!("{yaml:?}: {error}")),
                         expected,
                         "strict={strict}, {yaml:?}"

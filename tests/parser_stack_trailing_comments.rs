@@ -115,7 +115,7 @@ fn assert_multiple_documents_error(stack: &mut Stack, error: &ScanError) {
 #[cfg(feature = "comments")]
 fn included_trailing_comments_are_emitted_before_parent_resumes() {
     // Keep the semantic oracle independent of the parser used by every backend.
-    let expected = vec![
+    let expected = [
         Event::new_scalar("child".into(), ScalarStyle::plain(), 0, None),
         Event::comment(" trailing".into(), Placement::Right),
         Event::comment(" after".into(), Placement::Last),
@@ -132,7 +132,7 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
         while let Some(event) = next_with_repeated_peek(&mut stack) {
             actual.push(event.unwrap());
         }
-        assert_eq!(
+        support::assert_events_eq!(
             actual
                 .iter()
                 .map(|(event, _)| event.clone())

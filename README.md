@@ -686,7 +686,12 @@ cargo test --features test_equality --test yaml-test-suite -- ::strict
 The repository enables `test_equality` through a development dependency so its unit and
 integration tests compare real parser values. When testing an extracted crate package,
 enable the feature explicitly; the YAML suite still requires a repository checkout.
-Downstream tests can enable it without changing ordinary dependency builds:
+Use `support::assert_events_eq!` for expected event traces that include metadata, or
+`support::assert_spanned_events_eq!` when also comparing spans. These repository test helpers
+check extended details explicitly and accept the same optional failure message as `assert_eq!`.
+Ordinary `assert_eq!` deliberately checks only the core output, even when an expected value
+spells out a metadata flag.
+Downstream tests can enable `test_equality` without changing ordinary dependency builds:
 
 ```toml
 [dev-dependencies]

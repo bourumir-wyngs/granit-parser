@@ -415,9 +415,9 @@ fn flow_entry_after_required_simple_key_is_rejected() {
 fn empty_flow_sequence_key_in_existing_block_mapping() {
     let events = parse_events("x: y\n[]: b\n").unwrap();
 
-    assert_eq!(
+    support::assert_events_eq!(
         events,
-        vec![
+        [
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
@@ -440,9 +440,9 @@ fn empty_flow_sequence_key_in_existing_block_mapping() {
 fn sequence_indented_one_column_under_mapping_key() {
     let events = parse_events("a:\n - b\n").unwrap();
 
-    assert_eq!(
+    support::assert_events_eq!(
         events,
-        vec![
+        [
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),

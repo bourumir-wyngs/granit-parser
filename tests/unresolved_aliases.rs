@@ -47,7 +47,7 @@ fn unresolved_alias_preserves_name_span_and_following_structure() {
         .collect::<Result<Vec<_>, _>>()
         .expect("unresolved references should not stop structural parsing");
 
-    assert_eq!(
+    support::assert_events_eq!(
         events
             .iter()
             .map(|(event, _)| event.clone())

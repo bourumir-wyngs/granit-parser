@@ -133,12 +133,12 @@ fn test_mapping_structure_styles() {
 
 #[test]
 fn test_empty_doc() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("").unwrap(),
         [Event::stream_start(), Event::stream_end()]
     );
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("---").unwrap(),
         [
             Event::stream_start(),
@@ -152,7 +152,7 @@ fn test_empty_doc() {
 
 #[test]
 fn test_utf() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("a: \u{4F60}\u{5273}").unwrap(),
         [
             Event::stream_start(),
@@ -176,7 +176,7 @@ a: b # This is another comment
   #
 ";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         expected_events([
             Event::stream_start(),
@@ -207,7 +207,7 @@ fn test_quoting() {
 - \"dquote\"
 ";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         [
             Event::stream_start(),
@@ -232,7 +232,7 @@ a scalar
 ---
 a scalar
 ";
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         [
             Event::stream_start(),
@@ -253,7 +253,7 @@ a scalar
 #[test]
 fn test_github_27() {
     // https://github.com/chyh1990/yaml-rust/issues/27
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("&a").unwrap(),
         [
             Event::stream_start(),
@@ -289,25 +289,38 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
             .collect()
     };
 
-    assert_eq!(
-        scalar_events("a: &x\n"),
-        vec![
-            ("a".to_string(), ScalarStyle::plain(), 0, None),
-            ("~".to_string(), support::implicit_plain(), 1, None),
-        ]
-    );
-    assert_eq!(
-        scalar_events("a: !!str\n"),
-        vec![
-            ("a".to_string(), ScalarStyle::plain(), 0, None),
-            (
-                String::new(),
-                support::implicit_plain(),
-                0,
-                Some("!!str".to_string()),
-            ),
-        ]
-    );
+    for (input, expected) in [
+        (
+            "a: &x\n",
+            vec![
+                ("a".to_string(), ScalarStyle::plain(), 0, None),
+                ("~".to_string(), support::implicit_plain(), 1, None),
+            ],
+        ),
+        (
+            "a: !!str\n",
+            vec![
+                ("a".to_string(), ScalarStyle::plain(), 0, None),
+                (
+                    String::new(),
+                    support::implicit_plain(),
+                    0,
+                    Some("!!str".to_string()),
+                ),
+            ],
+        ),
+    ] {
+        let actual = scalar_events(input);
+        assert_eq!(actual, expected, "input: {input:?}");
+        #[cfg(feature = "extended_details")]
+        for ((_, actual_style, _, _), (_, expected_style, _, _)) in actual.iter().zip(&expected) {
+            assert_eq!(
+                matches!(actual_style, ScalarStyle::Plain { implicit: true, .. }),
+                matches!(expected_style, ScalarStyle::Plain { implicit: true, .. }),
+                "omitted-node flags differ; input: {input:?}",
+            );
+        }
+    }
 }
 
 #[test]
@@ -340,7 +353,7 @@ fn test_comment_after_tag() {
 --- #-------
 foobar";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         expected_events([
             Event::stream_start(),
@@ -441,7 +454,7 @@ a: |-
 #[test]
 fn test_bad_docstart() {
     run_parser("---This used to cause an infinite loop").unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("----").unwrap(),
         [
             Event::stream_start(),
@@ -452,7 +465,7 @@ fn test_bad_docstart() {
         ]
     );
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("--- #comment").unwrap(),
         expected_events([
             Event::stream_start(),
@@ -465,7 +478,7 @@ fn test_bad_docstart() {
         ])
     );
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("---- #comment").unwrap(),
         expected_events([
             Event::stream_start(),

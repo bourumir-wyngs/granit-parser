@@ -159,7 +159,7 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
         Parser::new_from_str("# header\nchild\n... # tail\n# after\n"),
         "child".into(),
     );
-    assert_eq!(
+    support::assert_events_eq!(
         stack
             .collect::<Result<Vec<_>, _>>()
             .unwrap()

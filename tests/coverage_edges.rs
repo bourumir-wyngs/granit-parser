@@ -34,9 +34,9 @@ fn scalar_values(events: &[Event<'_>]) -> Vec<String> {
 fn explicit_block_mapping_empty_key_is_null() {
     let events = parse_events("?\n: value\n").unwrap();
 
-    assert_eq!(
+    support::assert_events_eq!(
         events,
-        vec![
+        [
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
@@ -95,7 +95,7 @@ fn flow_sequence_entry_requires_comma_before_next_collection() {
 fn repeated_document_end_markers_do_not_start_empty_documents() {
     let events = parse_events("...\n...\n").unwrap();
 
-    assert_eq!(events, vec![Event::stream_start(), Event::stream_end()]);
+    support::assert_events_eq!(events, [Event::stream_start(), Event::stream_end()]);
 }
 
 #[test]

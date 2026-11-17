@@ -478,7 +478,7 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                 template.matches('\n').count() + 2,
                 template.rsplit('\n').next().unwrap().chars().count(),
             );
-            let mut reference_trace = None;
+            let mut reference_trace: Option<Vec<(Event<'_>, Span)>> = None;
             let mut expected_tokens = None;
             for strict_indentation in [false, true] {
                 for emit_comments in [false, true] {
@@ -515,7 +515,7 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                             "{context}",
                         );
                         events.retain(|(event, _)| !support::is_comment_event(event));
-                        assert_eq!(
+                        support::assert_events_eq!(
                             events
                                 .iter()
                                 .map(|(event, _)| event.clone())
@@ -525,7 +525,7 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
                         );
                         assert_eq!(events.last().unwrap().1, Span::empty(eof), "{context}");
                         if let Some(expected) = &reference_trace {
-                            assert_eq!(&events, expected, "{context}");
+                            support::assert_spanned_events_eq!(&events, expected, "{context}");
                         } else {
                             reference_trace = Some(events);
                         }

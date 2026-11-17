@@ -316,12 +316,12 @@ fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof()
                 let events = parse_all_inputs(&source);
                 let (_, actual_style, _) = block_scalar(&events);
                 assert_eq!(actual_style.kind(), style);
-                assert_eq!(
+                support::assert_events_eq!(
                     events
                         .iter()
                         .map(|(event, _)| event.clone())
                         .collect::<Vec<_>>(),
-                    vec![
+                    [
                         Event::stream_start(),
                         Event::document_start(false, None),
                         Event::sequence_start(StructureStyle::Block, 0, None),

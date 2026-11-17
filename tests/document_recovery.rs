@@ -54,15 +54,15 @@ fn recovers_broken_flow_and_quoted_scalars_on_all_input_backends() {
         let fallible = recover(Parser::new_from_fallible_iter(
             source.chars().map(Ok::<_, ErrorKind>),
         ));
-        assert_eq!(borrowed, iterated, "source: {source:?}");
-        assert_eq!(borrowed, fallible, "source: {source:?}");
+        support::assert_spanned_events_eq!(borrowed, iterated, "source: {source:?}");
+        support::assert_spanned_events_eq!(borrowed, fallible, "source: {source:?}");
 
         let expected: Vec<_> = Parser::new_from_str("---\nhealthy:\n  enabled: true\n")
             .skip(1)
             .map(|event| event.unwrap().0)
             .collect();
         let actual: Vec<_> = borrowed.into_iter().map(|(event, _)| event).collect();
-        assert_eq!(actual, expected, "source: {source:?}");
+        support::assert_events_eq!(actual, expected, "source: {source:?}");
     }
 }
 
@@ -90,12 +90,12 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
     }
 
     assert_eq!(diagnostics, 1);
-    assert_eq!(
+    support::assert_events_eq!(
         recovered
             .iter()
             .map(|(event, _)| event.clone())
             .collect::<Vec<_>>(),
-        vec![
+        [
             Event::document_start(true, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("healthy".into(), ScalarStyle::plain(), 0, None),
@@ -133,7 +133,7 @@ fn default_error_contract_remains_terminal_until_recovery_is_requested() {
     assert!(parser.next_event().is_none());
     assert!(parser.peek().is_none());
     parser.proceed_next_document().unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("healthy", true)
     );
@@ -162,7 +162,7 @@ fn recovery_discards_a_peeked_error() {
             ..
         }
     ));
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("healthy", true)
     );
@@ -197,7 +197,7 @@ fn load_can_resume_without_synthetic_ends_for_the_abandoned_document() {
     parser.proceed_next_document().unwrap();
     let mut recovered = Events::default();
     parser.load(&mut recovered, true).unwrap();
-    assert_eq!(recovered.0, scalar_document("healthy", true));
+    support::assert_events_eq!(recovered.0, scalar_document("healthy", true));
     assert!(parser.next_event().is_none());
 }
 
@@ -215,7 +215,7 @@ fn only_separated_column_zero_markers_are_recovery_points() {
         "---\thealthy\n",
     );
     let events = recover(Parser::new_from_str(source));
-    assert_eq!(
+    support::assert_events_eq!(
         events
             .into_iter()
             .map(|(event, _)| event)
@@ -234,7 +234,7 @@ fn literal_nul_is_not_eof_or_marker_separation() {
             source.chars().map(Ok::<_, ErrorKind>),
         )),
     ] {
-        assert_eq!(
+        support::assert_events_eq!(
             events
                 .into_iter()
                 .map(|(event, _)| event)
@@ -251,7 +251,7 @@ fn a_queued_end_marker_with_invalid_trailing_content_is_not_a_boundary() {
         recover(Parser::new_from_str(source)),
         recover(Parser::new_from_iter(source.chars())),
     ] {
-        assert_eq!(
+        support::assert_events_eq!(
             events
                 .into_iter()
                 .map(|(event, _)| event)
@@ -278,7 +278,7 @@ fn explicit_end_can_recover_into_an_implicit_document() {
                 true
             })
             .collect();
-        assert_eq!(events, scalar_document("healthy", false), "{source:?}");
+        support::assert_events_eq!(events, scalar_document("healthy", false), "{source:?}");
     }
 }
 
@@ -314,7 +314,7 @@ fn healthy_documents_can_be_skipped_from_fresh_or_partially_consumed_parsers() {
                 parser.next_event().unwrap().unwrap();
             }
             parser.proceed_next_document().unwrap();
-            assert_eq!(
+            support::assert_events_eq!(
                 remaining_events(&mut parser),
                 scalar_document("second", true),
                 "source={source:?}, consumed={consumed}",
@@ -335,7 +335,7 @@ fn skip_at_event_offset<'input, I: BorrowedInput<'input>>(
         parser.peek().unwrap().unwrap();
     }
     parser.proceed_next_document().unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("second", true),
         "consumed={consumed}, peek={peek}",
@@ -376,7 +376,7 @@ fn skipping_discards_a_peeked_node_and_pending_collection_state() {
         }
     }
     parser.proceed_next_document().unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("second", true)
     );
@@ -395,7 +395,7 @@ fn skipping_discards_a_deferred_scanner_error_after_a_peeked_event() {
         }
     }
     parser.proceed_next_document().unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("healthy", true)
     );
@@ -414,7 +414,7 @@ fn proceeding_after_document_end_preserves_the_next_document() {
             }
         }
         parser.proceed_next_document().unwrap();
-        assert_eq!(
+        support::assert_events_eq!(
             remaining_events(&mut parser),
             scalar_document("second", source.contains("---")),
         );
@@ -426,7 +426,7 @@ fn skipping_successive_documents_suppresses_skipped_syntax_errors() {
     let mut parser = Parser::new_from_str("first\n---\n[broken\n---\nthird\n");
     parser.proceed_next_document().unwrap();
     parser.proceed_next_document().unwrap();
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("third", true)
     );
@@ -446,7 +446,7 @@ fn repeated_errors_make_progress_to_later_documents() {
         previous_error_index = Some(error.marker().index());
         parser.proceed_next_document().unwrap();
     }
-    assert_eq!(
+    support::assert_events_eq!(
         remaining_events(&mut parser),
         scalar_document("healthy", true)
     );
@@ -476,7 +476,7 @@ fn repeated_proceed_calls_preserve_an_unread_stream_end() {
         for _ in 0..4 {
             parser.proceed_next_document().unwrap();
         }
-        assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
+        support::assert_events_eq!(remaining_events(&mut parser), [Event::stream_end()]);
         parser.proceed_next_document().unwrap();
         assert!(parser.next_event().is_none());
     }
@@ -495,7 +495,7 @@ fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
         parser.proceed_next_document().unwrap();
         assert_eq!(parser.peek().unwrap().unwrap().0, Event::stream_end());
     }
-    assert_eq!(remaining_events(&mut parser), [Event::stream_end()]);
+    support::assert_events_eq!(remaining_events(&mut parser), [Event::stream_end()]);
     parser.proceed_next_document().unwrap();
     assert!(parser.peek().is_none());
 }
@@ -504,7 +504,7 @@ fn proceed_preserves_a_peeked_stream_end_until_it_is_consumed() {
 fn skipping_an_empty_or_finished_stream_does_not_restart_it() {
     let mut empty = Parser::new_from_str("");
     empty.proceed_next_document().unwrap();
-    assert_eq!(remaining_events(&mut empty), vec![Event::stream_end()]);
+    support::assert_events_eq!(remaining_events(&mut empty), [Event::stream_end()]);
 
     let mut finished = Parser::new_from_str("healthy\n");
     remaining_events(&mut finished);
@@ -522,7 +522,7 @@ fn proceed_after_load_consumes_a_recovered_eof_stays_exhausted() {
         parser.proceed_next_document().unwrap();
         let mut events = Events::default();
         parser.load(&mut events, true).unwrap();
-        assert_eq!(events.0, [Event::stream_end()]);
+        support::assert_events_eq!(events.0, [Event::stream_end()]);
         parser.proceed_next_document().unwrap();
         assert!(parser.peek().is_none());
         assert!(parser.next_event().is_none());
@@ -699,7 +699,7 @@ fn failed_document_headers_and_their_bodies_are_abandoned_together() {
                 source.chars().map(Ok::<_, ErrorKind>),
             )),
         ] {
-            assert_eq!(
+            support::assert_events_eq!(
                 events
                     .into_iter()
                     .map(|(event, _)| event)
@@ -727,7 +727,7 @@ fn a_disallowed_directive_also_abandons_its_document_body() {
                 options,
             )),
         ] {
-            assert_eq!(
+            support::assert_events_eq!(
                 events
                     .into_iter()
                     .map(|(event, _)| event)
@@ -755,7 +755,7 @@ fn ordinary_content_errors_before_a_start_marker_do_not_skip_the_next_document()
                 source.chars().map(Ok::<_, ErrorKind>),
             )),
         ] {
-            assert_eq!(
+            support::assert_events_eq!(
                 events
                     .into_iter()
                     .map(|(event, _)| event)
@@ -773,7 +773,7 @@ fn failed_headers_can_recover_after_an_explicit_end_or_reach_eof() {
         for body in ["", "---\nfailed-body\n"] {
             let source = format!("{header}{body}...\nhealthy\n");
             let events = recover(Parser::new_from_str(&source));
-            assert_eq!(
+            support::assert_events_eq!(
                 events
                     .into_iter()
                     .map(|(event, _)| event)
@@ -784,7 +784,7 @@ fn failed_headers_can_recover_after_an_explicit_end_or_reach_eof() {
         }
         let source = format!("{header}---\nfailed-body\n");
         let events = recover(Parser::new_from_str(&source));
-        assert_eq!(
+        support::assert_events_eq!(
             events
                 .into_iter()
                 .map(|(event, _)| event)

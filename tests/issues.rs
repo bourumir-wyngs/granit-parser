@@ -117,7 +117,7 @@ fn test_issue1() {
         support::document_end(false),
         Event::stream_end(),
     ];
-    assert_eq!(run_parser(reference).unwrap(), expected);
+    support::assert_events_eq!(run_parser(reference).unwrap(), expected);
     let expected_flow = [
         Event::stream_start(),
         Event::document_start(false, None),
@@ -132,9 +132,9 @@ fn test_issue1() {
         support::document_end(false),
         Event::stream_end(),
     ];
-    assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected_flow);
-    assert_eq!(run_parser("[a: [42]]").unwrap(), expected_flow);
-    assert_eq!(
+    support::assert_events_eq!(run_parser("[{a: [42]}]").unwrap(), expected_flow);
+    support::assert_events_eq!(run_parser("[a: [42]]").unwrap(), expected_flow);
+    support::assert_events_eq!(
         run_parser("[a: [1, 2]]").unwrap(),
         [
             Event::stream_start(),
@@ -170,12 +170,12 @@ fn test_issue1() {
         support::document_end(false),
         Event::stream_end(),
     ];
-    assert_eq!(run_parser("[a: {b: c, d: e}]").unwrap(), expected_mapping);
+    support::assert_events_eq!(run_parser("[a: {b: c, d: e}]").unwrap(), expected_mapping);
 
     // Other test cases derived from the bug
 
     // Implicit mapping in a complex key.
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[foo: [bar]]: baz").unwrap(),
         [
             Event::stream_start(),
@@ -197,7 +197,7 @@ fn test_issue1() {
     );
 
     // Implicit mappings with implicit null keys
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[:]").unwrap(),
         [
             Event::stream_start(),
@@ -214,7 +214,7 @@ fn test_issue1() {
     );
 
     // Nested implicit mappings with implicit null keys
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[: [:]]").unwrap(),
         [
             Event::stream_start(),
@@ -236,7 +236,7 @@ fn test_issue1() {
     );
 
     // Interleaved nested implicit and non-implicit mappings.
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[a: [  [b:]]]").unwrap(),
         //          ^   ^  ^ has an implicit mapping
         //          |   ` has no implicit mapping
@@ -271,7 +271,7 @@ fn test_issue1() {
     assert!(run_parser("[a:[42]]").is_err());
 
     // Double-quoted keys may have a value without a space for JSON-compatibility.
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(r#"["a":[]]"#).unwrap(),
         [
             Event::stream_start(),
@@ -291,7 +291,7 @@ fn test_issue1() {
 
 #[test]
 fn test_flow_sequence_empty_key_with_value() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[: value]").unwrap(),
         [
             Event::stream_start(),
@@ -310,7 +310,7 @@ fn test_flow_sequence_empty_key_with_value() {
 
 #[test]
 fn test_flow_sequence_empty_key_state_is_flow_scoped() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[ : [foo] ]").unwrap(),
         [
             Event::stream_start(),
@@ -328,7 +328,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         ]
     );
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[ : {a: b} ]").unwrap(),
         [
             Event::stream_start(),
@@ -347,7 +347,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
         ]
     );
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("[{}, : foo]").unwrap(),
         [
             Event::stream_start(),
@@ -368,7 +368,7 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
 
 #[test]
 fn test_flow_mapping_quoted_key_colon_on_next_line() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("{\"foo\"\n: \"bar\"}\n").unwrap(),
         [
             Event::stream_start(),
@@ -385,7 +385,7 @@ fn test_flow_mapping_quoted_key_colon_on_next_line() {
 
 #[test]
 fn test_flow_mapping_plain_key_spans_line_break() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("- { single line: value}\n- { multi\n  line: value}\n").unwrap(),
         [
             Event::stream_start(),
@@ -408,7 +408,7 @@ fn test_flow_mapping_plain_key_spans_line_break() {
 
 #[test]
 fn test_flow_mapping_key_and_colon_on_separate_lines() {
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser("k: {\n k\n :\n v\n }\n").unwrap(),
         [
             Event::stream_start(),
@@ -510,7 +510,7 @@ fn test_granit_issue14_space_before_colon_keeps_alias_key_mapping_valid() {
     // This is the valid alias-key mapping form.
     let input = "foo: &foo value\n*foo : bar\n";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(input).unwrap(),
         [
             Event::stream_start(),
@@ -605,7 +605,7 @@ fn test_issue22() {
     // The ellipsis is parsed as a document end.
     // https://github.com/saphyr-rs/saphyr/issues/22
     let s = "comment: hello ... world";
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         [
             Event::stream_start(),
@@ -639,7 +639,7 @@ fn test_issue37() {
     - null
     ";
 
-    assert_eq!(
+    support::assert_spanned_events_eq!(
         run_parser_with_span(s).unwrap(),
         [
             (Event::stream_start(),                                                          Span::new(Marker::new(0, 1, 0).with_byte_offset(Some(0)), Marker::new(0, 1, 0).with_byte_offset(Some(0)))),
@@ -690,7 +690,7 @@ fn test_issue84() {
   world: this is a string
     --- still a string";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(s).unwrap(),
         [
             Event::stream_start(),
@@ -728,7 +728,7 @@ fn test_granit_issue14_anchor_and_alias_names_may_end_with_colon() {
     // either a parse error or the wrong event stream.
     let input = "- &foo: value\n- *foo:\n";
 
-    assert_eq!(
+    support::assert_events_eq!(
         run_parser(input).unwrap(),
         [
             Event::stream_start(),
