@@ -36,7 +36,9 @@
   Unit-only enums such as `Chomping`, `ScalarKind`, and `StructureStyle` remain comparable.
 - Add the opt-in `test_equality` feature for `PartialEq`/`Eq` on real output types, enabling
   integration and downstream regression tests without mirrored test enums. Hashing and ordering
-  remain unavailable for these types. Block-header equality ignores optional byte coordinates
+  remain unavailable for these types. Output equality ignores optional `extended_details`
+  metadata so feature unification cannot change comparisons with synthetic values. Tests of
+  source syntax must compare metadata explicitly. Direct block-header equality ignores optional byte coordinates
   and irrelevant indicator order; exhaustive field destructuring requires an explicit equality
   decision whenever new block-header fields are added.
 - With `extended_details`, add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly

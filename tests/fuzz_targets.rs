@@ -22,6 +22,39 @@ mod parser_stack;
 #[path = "../fuzz/seed_corpus.rs"]
 mod seed_corpus;
 
+#[cfg(feature = "extended_details")]
+#[test]
+fn metadata_oracles_detect_details_ignored_by_output_equality() {
+    use granit_parser::{BlockScalarSyntax, Chomping, Event, ScalarStyle};
+
+    let syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+    for (left, right) in [
+        (
+            Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+        ),
+        (
+            Event::new_scalar("value".into(), ScalarStyle::literal(), 0, None),
+            Event::new_scalar(
+                "value".into(),
+                ScalarStyle::literal().with_block_syntax(syntax),
+                0,
+                None,
+            ),
+        ),
+        (
+            Event::document_end(),
+            Event::document_end().with_explicit_end(true),
+        ),
+    ] {
+        assert_eq!(left, right);
+        assert!(std::panic::catch_unwind(|| {
+            common::metadata::assert_event_details_eq(&left, &right);
+        })
+        .is_err());
+    }
+}
+
 #[test]
 fn raw_fuzz_oracles_cover_changelog_fixes_and_malformed_prefixes() {
     for input in seed_corpus::RAW_INPUTS {

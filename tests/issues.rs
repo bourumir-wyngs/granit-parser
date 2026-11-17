@@ -55,6 +55,7 @@ fn run_parser_with_span(input: &str) -> Result<Vec<(Event<'_>, Span)>, ScanError
     // }
 
     assert_eq!(str_events, iter_events);
+    support::metadata::assert_parser_details_eq(&str_events, &iter_events);
     assert_eq!(str_error, iter_error);
 
     if let Some(err) = str_error {
@@ -427,9 +428,9 @@ fn test_flow_mapping_key_and_colon_on_separate_lines() {
 
 #[test]
 fn test_pr12() {
-    assert_eq!(
-        run_parser("---\n- |\n  a").unwrap(),
-        [
+    support::assert_events_eq(
+        &run_parser("---\n- |\n  a").unwrap(),
+        &[
             Event::stream_start(),
             Event::document_start(true, None),
             seq(StructureStyle::Block),
@@ -454,12 +455,12 @@ fn test_pr12() {
                     }
                 },
                 0,
-                None
+                None,
             ),
             Event::sequence_end(),
             support::document_end(false),
             Event::stream_end(),
-        ]
+        ],
     );
 }
 
@@ -541,9 +542,9 @@ array:
                   Line 2
 ...";
 
-    assert_eq!(
-        run_parser(s).unwrap(),
-        [
+    support::assert_events_eq(
+        &run_parser(s).unwrap(),
+        &[
             Event::stream_start(),
             Event::document_start(true, None),
             map(StructureStyle::Block),
@@ -582,7 +583,7 @@ array:
                     }
                 },
                 0,
-                None
+                None,
             ),
             Event::mapping_end(),
             Event::sequence_end(),
@@ -594,8 +595,8 @@ array:
             Event::sequence_end(),
             Event::mapping_end(),
             support::document_end(true),
-            Event::stream_end()
-        ]
+            Event::stream_end(),
+        ],
     );
 }
 

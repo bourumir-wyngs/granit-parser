@@ -457,7 +457,11 @@ impl AsRef<str> for Comment<'_> {
 /// variant is non-exhaustive, even if it currently has no fields, so the library can add
 /// metadata without changing those patterns. A complete match also needs a fallback arm.
 /// Normal builds provide no whole-token equality; the opt-in `test_equality` feature enables
-/// equality for tests. Constructors support synthetic token streams and scanner adapters.
+/// equality for tests. It compares token variants and payloads, but scalar styles compare only
+/// their notation category, ignoring optional `extended_details` source metadata. This keeps
+/// equality independent of whether a dependency enables metadata capture; compare syntax
+/// fields explicitly when they matter. Constructors support synthetic token streams and
+/// scanner adapters.
 ///
 /// ```
 /// use granit_parser::{Scanner, StrInput, TokenType};
@@ -755,6 +759,10 @@ impl<'input> TokenType<'input> {
 }
 
 /// A scanner token.
+///
+/// With `test_equality`, equality compares the span and token payload. Like [`TokenType`], it
+/// ignores optional `extended_details` metadata; optional byte coordinates are also ignored
+/// by [`Span`] equality so tokens can be compared across input backends.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub struct Token<'input>(Span, TokenType<'input>);

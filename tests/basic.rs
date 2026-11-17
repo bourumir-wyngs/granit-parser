@@ -44,6 +44,7 @@ fn run_parser(input: &str) -> Result<Vec<Event<'_>>, ScanError> {
     // }
 
     assert_eq!(str_events, iter_events);
+    support::metadata::assert_parser_details_eq(&str_events, &iter_events);
     assert_eq!(str_error, iter_error);
 
     if let Some(err) = str_error {
@@ -400,9 +401,9 @@ a: |-
                       b
 ";
 
-    assert_eq!(
-        run_parser(s).unwrap(),
-        [
+    support::assert_events_eq(
+        &run_parser(s).unwrap(),
+        &[
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
@@ -428,12 +429,12 @@ a: |-
                     }
                 },
                 0,
-                None
+                None,
             ),
             Event::mapping_end(),
             support::document_end(false),
             Event::stream_end(),
-        ]
+        ],
     );
 }
 

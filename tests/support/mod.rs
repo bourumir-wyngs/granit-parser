@@ -1,5 +1,15 @@
 #![allow(dead_code)]
 
+pub mod metadata;
+
+/// Assert both the stable event payload and the optional source details.
+pub fn assert_events_eq(left: &[granit_parser::Event<'_>], right: &[granit_parser::Event<'_>]) {
+    assert_eq!(left, right);
+    for (left, right) in left.iter().zip(right) {
+        metadata::assert_event_details_eq(left, right);
+    }
+}
+
 pub fn is_comment_event(event: &granit_parser::Event<'_>) -> bool {
     #[cfg(feature = "comments")]
     {

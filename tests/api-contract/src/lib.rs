@@ -424,12 +424,41 @@ mod tests {
             .unwrap();
         assert_eq!(string_tokens, streaming_tokens);
 
-        let written = Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None);
         #[cfg(feature = "extended_details")]
         {
-            assert_ne!(ScalarStyle::plain(), ScalarStyle::implicit_plain());
-            let omitted = Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None);
-            assert_ne!(written, omitted);
+            // Whole-output equality deliberately omits extended details. Check those
+            // separately so this backend comparison also detects metadata regressions.
+            for ((left, _), (right, _)) in string.iter().zip(&streaming) {
+                match (left, right) {
+                    (Event::Scalar { style: left, .. }, Event::Scalar { style: right, .. }) => {
+                        assert_eq!(
+                            matches!(left, ScalarStyle::Plain { implicit: true, .. }),
+                            matches!(right, ScalarStyle::Plain { implicit: true, .. })
+                        );
+                        assert_eq!(left.block_syntax(), right.block_syntax());
+                    }
+                    (
+                        Event::DocumentEnd { explicit: left, .. },
+                        Event::DocumentEnd {
+                            explicit: right, ..
+                        },
+                    ) => assert_eq!(left, right),
+                    _ => {}
+                }
+            }
+            for (left, right) in string_tokens.iter().zip(&streaming_tokens) {
+                if let (
+                    TokenType::Scalar { style: left, .. },
+                    TokenType::Scalar { style: right, .. },
+                ) = (left.token_type(), right.token_type())
+                {
+                    assert_eq!(
+                        matches!(left, ScalarStyle::Plain { implicit: true, .. }),
+                        matches!(right, ScalarStyle::Plain { implicit: true, .. })
+                    );
+                    assert_eq!(left.block_syntax(), right.block_syntax());
+                }
+            }
         }
 
         require_eq::<ScalarStyle>();
@@ -438,6 +467,7 @@ mod tests {
         require_eq::<Token<'static>>();
         #[cfg(feature = "extended_details")]
         require_eq::<BlockScalarSyntax>();
+        let written = Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None);
         assert_eq!(
             written,
             Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None)
@@ -454,6 +484,138 @@ mod tests {
                 TokenType::scalar(ScalarStyle::plain(), "value".into())
             )
         );
+    }
+
+    #[cfg(feature = "test_equality")]
+    fn last_scalar(source: &str) -> Event<'_> {
+        granit_parser::Parser::new_from_str(source)
+            .map(Result::unwrap)
+            .map(|(event, _)| event)
+            .filter(|event| matches!(event, Event::Scalar { .. }))
+            .last()
+            .expect("source should contain a scalar")
+    }
+
+    #[cfg(feature = "test_equality")]
+    #[test]
+    fn constructor_equality_is_independent_of_extended_details() {
+        let omitted = last_scalar("key:");
+        let written = last_scalar("~");
+        let synthetic = Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None);
+        assert_eq!(synthetic, omitted);
+        assert_eq!(omitted, synthetic);
+        assert_eq!(synthetic, written);
+        assert_eq!(written, omitted);
+        #[cfg(feature = "extended_details")]
+        assert!(matches!(
+            omitted,
+            Event::Scalar {
+                style: ScalarStyle::Plain { implicit: true, .. },
+                ..
+            }
+        ));
+
+        for (source, style) in [
+            ("|\n  value\n", ScalarStyle::literal()),
+            (">\n  value\n", ScalarStyle::folded()),
+        ] {
+            let parsed = last_scalar(source);
+            assert_eq!(parsed, Event::new_scalar("value\n".into(), style, 0, None));
+            #[cfg(feature = "extended_details")]
+            assert!(
+                matches!(parsed, Event::Scalar { style, .. } if style.block_syntax().is_some())
+            );
+
+            let token = granit_parser::Scanner::new(granit_parser::StrInput::new(source))
+                .map(Result::unwrap)
+                .find(|token| matches!(token.token_type(), TokenType::Scalar { .. }))
+                .unwrap();
+            let synthetic_type = TokenType::scalar(style, "value\n".into());
+            assert_eq!(token.token_type(), &synthetic_type);
+            assert_eq!(token, Token::new(token.span(), synthetic_type));
+        }
+
+        let explicit_end = granit_parser::Parser::new_from_str("value\n...\n")
+            .map(Result::unwrap)
+            .map(|(event, _)| event)
+            .find(|event| matches!(event, Event::DocumentEnd { .. }))
+            .unwrap();
+        assert_eq!(explicit_end, Event::document_end());
+        #[cfg(feature = "extended_details")]
+        assert!(matches!(
+            explicit_end,
+            Event::DocumentEnd { explicit: true, .. }
+        ));
+    }
+
+    #[cfg(feature = "test_equality")]
+    #[test]
+    fn equality_retains_core_payload_and_notation_distinctions() {
+        let scalar = Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None);
+        for different in [
+            Event::new_scalar("null".into(), ScalarStyle::plain(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::single_quoted(), 0, None),
+            Event::new_scalar("~".into(), ScalarStyle::plain(), 1, None),
+            Event::new_scalar(
+                "~".into(),
+                ScalarStyle::plain(),
+                0,
+                Some(Cow::Owned(Tag::new("!", "tag"))),
+            ),
+            Event::alias(0),
+        ] {
+            assert_ne!(scalar, different);
+            assert_ne!(different, scalar);
+        }
+        assert_ne!(ScalarStyle::literal(), ScalarStyle::folded());
+        assert_ne!(
+            Event::document_start(false, None),
+            Event::document_start(true, None)
+        );
+        let token_type = TokenType::scalar(ScalarStyle::plain(), "~".into());
+        assert_ne!(
+            token_type,
+            TokenType::scalar(ScalarStyle::plain(), "null".into())
+        );
+        assert_ne!(
+            token_type,
+            TokenType::scalar(ScalarStyle::double_quoted(), "~".into())
+        );
+        assert_ne!(
+            Token::new(Span::empty(Marker::new(0, 1, 0)), token_type.clone()),
+            Token::new(Span::empty(Marker::new(1, 1, 1)), token_type)
+        );
+    }
+
+    #[cfg(all(feature = "test_equality", feature = "extended_details"))]
+    #[test]
+    fn optional_details_do_not_turn_default_values_into_equality_wildcards() {
+        let clipped = BlockScalarSyntax::new(Chomping::Clip, None, 2).unwrap();
+        let kept = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
+        assert_ne!(clipped, kept);
+        let span = Span::empty(Marker::new(0, 1, 0));
+        for style in [ScalarStyle::literal(), ScalarStyle::folded()] {
+            let styles = [
+                style,
+                style.with_block_syntax(clipped),
+                style.with_block_syntax(kept),
+            ];
+            // All pairs compare equal, including two different non-default metadata values.
+            // This checks symmetry and transitivity through the metadata-free constructor.
+            for left in styles {
+                for right in styles {
+                    assert_eq!(left, right);
+                    assert_eq!(
+                        Event::new_scalar("value".into(), left, 0, None),
+                        Event::new_scalar("value".into(), right, 0, None)
+                    );
+                    let left = TokenType::scalar(left, "value".into());
+                    let right = TokenType::scalar(right, "value".into());
+                    assert_eq!(left, right);
+                    assert_eq!(Token::new(span, left), Token::new(span, right));
+                }
+            }
+        }
     }
 
     #[cfg(all(feature = "test_equality", feature = "extended_details"))]

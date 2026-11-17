@@ -39,6 +39,9 @@ pub enum Chomping {
 /// Normal builds provide no equality, ordering, or hashing. Inspect the individual fields
 /// relevant to your use case. The opt-in `test_equality` feature enables equality for testing;
 /// it ignores optional byte distances, like [`crate::Marker`], and irrelevant indicator order.
+/// This is an explicit comparison of source syntax. Equality of [`ScalarStyle`], events, and
+/// tokens instead ignores this metadata altogether, keeping output comparisons independent of
+/// whether `extended_details` is enabled.
 #[cfg_attr(
     not(feature = "test_equality"),
     doc = r#"
@@ -297,11 +300,15 @@ pub enum ScalarKind {
 /// the library add fields later without changing your code. The enum and every variant are
 /// non-exhaustive, so a complete `match` also needs a fallback arm.
 ///
-/// Normal builds provide no equality, ordering, or hashing. Comparing whole style values would
+/// Normal builds provide no equality, ordering, or hashing. Comparing every style field would
 /// make classification depend on all present and future metadata. Match the variant instead,
 /// then inspect the fields relevant to your use case. [`Self::kind`] returns a comparable,
 /// fieldless category when a map key or ordering is needed. The opt-in `test_equality` feature
-/// enables whole-value equality for tests.
+/// compares only the notation category for tests. It ignores all `extended_details` fields:
+/// optional source information may be absent on synthetic values, and enabling its capture
+/// through another dependency must not change equality. Compare `implicit` or `syntax`
+/// explicitly when testing those details. Metadata defaults are not equality wildcards;
+/// source metadata is always excluded so equality remains transitive.
 ///
 /// Constructors create styles for synthetic events and alternative parser implementations.
 /// They are independent of classification: use patterns to inspect the resulting values.
@@ -362,7 +369,6 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "test_equality", derive(Eq, PartialEq))]
 #[non_exhaustive]
 pub enum ScalarStyle {
     /// A plain scalar or a synthesized empty node.
@@ -405,6 +411,16 @@ pub enum ScalarStyle {
         syntax: Option<BlockScalarSyntax>,
     },
 }
+
+#[cfg(feature = "test_equality")]
+impl PartialEq for ScalarStyle {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind() == other.kind()
+    }
+}
+
+#[cfg(feature = "test_equality")]
+impl Eq for ScalarStyle {}
 
 impl ScalarStyle {
     /// Return the style of explicitly written plain scalar text.

@@ -156,9 +156,12 @@
 //! start with unknown syntax (`None`); opt-in `with_*` methods attach known metadata.
 //!
 //! #### `test_equality` (disabled by default)
-//! Enables `PartialEq` and `Eq` for complete parser output in regression tests. It does not
-//! enable `extended_details`, hashing, or ordering. Classify variants with `matches!` and `{ .. }`
-//! in application code so future metadata fields do not alter those checks.
+//! Enables `PartialEq` and `Eq` for parser output in regression tests. Equality ignores optional
+//! `extended_details` metadata: synthetic values may lack source information, and another
+//! dependency enabling its capture must not change comparisons. Tests of source syntax should
+//! compare those fields explicitly. This feature does not enable `extended_details`, hashing,
+//! or ordering. Classify variants with `matches!` and `{ .. }` in application code so future
+//! metadata fields do not alter those checks.
 //!
 //! #### `error_messages` (enabled by default)
 //! Provides human-readable text through [`ErrorKind`]'s `Display` implementation and

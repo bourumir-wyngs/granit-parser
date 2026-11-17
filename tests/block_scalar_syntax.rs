@@ -1,5 +1,7 @@
 #![cfg(feature = "extended_details")]
 
+mod support;
+
 use granit_parser::{
     BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
@@ -536,6 +538,7 @@ fn scalar_events_distinguish_omitted_nodes_from_written_empty_content() {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(parsed, streaming, "{source:?}");
+        support::metadata::assert_parser_details_eq(&parsed, &streaming);
     }
 }
 
@@ -598,7 +601,7 @@ fn plain_style_patterns_keep_matching_omitted_nulls() {
         scalars[0].0.scalar().unwrap().0,
         scalars[1].0.scalar().unwrap().0
     );
-    assert_ne!(*scalars[0].0, *scalars[1].0);
+    assert_eq!(*scalars[0].0, *scalars[1].0);
 
     let tokens = Scanner::new(StrInput::new(source))
         .collect::<Result<Vec<_>, _>>()
@@ -669,6 +672,7 @@ fn header_only_eof_uses_minimum_inferred_content_indent() {
                         .collect::<Result<Vec<_>, _>>()
                         .expect("valid header-only YAML");
                     assert_eq!(parsed, streaming, "{source:?}");
+                    support::metadata::assert_parser_details_eq(&parsed, &streaming);
                 }
             }
         }

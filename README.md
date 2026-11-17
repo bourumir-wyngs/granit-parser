@@ -302,7 +302,7 @@ be added. For example, `Event::Scalar(value, style, _, _)` becomes
 `Event::Scalar { value, style, .. }`.
 
 Pattern matching checks the variant without constructing a value to compare against.
-Whole-value equality would also compare metadata and could change meaning when fields are
+Derived whole-value equality would also compare metadata and could change meaning when fields are
 added. Normal builds therefore provide no equality, hashing, or ordering for these output
 enums, `Token`, or `BlockScalarSyntax`. Inspect only the fields relevant to your application;
 `Event::scalar()` remains a read accessor.
@@ -339,11 +339,22 @@ fn synthetic_events() -> (Event<'static>, Event<'static>) {
 ```
 
 The opt-in `test_equality` feature enables `PartialEq` and `Eq` for real output types in
-regression tests. Hashing and ordering remain unavailable. Equality includes all current
-fields, with the established exception that optional byte coordinates are ignored across
-input backends; block-header order is irrelevant when either indicator is absent. Derived
-enum equality includes future fields automatically, and the block-header comparator uses
-exhaustive destructuring so a new field requires an explicit comparison policy.
+regression tests. Hashing and ordering remain unavailable. Output equality compares variants
+and their core payloads, including scalar notation categories, but **ignores extended details**:
+plain-scalar `implicit`, block-header `syntax`, and document-end `explicit`. These describe
+optional source information that synthetic events may lack. Comparing them as part of output
+equality would let another dependency enabling `extended_details` change a test's result.
+For example, a synthetic plain `"~"` scalar and an otherwise identical parsed omitted node
+compare equal both with and without extended details. Different scalar values, notation
+categories, anchors, tags, and existing document-start fields still compare unequal.
+
+Tests concerned with source syntax must inspect and compare those fields explicitly.
+`BlockScalarSyntax` itself can be compared with `test_equality`; its equality ignores optional
+byte coordinates across input backends and indicator order when either indicator is absent.
+Token equality still compares spans, whose optional byte coordinates are likewise ignored.
+Metadata is always excluded from output equality, even when both values have it: treating
+missing/default metadata as a wildcard would violate transitivity (two different headers
+could each equal an unknown header while differing from each other).
 Keep this feature in development dependencies: Cargo features are additive, so enabling it
 makes equality available throughout that build. Continue using patterns for classification.
 

@@ -95,7 +95,12 @@ impl YamlVersion {
 /// arm because new event variants may also be added.
 ///
 /// Normal builds provide no whole-event equality. Classify an event by its variant, then inspect
-/// only the fields you need. The opt-in `test_equality` feature enables equality for tests.
+/// only the fields you need. The opt-in `test_equality` feature enables equality for tests,
+/// comparing the event variant and its core fields. It ignores `extended_details` metadata:
+/// scalar implicitness, block-header syntax, and document-end explicitness. This optional
+/// source information may be unavailable on synthetic events; enabling its capture (including
+/// through another dependency) must not change equality. Compare those fields explicitly
+/// when testing source syntax. Existing document-start explicitness and version are compared.
 ///
 /// Constructors support synthetic events, [`ParserTrait`] implementations, and
 /// [`crate::ReplayParser`] streams. They also let adapters rebuild events while retaining a
@@ -142,7 +147,6 @@ fn equal_events(left: Event<'_>, right: Event<'_>) -> bool {
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub enum Event<'input> {
     /// Event generated at the very beginning of parsing.
     #[non_exhaustive]
@@ -267,6 +271,80 @@ pub enum Event<'input> {
     #[non_exhaustive]
     MappingEnd,
 }
+
+#[cfg(feature = "test_equality")]
+impl PartialEq for Event<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Keep this match and its field patterns exhaustive so new variants and fields
+        // require an explicit equality policy. Optional source details are ignored.
+        match self {
+            Self::StreamStart => matches!(other, Self::StreamStart),
+            Self::StreamEnd => matches!(other, Self::StreamEnd),
+            Self::DocumentStart { explicit, version } => matches!(
+                other,
+                Self::DocumentStart { explicit: other_explicit, version: other_version }
+                    if explicit == other_explicit && version == other_version
+            ),
+            Self::DocumentEnd {
+                #[cfg(feature = "extended_details")]
+                    explicit: _,
+            } => matches!(other, Self::DocumentEnd { .. }),
+            Self::Alias { anchor_id } => matches!(
+                other, Self::Alias { anchor_id: other_id } if anchor_id == other_id
+            ),
+            Self::Anchor { anchor_id, name } => matches!(
+                other, Self::Anchor { anchor_id: other_id, name: other_name }
+                    if anchor_id == other_id && name == other_name
+            ),
+            Self::UnresolvedAlias { name } => matches!(
+                other, Self::UnresolvedAlias { name: other_name } if name == other_name
+            ),
+            #[cfg(feature = "comments")]
+            Self::Comment { value, placement } => matches!(
+                other, Self::Comment { value: other_value, placement: other_placement }
+                    if value == other_value && placement == other_placement
+            ),
+            Self::Scalar {
+                value,
+                style,
+                anchor_id,
+                tag,
+            } => matches!(
+                other,
+                Self::Scalar {
+                    value: other_value, style: other_style,
+                    anchor_id: other_id, tag: other_tag,
+                } if value == other_value && style == other_style
+                    && anchor_id == other_id && tag == other_tag
+            ),
+            Self::SequenceStart {
+                style,
+                anchor_id,
+                tag,
+            } => matches!(
+                other,
+                Self::SequenceStart {
+                    style: other_style, anchor_id: other_id, tag: other_tag,
+                } if style == other_style && anchor_id == other_id && tag == other_tag
+            ),
+            Self::SequenceEnd => matches!(other, Self::SequenceEnd),
+            Self::MappingStart {
+                style,
+                anchor_id,
+                tag,
+            } => matches!(
+                other,
+                Self::MappingStart {
+                    style: other_style, anchor_id: other_id, tag: other_tag,
+                } if style == other_style && anchor_id == other_id && tag == other_tag
+            ),
+            Self::MappingEnd => matches!(other, Self::MappingEnd),
+        }
+    }
+}
+
+#[cfg(feature = "test_equality")]
+impl Eq for Event<'_> {}
 
 /// The notation style used for a YAML sequence or mapping.
 ///

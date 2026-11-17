@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+#[path = "../../tests/support/metadata.rs"]
+pub mod metadata;
+
 use std::collections::BTreeSet;
 
 use granit_parser::{
@@ -42,6 +45,7 @@ pub fn parse_with_options(input: &str, options: Options) {
         string.items, buffered.items,
         "StrInput and BufferedInput emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&string.items, &buffered.items);
     assert_eq!(
         string.error, buffered.error,
         "StrInput and BufferedInput returned different parser errors"
@@ -50,6 +54,7 @@ pub fn parse_with_options(input: &str, options: Options) {
         string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&string.items, &fallible.items);
     assert_eq!(
         string.error, fallible.error,
         "infallible and all-Ok fallible inputs returned different parser errors"
@@ -81,6 +86,7 @@ pub fn scan_with_options(input: &str, options: Options) {
         string.items, buffered.items,
         "StrInput and BufferedInput emitted different scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&string.items, &buffered.items);
     assert_eq!(
         string.error, buffered.error,
         "StrInput and BufferedInput returned different scanner errors"
@@ -89,6 +95,7 @@ pub fn scan_with_options(input: &str, options: Options) {
         string.items, fallible.items,
         "infallible and all-Ok fallible inputs emitted different scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&string.items, &fallible.items);
     assert_eq!(
         string.error, fallible.error,
         "infallible and all-Ok fallible inputs returned different scanner errors"
@@ -133,6 +140,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         parser_non_comments, parser_without.items,
         "comment suppression changed non-comment parser events"
     );
+    metadata::assert_parser_details_eq(&parser_non_comments, &parser_without.items);
     assert_eq!(
         parser_with.error, parser_without.error,
         "comment suppression changed the parser error"
@@ -155,6 +163,7 @@ pub fn check_comment_suppression_with_options(input: &str, mut options: Options)
         scanner_non_comments, scanner_without.items,
         "comment suppression changed non-comment scanner tokens"
     );
+    metadata::assert_scanner_details_eq(&scanner_non_comments, &scanner_without.items);
     assert_eq!(
         scanner_with.error, scanner_without.error,
         "comment suppression changed the scanner error"
@@ -189,6 +198,7 @@ fn check_load_matches_iterator<'input>(
         sink.items, expected.items,
         "`load` and the iterator emitted different parser events"
     );
+    metadata::assert_parser_details_eq(&sink.items, &expected.items);
     assert_eq!(
         error, expected.error,
         "`load` and the iterator returned different parser errors"
