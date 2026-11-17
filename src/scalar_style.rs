@@ -33,12 +33,14 @@ pub enum Chomping {
 /// a header comment contains Unicode. Use [`Self::header_byte_range`] to inspect byte distances
 /// when available. Indicator offsets are computed from the chomping mode, indentation digit,
 /// and their order.
+/// Distances and content indentation use `u32`. If a parsed value cannot fit, the scalar's
+/// syntax is `None`; scalar decoding and the accompanying span remain available.
 ///
 /// Normal builds provide no equality, ordering, or hashing. Inspect the individual fields
-/// relevant to your use case. The opt-in `test-equality` feature enables equality for testing;
+/// relevant to your use case. The opt-in `test_equality` feature enables equality for testing;
 /// it ignores optional byte distances, like [`crate::Marker`], and irrelevant indicator order.
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r#"
 Comparing synthetic syntax with parsed syntax is intentionally unavailable by default:
 
@@ -54,18 +56,18 @@ let _ = syntax == BlockScalarSyntax::default();
 #[non_exhaustive]
 pub struct BlockScalarSyntax {
     /// Character distance backwards from the scalar span's start to `|` or `>`.
-    pub header_chars_before_span: usize,
+    pub header_chars_before_span: u32,
     /// Byte distance backwards from the scalar span's start to `|` or `>`.
     ///
     /// Meaningful only when the accompanying span's start has a byte offset. Otherwise zero.
-    pub header_bytes_before_span: usize,
+    pub header_bytes_before_span: u32,
     /// Chomping mode selected by the header.
     pub chomping: Chomping,
     /// Explicit indentation digit (`1..=9`), or `None` when indentation was inferred.
     pub indentation_indicator: Option<u8>,
     /// Whether the indentation digit precedes the chomping sign when both are present.
     ///
-    /// Ignored when either indicator is absent, including by `test-equality` comparisons.
+    /// Ignored when either indicator is absent, including by `test_equality` comparisons.
     /// Parsed headers set this to `false` in that case.
     pub digit_first: bool,
     /// Effective number of leading indentation spaces removed from content lines.
@@ -73,7 +75,7 @@ pub struct BlockScalarSyntax {
     /// This is an absolute content indentation level, not the explicit indentation digit.
     /// For an inferred header ending at EOF before its line break, no content line exists:
     /// this reports the minimum level required by the enclosing block, not the header column.
-    pub content_indent: usize,
+    pub content_indent: u32,
 }
 
 #[cfg(feature = "extended_details")]
@@ -84,18 +86,24 @@ impl BlockScalarSyntax {
     /// * `indentation_indicator` is the optional explicit digit, which must be in `1..=9`.
     /// * `content_indent` is the effective absolute content indentation level.
     ///
-    /// Returns `None` for an invalid digit. Otherwise the sign precedes the digit when both
-    /// are present, and both backwards distances are zero. Set the public fields to describe
-    /// a different indicator order or a header preceding the scalar span.
+    /// Returns `None` for an invalid digit or content indentation larger than `u32::MAX`.
+    /// Otherwise the sign precedes the digit when both are present, and both backwards
+    /// distances are zero. Set the public fields to describe a different indicator order or
+    /// a header preceding the scalar span.
     #[must_use]
     pub const fn new(
         chomping: Chomping,
         indentation_indicator: Option<u8>,
         content_indent: usize,
     ) -> Option<Self> {
-        if matches!(indentation_indicator, Some(0 | 10..=u8::MAX)) {
+        if matches!(indentation_indicator, Some(0 | 10..=u8::MAX))
+            || content_indent > u32::MAX as usize
+        {
             return None;
         }
+        // The bound above preserves this constructor's usize parameter and const support.
+        #[allow(clippy::cast_possible_truncation)]
+        let content_indent = content_indent as u32;
         Some(Self {
             header_chars_before_span: 0,
             header_bytes_before_span: 0,
@@ -104,6 +112,22 @@ impl BlockScalarSyntax {
             digit_first: false,
             content_indent,
         })
+    }
+
+    /// Attach scanner-computed distances from the header to the scalar span's start.
+    ///
+    /// * `header_chars_before_span` is the backwards distance in characters.
+    /// * `header_bytes_before_span` is the backwards byte distance, or zero if unavailable.
+    ///
+    /// Returns updated syntax, or `None` if either distance cannot be represented by `u32`.
+    pub(crate) fn with_header_offsets(
+        mut self,
+        header_chars_before_span: usize,
+        header_bytes_before_span: usize,
+    ) -> Option<Self> {
+        self.header_chars_before_span = u32::try_from(header_chars_before_span).ok()?;
+        self.header_bytes_before_span = u32::try_from(header_bytes_before_span).ok()?;
+        Some(self)
     }
 
     /// Return the header-indicator length in both characters and bytes, excluding whitespace.
@@ -158,7 +182,7 @@ impl BlockScalarSyntax {
         let start = span
             .start
             .index()
-            .checked_sub(self.header_chars_before_span)?;
+            .checked_sub(usize::try_from(self.header_chars_before_span).ok()?)?;
         Some(start..start.checked_add(self.header_len())?)
     }
 
@@ -171,7 +195,7 @@ impl BlockScalarSyntax {
         let start = span
             .start
             .byte_offset()?
-            .checked_sub(self.header_bytes_before_span)?;
+            .checked_sub(usize::try_from(self.header_bytes_before_span).ok()?)?;
         Some(start..start.checked_add(self.header_len())?)
     }
 
@@ -219,8 +243,8 @@ impl BlockScalarSyntax {
         (end <= header.end).then_some(start..end)
     }
 
-    #[cfg(feature = "test-equality")]
-    fn identity(&self) -> (usize, Chomping, Option<u8>, bool, usize) {
+    #[cfg(feature = "test_equality")]
+    fn identity(&self) -> (u32, Chomping, Option<u8>, bool, u32) {
         // Exhaustive destructuring makes every added field require an explicit equality policy.
         let Self {
             header_chars_before_span,
@@ -240,14 +264,14 @@ impl BlockScalarSyntax {
     }
 }
 
-#[cfg(all(feature = "extended_details", feature = "test-equality"))]
+#[cfg(all(feature = "extended_details", feature = "test_equality"))]
 impl PartialEq for BlockScalarSyntax {
     fn eq(&self, other: &Self) -> bool {
         self.identity() == other.identity()
     }
 }
 
-#[cfg(all(feature = "extended_details", feature = "test-equality"))]
+#[cfg(all(feature = "extended_details", feature = "test_equality"))]
 impl Eq for BlockScalarSyntax {}
 
 /// A scalar's notation category, independent of source positions and header metadata.
@@ -276,7 +300,7 @@ pub enum ScalarKind {
 /// Normal builds provide no equality, ordering, or hashing. Comparing whole style values would
 /// make classification depend on all present and future metadata. Match the variant instead,
 /// then inspect the fields relevant to your use case. [`Self::kind`] returns a comparable,
-/// fieldless category when a map key or ordering is needed. The opt-in `test-equality` feature
+/// fieldless category when a map key or ordering is needed. The opt-in `test_equality` feature
 /// enables whole-value equality for tests.
 ///
 /// Constructors create styles for synthetic events and alternative parser implementations.
@@ -294,7 +318,7 @@ pub enum ScalarKind {
 /// ```
 ///
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r#"
 Whole-style equality is intentionally unavailable by default:
 
@@ -316,7 +340,7 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
 ///
 /// Non-exhaustive variants cannot be constructed directly outside this crate:
 ///
-/// ```compile_fail,E0639
+/// ```compile_fail,E0603
 /// use granit_parser::ScalarStyle;
 /// let style = ScalarStyle::SingleQuoted;
 /// ```
@@ -338,7 +362,7 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "test-equality", derive(Eq, PartialEq))]
+#[cfg_attr(feature = "test_equality", derive(Eq, PartialEq))]
 #[non_exhaustive]
 pub enum ScalarStyle {
     /// A plain scalar or a synthesized empty node.
@@ -363,7 +387,8 @@ pub enum ScalarStyle {
     Literal {
         /// Header syntax relative to the accompanying scalar span, when known.
         ///
-        /// Parsed block styles contain `Some`; synthetic styles start with `None`.
+        /// Parsed block styles contain `Some` when all details fit in `u32`;
+        /// synthetic styles and unrepresentable parsed details use `None`.
         /// Available only with `extended_details`.
         #[cfg(feature = "extended_details")]
         syntax: Option<BlockScalarSyntax>,
@@ -373,7 +398,8 @@ pub enum ScalarStyle {
     Folded {
         /// Header syntax relative to the accompanying scalar span, when known.
         ///
-        /// Parsed block styles contain `Some`; synthetic styles start with `None`.
+        /// Parsed block styles contain `Some` when all details fit in `u32`;
+        /// synthetic styles and unrepresentable parsed details use `None`.
         /// Available only with `extended_details`.
         #[cfg(feature = "extended_details")]
         syntax: Option<BlockScalarSyntax>,
@@ -514,7 +540,8 @@ impl ScalarStyle {
 
     /// Return known block-header syntax for literal and folded scalars.
     ///
-    /// Returns `None` for other styles and synthetic block styles with no attached syntax.
+    /// Returns `None` for other styles, synthetic block styles with no attached syntax, and
+    /// parsed block styles whose header distances or content indentation exceed `u32::MAX`.
     /// Available only with `extended_details`.
     #[cfg(feature = "extended_details")]
     #[must_use]
@@ -529,6 +556,38 @@ impl ScalarStyle {
 #[cfg(test)]
 mod tests {
     use super::{ScalarKind, ScalarStyle};
+
+    #[cfg(all(feature = "extended_details", target_pointer_width = "64"))]
+    #[test]
+    fn header_offsets_reject_overflow_without_truncating() {
+        use super::BlockScalarSyntax;
+
+        let maximum = usize::try_from(u32::MAX).unwrap();
+        let overflow = maximum + 1;
+        for (characters, bytes) in [(0, 0), (maximum, 0), (0, maximum), (maximum, maximum)] {
+            let syntax = BlockScalarSyntax::default()
+                .with_header_offsets(characters, bytes)
+                .unwrap();
+            assert_eq!(
+                usize::try_from(syntax.header_chars_before_span).unwrap(),
+                characters
+            );
+            assert_eq!(
+                usize::try_from(syntax.header_bytes_before_span).unwrap(),
+                bytes
+            );
+        }
+        for (characters, bytes) in [
+            (overflow, 0),
+            (0, overflow),
+            (maximum, overflow),
+            (overflow, maximum),
+        ] {
+            assert!(BlockScalarSyntax::default()
+                .with_header_offsets(characters, bytes)
+                .is_none());
+        }
+    }
 
     #[test]
     fn basic_constructors_keep_the_same_signature_with_either_feature_set() {

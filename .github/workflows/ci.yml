@@ -47,7 +47,7 @@ jobs:
       - run: rustup target add wasm32v1-none --toolchain stable
       - uses: Swatinem/rust-cache@v2
       - name: Run library tests without default features
-        run: cargo test --lib --no-default-features --features test-equality
+        run: cargo test --lib --no-default-features --features test_equality
       - name: Check library for no_std target
         run: cargo check --lib --no-default-features --target wasm32v1-none
       - name: Check parser comments for no_std target
@@ -74,21 +74,21 @@ jobs:
       - name: Run build
         run: cargo build
       - name: Run tests
-        run: cargo test -v --features test-equality
+        run: cargo test -v --features test_equality
       - name: Run tests with extended details
-        run: cargo test --features extended_details,test-equality
+        run: cargo test --features extended_details,test_equality
       - name: Run tests without parser comments
-        run: cargo test --no-default-features --features std,error_messages,test-equality
+        run: cargo test --no-default-features --features std,error_messages,test_equality
       - name: Run extended tests without parser comments
-        run: cargo test --no-default-features --features std,error_messages,extended_details,test-equality
+        run: cargo test --no-default-features --features std,error_messages,extended_details,test_equality
       - name: Check default consumer API
         run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked
       - name: Check opt-in consumer equality
-        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
+        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test_equality
       - name: Check extended consumer API
         run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details
       - name: Check extended consumer equality
-        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test-equality
+        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test_equality
       # cargo test compiles examples but does not execute the assertions in main.
       - name: Run learning examples with default features
         run: |

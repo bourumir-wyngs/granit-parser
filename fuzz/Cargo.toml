@@ -14,7 +14,7 @@ extended_details = ["granit-parser/extended_details"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
-granit-parser = { path = "..", default-features = false, features = ["std", "error_messages", "test-equality"] }
+granit-parser = { path = "..", default-features = false, features = ["std", "error_messages", "test_equality"] }
 
 [[bin]]
 name = "aliases_merges"

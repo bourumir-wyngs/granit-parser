@@ -102,8 +102,14 @@ fn headers_preserve_style_chomping_digits_and_both_indicator_orders() {
             assert_eq!(span.start.line(), 2);
             assert_eq!(span.start.col(), 2);
             assert_eq!(span.end.byte_offset(), source.find("next:"));
-            assert_eq!(syntax.header_chars_before_span, body_start - start);
-            assert_eq!(syntax.header_bytes_before_span, body_start - start);
+            assert_eq!(
+                syntax.header_chars_before_span,
+                u32::try_from(body_start - start).unwrap()
+            );
+            assert_eq!(
+                syntax.header_bytes_before_span,
+                u32::try_from(body_start - start).unwrap()
+            );
         }
     }
 }
@@ -126,8 +132,14 @@ fn unicode_comments_and_crlf_use_distinct_byte_and_character_distances() {
         syntax.header_char_range(&span),
         Some(header_char..header_char + 3)
     );
-    assert_eq!(syntax.header_bytes_before_span, body_byte - header_byte);
-    assert_eq!(syntax.header_chars_before_span, body_char - header_char);
+    assert_eq!(
+        syntax.header_bytes_before_span,
+        u32::try_from(body_byte - header_byte).unwrap()
+    );
+    assert_eq!(
+        syntax.header_chars_before_span,
+        u32::try_from(body_char - header_char).unwrap()
+    );
     assert!(syntax.header_bytes_before_span > syntax.header_chars_before_span);
     assert_eq!(span.start.line(), 2);
     assert_eq!(span.start.col(), 2);
@@ -330,6 +342,64 @@ fn checked_ranges_reject_underflow_and_overflow() {
     let inside_utf8 = Span::empty(Marker::new(0, 1, 0).with_byte_offset(Some(1)));
     assert_eq!(syntax.header_slice(&inside_utf8, "é"), None);
     assert_eq!(syntax.header_slice(&maximum, ""), None);
+}
+
+#[test]
+fn maximum_compact_offsets_and_indentation_remain_available() {
+    let maximum = usize::try_from(u32::MAX).unwrap();
+    let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), maximum).unwrap();
+    syntax.header_chars_before_span = u32::MAX;
+    syntax.header_bytes_before_span = u32::MAX;
+    assert_eq!(syntax.content_indent, u32::MAX);
+
+    let span = Span::empty(Marker::new(maximum, 1, 0).with_byte_offset(Some(maximum)));
+    assert_eq!(syntax.header_char_range(&span), Some(0..3));
+    assert_eq!(syntax.header_byte_range(&span), Some(0..3));
+    assert_eq!(syntax.chomping_char_range(&span), Some(1..2));
+    assert_eq!(syntax.indentation_byte_range(&span), Some(2..3));
+
+    let before_header =
+        Span::empty(Marker::new(maximum - 1, 1, 0).with_byte_offset(Some(maximum - 1)));
+    assert_eq!(syntax.header_char_range(&before_header), None);
+    assert_eq!(syntax.header_byte_range(&before_header), None);
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn synthetic_indentation_above_u32_is_unavailable_instead_of_truncated() {
+    let too_large = usize::try_from(u32::MAX).unwrap() + 1;
+    assert!(BlockScalarSyntax::new(Chomping::Clip, None, too_large).is_none());
+    assert!(BlockScalarSyntax::new(Chomping::Keep, Some(9), usize::MAX).is_none());
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn compact_distances_support_absolute_positions_above_four_gib() {
+    let header_character = usize::try_from(u32::MAX).unwrap() + 100;
+    let header_byte = header_character + 50;
+    let mut syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+    syntax.header_chars_before_span = 6;
+    syntax.header_bytes_before_span = 9;
+    let span = Span::empty(
+        Marker::new(header_character + 6, 2, 2).with_byte_offset(Some(header_byte + 9)),
+    );
+
+    assert_eq!(
+        syntax.header_char_range(&span),
+        Some(header_character..header_character + 3)
+    );
+    assert_eq!(
+        syntax.header_byte_range(&span),
+        Some(header_byte..header_byte + 3)
+    );
+    assert_eq!(
+        syntax.chomping_char_range(&span),
+        Some(header_character + 1..header_character + 2)
+    );
+    assert_eq!(
+        syntax.indentation_byte_range(&span),
+        Some(header_byte + 2..header_byte + 3)
+    );
 }
 
 #[test]

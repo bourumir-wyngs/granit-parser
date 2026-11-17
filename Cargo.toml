@@ -47,7 +47,7 @@ debug_prints = ["std"]
 # Retain optional block-header syntax, omitted-node flags, and document-end markers.
 extended_details = []
 # Opt in to full-value equality for regression tests; normal consumers should match variants.
-test-equality = []
+test_equality = []
 
 [dependencies]
 arraydeque = { version = "0.5.1", default-features = false }
@@ -56,7 +56,7 @@ smallvec = {  version = ">=1.6.1, < 2.0.0" }
 [dev-dependencies]
 libtest-mimic = "0.8.2"
 # Cargo unifies this only for development targets, keeping normal library builds comparison-free.
-granit-parser = { path = ".", default-features = false, features = ["test-equality"] }
+granit-parser = { path = ".", default-features = false, features = ["test_equality"] }
 
 [[test]]
 name = "yaml-test-suite"

@@ -12,7 +12,7 @@
   `folded()`, and `document_end()` take no arguments. With details enabled, synthetic block
   styles default to `syntax: None`, plain styles to `implicit: false`, and document ends to
   `explicit: false`. Use `with_block_syntax`, `with_implicit`, and `with_explicit_end` to set
-  optional metadata; parsed block scalars contain `Some(syntax)`.
+  optional metadata; parsed block scalars contain `Some(syntax)` when representable.
 
 - With `extended_details`, expose optional `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
   `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
@@ -20,7 +20,10 @@
   Retain chomping, the explicit indentation digit, their order, and effective content
   indentation. Compute indicator offsets from these values instead of storing redundant
   positions. Header positions use compact backward character/byte distances from
-  the accompanying span, rather than an additional `Marker`. Checked range accessors locate
+  the accompanying span, rather than an additional `Marker`. Store both distances and content
+  indentation as `u32`; unrepresentable details yield `syntax: None` without changing decoding
+  or spans. Preserve the constructor's `usize` indentation parameter with checked conversion.
+  Checked range accessors locate
   headers and individual indicators without rescanning; byte ranges are unavailable for
   character-iterator inputs. Existing event spans and decoded scalar values are preserved.
 - Convert public `Event` and `TokenType` payloads to named fields. Make every variant of
@@ -31,7 +34,7 @@
   supporting custom parsers, ownership conversions, and replay. `Event::scalar()` remains an
   accessor; construct a scalar with `Event::new_scalar(value, style, anchor_id, tag)`.
   Unit-only enums such as `Chomping`, `ScalarKind`, and `StructureStyle` remain comparable.
-- Add the opt-in `test-equality` feature for `PartialEq`/`Eq` on real output types, enabling
+- Add the opt-in `test_equality` feature for `PartialEq`/`Eq` on real output types, enabling
   integration and downstream regression tests without mirrored test enums. Hashing and ordering
   remain unavailable for these types. Block-header equality ignores optional byte coordinates
   and irrelevant indicator order; exhaustive field destructuring requires an explicit equality

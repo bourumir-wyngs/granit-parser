@@ -456,7 +456,7 @@ impl AsRef<str> for Comment<'_> {
 /// Use `matches!`, `if let`, or `match` with `{ .. }` to inspect a token variant. Every
 /// variant is non-exhaustive, even if it currently has no fields, so the library can add
 /// metadata without changing those patterns. A complete match also needs a fallback arm.
-/// Normal builds provide no whole-token equality; the opt-in `test-equality` feature enables
+/// Normal builds provide no whole-token equality; the opt-in `test_equality` feature enables
 /// equality for tests. Constructors support synthetic token streams and scanner adapters.
 ///
 /// ```
@@ -466,7 +466,7 @@ impl AsRef<str> for Comment<'_> {
 /// ```
 ///
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r#"
 ```compile_fail,E0369
 use granit_parser::TokenType;
@@ -484,7 +484,7 @@ fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub enum TokenType<'input> {
     /// Start of the stream.
     #[non_exhaustive]
@@ -756,7 +756,7 @@ impl<'input> TokenType<'input> {
 
 /// A scanner token.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub struct Token<'input>(Span, TokenType<'input>);
 
 impl<'input> Token<'input> {
@@ -789,7 +789,7 @@ impl<'input> Token<'input> {
 ///
 /// Public [`Token`] values are reconstructed when the scanner emits them.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub(crate) enum QueuedTokenType<'input> {
     StreamStart,
     StreamEnd,
@@ -887,7 +887,7 @@ impl<'input> From<TokenType<'input>> for QueuedTokenType<'input> {
 
 /// A compact token stored by the scanner before it is emitted publicly.
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub(crate) struct QueuedToken<'input>(pub(crate) Span, pub(crate) QueuedTokenType<'input>);
 
 impl<'input> QueuedToken<'input> {
@@ -3616,7 +3616,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         #[cfg(feature = "extended_details")]
         let header_start = start_mark;
         #[cfg(feature = "extended_details")]
-        let mut syntax = BlockScalarSyntax::default();
+        let mut digit_first = false;
         let mut chomping = Chomping::Clip;
         let mut increment: u8 = 0;
         let mut indent: usize = 0;
@@ -3664,7 +3664,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             if self.input.peek() == '+' || self.input.peek() == '-' {
                 #[cfg(feature = "extended_details")]
                 {
-                    syntax.digit_first = true;
+                    digit_first = true;
                 }
                 if self.input.peek() == '+' {
                     chomping = Chomping::Keep;
@@ -3675,11 +3675,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        #[cfg(feature = "extended_details")]
-        {
-            syntax.chomping = chomping;
-            syntax.indentation_indicator = (increment > 0).then_some(increment);
-        }
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         // Check if we are at the end of the line.
@@ -3726,13 +3721,22 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // indentation. The scanner's cursor is still on the header (possibly after a
         // comment), so its column must not become the reported content indentation.
         #[cfg(feature = "extended_details")]
-        {
-            syntax.content_indent = if increment == 0 && self.mark.line() == header_start.line() {
+        let syntax = {
+            let content_indent = if increment == 0 && self.mark.line() == header_start.line() {
                 (self.indent + 1).max(0) as usize
             } else {
                 indent
             };
-        }
+            BlockScalarSyntax::new(
+                chomping,
+                (increment > 0).then_some(increment),
+                content_indent,
+            )
+            .map(|mut syntax| {
+                syntax.digit_first = digit_first;
+                syntax
+            })
+        };
         self.ensure_current_char_is_printable()?;
 
         // We have an end-of-stream with no content, e.g.:
@@ -3766,7 +3770,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
                 ScalarStyle::folded()
             };
             #[cfg(feature = "extended_details")]
-            let style = style.with_block_syntax(syntax);
+            let style = syntax.map_or(style, |syntax| style.with_block_syntax(syntax));
             return Ok(Token(
                 Span::new(start_mark, self.mark),
                 TokenType::Scalar {
@@ -3796,13 +3800,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
 
         let start_mark = self.mark;
         #[cfg(feature = "extended_details")]
-        {
-            syntax.header_chars_before_span = start_mark.index() - header_start.index();
-            syntax.header_bytes_before_span = start_mark
+        let syntax = syntax.and_then(|syntax| {
+            let header_chars_before_span = start_mark.index() - header_start.index();
+            let header_bytes_before_span = start_mark
                 .byte_offset()
                 .zip(header_start.byte_offset())
                 .map_or(0, |(body, header)| body - header);
-        }
+            syntax.with_header_offsets(header_chars_before_span, header_bytes_before_span)
+        });
         while self.mark.col == indent && !self.input.next_is_z() {
             self.ensure_current_char_is_printable()?;
 
@@ -3894,7 +3899,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ScalarStyle::folded()
         };
         #[cfg(feature = "extended_details")]
-        let style = style.with_block_syntax(syntax);
+        let style = syntax.map_or(style, |syntax| style.with_block_syntax(syntax));
         Ok(Token(
             span,
             TokenType::Scalar {

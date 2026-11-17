@@ -95,7 +95,7 @@ impl YamlVersion {
 /// arm because new event variants may also be added.
 ///
 /// Normal builds provide no whole-event equality. Classify an event by its variant, then inspect
-/// only the fields you need. The opt-in `test-equality` feature enables equality for tests.
+/// only the fields you need. The opt-in `test_equality` feature enables equality for tests.
 ///
 /// Constructors support synthetic events, [`ParserTrait`] implementations, and
 /// [`crate::ReplayParser`] streams. They also let adapters rebuild events while retaining a
@@ -111,7 +111,7 @@ impl YamlVersion {
 /// ```
 ///
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r#"
 Whole-event equality is intentionally unavailable by default:
 
@@ -142,7 +142,7 @@ fn equal_events(left: Event<'_>, right: Event<'_>) -> bool {
 /// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
-#[cfg_attr(feature = "test-equality", derive(PartialEq, Eq))]
+#[cfg_attr(feature = "test_equality", derive(PartialEq, Eq))]
 pub enum Event<'input> {
     /// Event generated at the very beginning of parsing.
     #[non_exhaustive]

@@ -4,7 +4,7 @@
 //! therefore check the comparison contract seen by ordinary dependencies.
 
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r"
 Default consumers classify variants with patterns rather than equality.
 
@@ -114,7 +114,7 @@ pub struct ComparisonContract;
 
 #[cfg(feature = "extended_details")]
 #[cfg_attr(
-    not(feature = "test-equality"),
+    not(feature = "test_equality"),
     doc = r"
 ```compile_fail,E0369
 use granit_parser::BlockScalarSyntax;
@@ -403,7 +403,7 @@ mod tests {
             if comment.text() == " payload" && comment.placement() == Placement::Right));
     }
 
-    #[cfg(feature = "test-equality")]
+    #[cfg(feature = "test_equality")]
     #[test]
     fn opt_in_equality_compares_real_events_and_tokens() {
         use granit_parser::{BufferedInput, Parser, Scanner, StrInput};
@@ -456,7 +456,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "test-equality", feature = "extended_details"))]
+    #[cfg(all(feature = "test_equality", feature = "extended_details"))]
     #[test]
     fn opt_in_syntax_equality_tracks_fields_and_normalizes_optional_coordinates() {
         let syntax = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
@@ -516,6 +516,25 @@ mod tests {
             Event::document_end().with_explicit_end(true),
             Event::DocumentEnd { explicit: true, .. }
         ));
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn compact_metadata_keeps_the_existing_constructor_signature() {
+        const ZERO: Option<BlockScalarSyntax> = BlockScalarSyntax::new(Chomping::Clip, None, 0);
+        let construct: fn(Chomping, Option<u8>, usize) -> Option<BlockScalarSyntax> =
+            BlockScalarSyntax::new;
+        assert_eq!(ZERO.unwrap().content_indent, 0);
+        let mut syntax = construct(Chomping::Clip, None, 2).unwrap();
+        // These assignments and reads verify the public field types, not only their values.
+        let distance: u32 = 5;
+        syntax.header_chars_before_span = distance;
+        syntax.header_bytes_before_span = distance;
+        let indentation: u32 = syntax.content_indent;
+        assert_eq!(indentation, 2);
+        let span = Span::empty(Marker::new(10, 2, 2).with_byte_offset(Some(10)));
+        assert_eq!(syntax.header_char_range(&span), Some(5..6));
+        assert_eq!(syntax.header_byte_range(&span), Some(5..6));
     }
 
     #[cfg(feature = "extended_details")]

@@ -318,7 +318,7 @@ Constructor signatures are stable across feature configurations. `ScalarStyle::l
 `ScalarStyle::folded()`, and `Event::document_end()` take no arguments. When `extended_details`
 is enabled, synthetic block styles have `syntax: None`, plain styles default to
 `implicit: false`, and synthetic document ends default to `explicit: false`. The parser fills
-`Some(syntax)` for parsed block scalars and records the two flags. Use `with_block_syntax`,
+`Some(syntax)` for parsed block scalars when their details fit in `u32`, and records the two flags. Use `with_block_syntax`,
 `with_implicit`, and `with_explicit_end` to supply those details explicitly. These builders
 are available only with the feature and leave unrelated variants unchanged.
 `ScalarStyle::implicit_plain()` is a feature-gated shorthand for `plain().with_implicit(true)`.
@@ -338,7 +338,7 @@ fn synthetic_events() -> (Event<'static>, Event<'static>) {
 }
 ```
 
-The opt-in `test-equality` feature enables `PartialEq` and `Eq` for real output types in
+The opt-in `test_equality` feature enables `PartialEq` and `Eq` for real output types in
 regression tests. Hashing and ordering remain unavailable. Equality includes all current
 fields, with the established exception that optional byte coordinates are ignored across
 input backends; block-header order is irrelevant when either indicator is absent. Derived
@@ -381,6 +381,9 @@ indentation digit, their order (`digit_first`), and effective content indentatio
 The `chomping_offset()` and `indentation_offset()` methods compute indicator positions
 from these values; the order flag has no effect when either indicator is absent.
 Header locations are stored as backward distances from the accompanying `Span::start`.
+Both distances and content indentation use `u32`. If any recorded value exceeds `u32::MAX`,
+the parser returns `syntax: None` while retaining the decoded scalar and its original span.
+Large absolute source positions are supported as long as these relative values fit.
 Keep the original span with the style; changing its start invalidates those distances.
 The existing span still has its original meaning, and a header range excludes the trailing
 whitespace, comment, and line break.
@@ -664,19 +667,19 @@ Run the tests from a repository checkout with the official YAML suite initialize
 
 ```sh
 git submodule update --init tests/yaml-test-suite
-cargo test --features test-equality
-cargo test --features test-equality,extended_details
-cargo test --features test-equality --test yaml-test-suite -- ::strict
+cargo test --features test_equality
+cargo test --features test_equality,extended_details
+cargo test --features test_equality --test yaml-test-suite -- ::strict
 ```
 
-The repository enables `test-equality` through a development dependency so its unit and
+The repository enables `test_equality` through a development dependency so its unit and
 integration tests compare real parser values. When testing an extracted crate package,
 enable the feature explicitly; the YAML suite still requires a repository checkout.
 Downstream tests can enable it without changing ordinary dependency builds:
 
 ```toml
 [dev-dependencies]
-granit-parser = { version = "3", features = ["test-equality"] }
+granit-parser = { version = "3", features = ["test_equality"] }
 ```
 
 An independent consumer fixture verifies that constructors work and equality remains
@@ -684,8 +687,8 @@ unavailable without the feature, then checks the opt-in comparisons:
 
 ```sh
 cargo test --manifest-path tests/api-contract/Cargo.toml --locked
-cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
-cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test-equality
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test_equality
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test_equality
 ```
 
 Strict mode runs every active upstream case without case-specific overrides. The

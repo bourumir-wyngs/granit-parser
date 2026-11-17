@@ -155,7 +155,7 @@
 //! Basic constructors have the same signatures in either configuration. Synthetic block styles
 //! start with unknown syntax (`None`); opt-in `with_*` methods attach known metadata.
 //!
-//! #### `test-equality` (disabled by default)
+//! #### `test_equality` (disabled by default)
 //! Enables `PartialEq` and `Eq` for complete parser output in regression tests. It does not
 //! enable `extended_details`, hashing, or ordering. Classify variants with `matches!` and `{ .. }`
 //! in application code so future metadata fields do not alter those checks.
