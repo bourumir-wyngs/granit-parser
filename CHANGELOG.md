@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 (unreleased, breaking changes)
+## 3.0.0 (breaking changes)
 
 **Source syntax and API migration**
 
@@ -49,6 +49,7 @@
 - With `extended_details`, add `Event::DocumentEnd { explicit }` to distinguish a written
   `...` marker from an implicit document end.
 
+## 2.2.0
 
 **Support user cases**
 
