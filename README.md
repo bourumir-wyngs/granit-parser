@@ -32,8 +32,10 @@ Its primary goals are:
 * improved support for formatting, linting, syntax highlight and other comparable projects that need additional metadata  
 * quickly incorporate the changes we need for the upstream dependency [serde-saphyr](https://crates.io/crates/serde-saphyr).
 
-`granit-parser` 3.0 exposes block-scalar header syntax and uses named, non-exhaustive
-fields on variants carrying data. See [Migrating to 3.0](#migrating-to-30) below and
+`granit-parser` 3.0 uses named, non-exhaustive fields on variants carrying data.
+The optional `extended_details` feature exposes additional source syntax metadata; it is off
+by default. Without it, the new metadata fields and their capture code are compiled out,
+while decoded values, existing spans, and basic style categories remain available. See [Migrating to 3.0](#migrating-to-30) below and
 [`CHANGELOG.md`](CHANGELOG.md) for earlier migrations.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
@@ -51,6 +53,13 @@ defaults to `true` with the feature enabled and `false` without it. Setting it t
 effect without the feature. Comments are still recognized and validated as YAML syntax.
 
 Document starts are emitted as [`Event::DocumentStart { explicit, version, .. }`](https://docs.rs/granit-parser/latest/granit_parser/enum.Event.html#variant.DocumentStart), where `version` is the optional [`YamlVersion`](https://docs.rs/granit-parser/latest/granit_parser/struct.YamlVersion.html) declared by a preceding `%YAML` directive for that document.
+
+Enable `extended_details` to run this example and inspect the additional fields:
+
+```toml
+[dependencies]
+granit-parser = { version = "3", features = ["extended_details"] }
+```
 
 The example also prints literal/folded header syntax: raw indicators, character and byte
 ranges, chomping, explicit indentation, and effective content indentation. The Unicode header
@@ -247,13 +256,13 @@ block header: style=Literal text=Some("|") chars=Some(438..439) bytes=Some(438..
   chomping=Clip indentation_indicator=None content_indent=2
   chomping indicator: chars=None bytes=None
   indentation indicator: chars=None bytes=None
-Scalar { value: "first line\nsecond line\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
+Scalar { value: "first line\nsecond line\n", style: Literal { syntax: Some(BlockScalarSyntax { header_chars_before_span: 4, header_bytes_before_span: 4, chomping: Clip, indentation_indicator: None, digit_first: false, content_indent: 2 }) }, anchor_id: 0, tag: None } bytes=Some(442..467) source=Some("first line\n  second line\n")
 Scalar { value: "folded", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(467..473) source=Some("folded")
 block header: style=Folded text=Some(">2-") chars=Some(475..478) bytes=Some(475..478)
   chomping=Strip indentation_indicator=Some(2) content_indent=2
   chomping indicator: chars=Some(477..478) bytes=Some(477..478)
   indentation indicator: chars=Some(476..477) bytes=Some(476..477)
-Scalar { value: "hello world", style: Folded { syntax: BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 } }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
+Scalar { value: "hello world", style: Folded { syntax: Some(BlockScalarSyntax { header_chars_before_span: 14, header_bytes_before_span: 16, chomping: Strip, indentation_indicator: Some(2), digit_first: true, content_indent: 2 }) }, anchor_id: 0, tag: None } bytes=Some(491..505) source=Some("hello\n  world\n")
 Comment { value: " žąsis", placement: Right } bytes=Some(479..488) source=Some("# žąsis")
 Scalar { value: "nested", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(505..511) source=Some("nested")
 MappingStart { style: Block, anchor_id: 0, tag: None } bytes=Some(515..515) source=Some("")
@@ -262,7 +271,7 @@ block header: style=Literal text=Some("|+2") chars=Some(519..522) bytes=Some(521
   chomping=Keep indentation_indicator=Some(2) content_indent=4
   chomping indicator: chars=Some(520..521) bytes=Some(522..523)
   indentation indicator: chars=Some(521..522) bytes=Some(523..524)
-Scalar { value: "last line\n\n", style: Literal { syntax: BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 } }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
+Scalar { value: "last line\n\n", style: Literal { syntax: Some(BlockScalarSyntax { header_chars_before_span: 8, header_bytes_before_span: 8, chomping: Keep, indentation_indicator: Some(2), digit_first: false, content_indent: 4 }) }, anchor_id: 0, tag: None } bytes=Some(529..540) source=Some("last line\n\n")
 MappingEnd bytes=Some(540..540) source=Some("")
 Scalar { value: "omitted", style: Plain { implicit: false }, anchor_id: 0, tag: None } bytes=Some(540..547) source=Some("omitted")
 plain scalar: value="~" implicit=true
@@ -300,10 +309,34 @@ enums, `Token`, or `BlockScalarSyntax`. Inspect only the fields relevant to your
 
 Constructors serve a different purpose: creating synthetic values for custom `ParserTrait`
 implementations, event transformations, ownership conversions, and `ReplayParser` streams.
-Use `Event::new_scalar(value, style, anchor_id, tag)`, `ScalarStyle::plain()` or
-`ScalarStyle::implicit_plain()`, and the corresponding constructors for other variants.
+Use `Event::new_scalar(value, style, anchor_id, tag)`, `ScalarStyle::plain()`, and the
+corresponding constructors for other variants.
 Unit variants also have constructors, such as `Event::stream_end()`; every variant remains
 non-exhaustive. Construction is supported independently of whether comparison is enabled.
+
+Constructor signatures are stable across feature configurations. `ScalarStyle::literal()`,
+`ScalarStyle::folded()`, and `Event::document_end()` take no arguments. When `extended_details`
+is enabled, synthetic block styles have `syntax: None`, plain styles default to
+`implicit: false`, and synthetic document ends default to `explicit: false`. The parser fills
+`Some(syntax)` for parsed block scalars and records the two flags. Use `with_block_syntax`,
+`with_implicit`, and `with_explicit_end` to supply those details explicitly. These builders
+are available only with the feature and leave unrelated variants unchanged.
+`ScalarStyle::implicit_plain()` is a feature-gated shorthand for `plain().with_implicit(true)`.
+Future optional metadata must receive a documented default and an opt-in setter rather than
+adding required parameters to existing constructors.
+
+```rust
+use granit_parser::{BlockScalarSyntax, Chomping, Event, ScalarStyle};
+
+// Requires extended_details; basic constructors also work without it.
+fn synthetic_events() -> (Event<'static>, Event<'static>) {
+    let syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 2).unwrap();
+    let style = ScalarStyle::literal().with_block_syntax(syntax);
+    let scalar = Event::new_scalar("generated".into(), style, 0, None);
+    let end = Event::document_end().with_explicit_end(true);
+    (scalar, end)
+}
+```
 
 The opt-in `test-equality` feature enables `PartialEq` and `Eq` for real output types in
 regression tests. Hashing and ordering remain unavailable. Equality includes all current
@@ -325,12 +358,6 @@ fn inspect(event: &Event<'_>) {
         if value == "~" && matches!(style, ScalarStyle::Plain { .. }) {
             println!("plain tilde or omitted value");
         }
-        if let ScalarStyle::Plain { implicit, .. } = style {
-            println!("omitted: {implicit}");
-        }
-        if let ScalarStyle::Literal { syntax, .. } = style {
-            println!("literal chomping: {:?}", syntax.chomping);
-        }
     }
 }
 ```
@@ -338,18 +365,18 @@ fn inspect(event: &Event<'_>) {
 Use `matches!(style, ScalarStyle::Plain { .. })` in place of
 `style == ScalarStyle::Plain`. This matches both written and omitted plain scalars.
 Optional predicates such as `style.is_plain()` provide the same category check.
-The unit-only enums `ScalarKind`, `Chomping`, `StructureStyle`, and `Placement` retain
-their existing comparison traits; they also support matching. For example,
+The unit-only enums `ScalarKind`, `StructureStyle`, `Placement`, and the feature-gated
+`Chomping` retain their comparison traits; they also support matching. For example,
 `matches!(chomping, Chomping::Keep)` is equivalent to `chomping == Chomping::Keep`.
 Use `style.kind()` when an equality-comparable or hashable notation category is needed.
 
-`ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
+With `extended_details`, `ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
 written content (`key: ~`). An explicit tag or anchor does not make omitted content written.
 Quoted and block styles describe written scalars even when their decoded value is empty.
 Decoded values retain their existing behavior. Document-end events expose `explicit`,
 which is true only for a written `...` marker.
 
-Literal and folded styles carry `BlockScalarSyntax`: chomping, an optional explicit
+With that feature, literal and folded styles carry `Option<BlockScalarSyntax>`: chomping, an optional explicit
 indentation digit, their order (`digit_first`), and effective content indentation.
 The `chomping_offset()` and `indentation_offset()` methods compute indicator positions
 from these values; the order flag has no effect when either indicator is absent.
@@ -367,8 +394,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (event, span) = result?;
         if let Some((_, style)) = event.scalar() {
             match style {
-                ScalarStyle::Literal { syntax, .. }
-                | ScalarStyle::Folded { syntax, .. } => {
+                ScalarStyle::Literal { syntax: Some(syntax), .. }
+                | ScalarStyle::Folded { syntax: Some(syntax), .. } => {
                     let range = syntax.header_byte_range(&span)
                         .expect("string input provides byte offsets");
                     assert_eq!(&source[range], ">2-");
@@ -637,6 +664,7 @@ Run the tests from a repository checkout with the official YAML suite initialize
 ```sh
 git submodule update --init tests/yaml-test-suite
 cargo test --features test-equality
+cargo test --features test-equality,extended_details
 cargo test --features test-equality --test yaml-test-suite -- ::strict
 ```
 
@@ -656,6 +684,7 @@ unavailable without the feature, then checks the opt-in comparisons:
 ```sh
 cargo test --manifest-path tests/api-contract/Cargo.toml --locked
 cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
+cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test-equality
 ```
 
 Strict mode runs every active upstream case without case-specific overrides. The

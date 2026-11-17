@@ -1,7 +1,9 @@
 //! Scalar notation and compact block-header source metadata.
 
+#[cfg(feature = "extended_details")]
 use core::ops::Range;
 
+#[cfg(feature = "extended_details")]
 use crate::Span;
 
 /// How a block scalar handles its final line break and trailing empty lines.
@@ -18,6 +20,8 @@ pub enum Chomping {
 }
 
 /// Source syntax attached to a literal or folded block scalar.
+///
+/// Available only with `extended_details`.
 ///
 /// Coordinates are relative to the **start of the accompanying scalar span**. Keep that span
 /// together with this value: rebasing or replacing its start invalidates these distances.
@@ -45,6 +49,7 @@ let _ = syntax == BlockScalarSyntax::default();
 ```
 "#
 )]
+#[cfg(feature = "extended_details")]
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]
 pub struct BlockScalarSyntax {
@@ -71,6 +76,7 @@ pub struct BlockScalarSyntax {
     pub content_indent: usize,
 }
 
+#[cfg(feature = "extended_details")]
 impl BlockScalarSyntax {
     /// Construct synthetic syntax whose header begins at the accompanying span's start.
     ///
@@ -234,14 +240,14 @@ impl BlockScalarSyntax {
     }
 }
 
-#[cfg(feature = "test-equality")]
+#[cfg(all(feature = "extended_details", feature = "test-equality"))]
 impl PartialEq for BlockScalarSyntax {
     fn eq(&self, other: &Self) -> bool {
         self.identity() == other.identity()
     }
 }
 
-#[cfg(feature = "test-equality")]
+#[cfg(all(feature = "extended_details", feature = "test-equality"))]
 impl Eq for BlockScalarSyntax {}
 
 /// A scalar's notation category, independent of source positions and header metadata.
@@ -275,15 +281,15 @@ pub enum ScalarKind {
 ///
 /// Constructors create styles for synthetic events and alternative parser implementations.
 /// They are independent of classification: use patterns to inspect the resulting values.
+/// Their signatures are the same with and without `extended_details`. The feature adds
+/// optional syntax fields and `with_*` methods; synthetic block styles start without known
+/// source syntax. This keeps construction independent of future metadata additions.
 ///
 /// ```
 /// use granit_parser::{Parser, ScalarStyle};
 /// let (event, _) = Parser::new_from_str("value").nth(2).unwrap().unwrap();
 /// let (_, style) = event.scalar().unwrap();
 /// assert!(matches!(style, ScalarStyle::Plain { .. }));
-/// if let ScalarStyle::Plain { implicit, .. } = style {
-///     assert!(!implicit);
-/// }
 /// assert!(!matches!(style, ScalarStyle::SingleQuoted { .. }));
 /// ```
 ///
@@ -308,18 +314,18 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
 /// require_hash::<ScalarStyle>();
 /// ```
 ///
-/// Non-exhaustive variants cannot be constructed with a struct literal outside this crate:
+/// Non-exhaustive variants cannot be constructed directly outside this crate:
 ///
 /// ```compile_fail,E0639
-/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
-/// let style = ScalarStyle::Literal { syntax: BlockScalarSyntax::default() };
+/// use granit_parser::ScalarStyle;
+/// let style = ScalarStyle::SingleQuoted;
 /// ```
 ///
-/// Use a constructor to create synthetic style metadata:
+/// Use a constructor to create a synthetic style:
 ///
 /// ```
-/// use granit_parser::{BlockScalarSyntax, ScalarStyle};
-/// let style = ScalarStyle::literal(BlockScalarSyntax::default());
+/// use granit_parser::ScalarStyle;
+/// let style = ScalarStyle::literal();
 /// assert!(matches!(style, ScalarStyle::Literal { .. }));
 /// ```
 ///
@@ -328,7 +334,7 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
 /// ```compile_fail,E0638
 /// use granit_parser::ScalarStyle;
 /// fn inspect(style: ScalarStyle) {
-///     if let ScalarStyle::Literal { syntax } = style {}
+///     if let ScalarStyle::Literal {} = style {}
 /// }
 /// ```
 #[derive(Clone, Copy, Debug)]
@@ -342,6 +348,8 @@ pub enum ScalarStyle {
         ///
         /// Explicit tags and anchors can decorate an omitted node. Written empty quoted or
         /// block scalars have their own styles and are never implicit plain scalars.
+        /// Available only with `extended_details`.
+        #[cfg(feature = "extended_details")]
         implicit: bool,
     },
     /// A single-quoted scalar.
@@ -353,14 +361,22 @@ pub enum ScalarStyle {
     /// A literal block, with no escape processing or line folding.
     #[non_exhaustive]
     Literal {
-        /// Header syntax relative to the accompanying scalar span.
-        syntax: BlockScalarSyntax,
+        /// Header syntax relative to the accompanying scalar span, when known.
+        ///
+        /// Parsed block styles contain `Some`; synthetic styles start with `None`.
+        /// Available only with `extended_details`.
+        #[cfg(feature = "extended_details")]
+        syntax: Option<BlockScalarSyntax>,
     },
     /// A folded block, whose line breaks are subject to YAML line folding.
     #[non_exhaustive]
     Folded {
-        /// Header syntax relative to the accompanying scalar span.
-        syntax: BlockScalarSyntax,
+        /// Header syntax relative to the accompanying scalar span, when known.
+        ///
+        /// Parsed block styles contain `Some`; synthetic styles start with `None`.
+        /// Available only with `extended_details`.
+        #[cfg(feature = "extended_details")]
+        syntax: Option<BlockScalarSyntax>,
     },
 }
 
@@ -368,13 +384,32 @@ impl ScalarStyle {
     /// Return the style of explicitly written plain scalar text.
     #[must_use]
     pub const fn plain() -> Self {
-        Self::Plain { implicit: false }
+        Self::Plain {
+            #[cfg(feature = "extended_details")]
+            implicit: false,
+        }
     }
 
     /// Return the style of an omitted node synthesized by a parser.
+    ///
+    /// Available only with `extended_details`.
+    #[cfg(feature = "extended_details")]
     #[must_use]
     pub const fn implicit_plain() -> Self {
-        Self::Plain { implicit: true }
+        Self::plain().with_implicit(true)
+    }
+
+    /// Set whether a plain scalar represents an omitted node.
+    ///
+    /// Other styles are returned unchanged because this detail applies only to plain scalars.
+    /// Available only with `extended_details`.
+    #[cfg(feature = "extended_details")]
+    #[must_use]
+    pub const fn with_implicit(self, implicit: bool) -> Self {
+        match self {
+            Self::Plain { .. } => Self::Plain { implicit },
+            other => other,
+        }
     }
 
     /// Return single-quoted notation.
@@ -389,16 +424,48 @@ impl ScalarStyle {
         Self::DoubleQuoted
     }
 
-    /// Return literal block style carrying `syntax`.
+    /// Return literal block style without known source-header syntax.
     #[must_use]
-    pub const fn literal(syntax: BlockScalarSyntax) -> Self {
-        Self::Literal { syntax }
+    pub const fn literal() -> Self {
+        Self::Literal {
+            #[cfg(feature = "extended_details")]
+            syntax: None,
+        }
     }
 
-    /// Return folded block style carrying `syntax`.
+    /// Return folded block style without known source-header syntax.
     #[must_use]
-    pub const fn folded(syntax: BlockScalarSyntax) -> Self {
-        Self::Folded { syntax }
+    pub const fn folded() -> Self {
+        Self::Folded {
+            #[cfg(feature = "extended_details")]
+            syntax: None,
+        }
+    }
+
+    /// Attach known source-header `syntax` to a literal or folded style.
+    ///
+    /// Other styles are returned unchanged because block-header syntax does not apply to them.
+    /// Available only with `extended_details`.
+    ///
+    /// ```
+    /// use granit_parser::{BlockScalarSyntax, ScalarStyle};
+    /// let style = ScalarStyle::literal();
+    /// assert!(style.block_syntax().is_none());
+    /// let style = style.with_block_syntax(BlockScalarSyntax::default());
+    /// assert!(style.block_syntax().is_some());
+    /// ```
+    #[cfg(feature = "extended_details")]
+    #[must_use]
+    pub const fn with_block_syntax(self, syntax: BlockScalarSyntax) -> Self {
+        match self {
+            Self::Literal { .. } => Self::Literal {
+                syntax: Some(syntax),
+            },
+            Self::Folded { .. } => Self::Folded {
+                syntax: Some(syntax),
+            },
+            other => other,
+        }
     }
 
     /// Return the notation category, ignoring source positions and all other metadata.
@@ -445,12 +512,83 @@ impl ScalarStyle {
         matches!(self, Self::Folded { .. })
     }
 
-    /// Return block-header syntax for literal and folded scalars, or `None` otherwise.
+    /// Return known block-header syntax for literal and folded scalars.
+    ///
+    /// Returns `None` for other styles and synthetic block styles with no attached syntax.
+    /// Available only with `extended_details`.
+    #[cfg(feature = "extended_details")]
     #[must_use]
     pub const fn block_syntax(&self) -> Option<&BlockScalarSyntax> {
         match self {
-            Self::Literal { syntax } | Self::Folded { syntax } => Some(syntax),
+            Self::Literal { syntax } | Self::Folded { syntax } => syntax.as_ref(),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ScalarKind, ScalarStyle};
+
+    #[test]
+    fn basic_constructors_keep_the_same_signature_with_either_feature_set() {
+        let constructors: [(fn() -> ScalarStyle, ScalarKind); 5] = [
+            (ScalarStyle::plain, ScalarKind::Plain),
+            (ScalarStyle::single_quoted, ScalarKind::SingleQuoted),
+            (ScalarStyle::double_quoted, ScalarKind::DoubleQuoted),
+            (ScalarStyle::literal, ScalarKind::Literal),
+            (ScalarStyle::folded, ScalarKind::Folded),
+        ];
+        for (construct, kind) in constructors {
+            assert_eq!(construct().kind(), kind);
+        }
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn synthetic_block_styles_have_unknown_source_syntax() {
+        assert!(matches!(
+            ScalarStyle::literal(),
+            ScalarStyle::Literal { syntax: None }
+        ));
+        assert!(matches!(
+            ScalarStyle::folded(),
+            ScalarStyle::Folded { syntax: None }
+        ));
+        assert!(ScalarStyle::literal().block_syntax().is_none());
+        assert!(ScalarStyle::folded().block_syntax().is_none());
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn detail_builders_apply_only_to_relevant_styles() {
+        use super::{BlockScalarSyntax, Chomping};
+
+        let syntax = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
+        for style in [ScalarStyle::literal(), ScalarStyle::folded()] {
+            let kind = style.kind();
+            let detailed = style.with_block_syntax(syntax).with_implicit(true);
+            assert_eq!(detailed.kind(), kind);
+            let actual = detailed.block_syntax().unwrap();
+            assert_eq!(actual.chomping, Chomping::Keep);
+            assert_eq!(actual.indentation_indicator, Some(2));
+            assert_eq!(actual.content_indent, 4);
+        }
+        assert!(matches!(
+            ScalarStyle::plain()
+                .with_implicit(true)
+                .with_block_syntax(syntax),
+            ScalarStyle::Plain { implicit: true }
+        ));
+        assert!(matches!(
+            ScalarStyle::implicit_plain().with_implicit(false),
+            ScalarStyle::Plain { implicit: false }
+        ));
+        assert!(matches!(
+            ScalarStyle::single_quoted()
+                .with_implicit(true)
+                .with_block_syntax(syntax),
+            ScalarStyle::SingleQuoted
+        ));
     }
 }

@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::ScalarStyle;
 use granit_parser::{Event, Parser, ScanError, StructureStyle};
 
@@ -39,10 +40,10 @@ fn explicit_block_mapping_empty_key_is_null() {
             Event::stream_start(),
             Event::document_start(false, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::new_scalar("value".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );

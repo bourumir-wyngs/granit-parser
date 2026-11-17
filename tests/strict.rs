@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ScalarStyle, ScanError,
     Scanner, StrInput, StructureStyle, Tag,
@@ -598,7 +599,7 @@ fn escaped_continuations_preserve_empty_lines_node_properties_and_aliases() {
         Event::alias(1),
         Event::mapping_end(),
         Event::mapping_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     for newline in ["\n", "\r\n"] {

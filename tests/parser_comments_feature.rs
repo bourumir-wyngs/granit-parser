@@ -1,5 +1,6 @@
 #![cfg(not(feature = "comments"))]
 
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, FallibleBufferedInput, Marker, Parser, ParserStack,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
@@ -170,7 +171,7 @@ fn excluded_comments_keep_hashes_inside_scalars_and_nested_sources() {
             Event::stream_start(),
             Event::document_start(false, None),
             Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );

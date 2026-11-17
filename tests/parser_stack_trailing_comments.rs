@@ -122,7 +122,7 @@ fn included_trailing_comments_are_emitted_before_parent_resumes() {
         Event::stream_start(),
         Event::document_start(false, None),
         Event::new_scalar("parent".into(), ScalarStyle::plain(), 0, None),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
 

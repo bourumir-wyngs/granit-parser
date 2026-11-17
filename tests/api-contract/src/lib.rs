@@ -28,10 +28,6 @@ use granit_parser::Token;
 fn equal(left: Token<'static>, right: Token<'static>) -> bool { left == right }
 ```
 
-```compile_fail,E0369
-use granit_parser::BlockScalarSyntax;
-fn equal(left: BlockScalarSyntax, right: BlockScalarSyntax) -> bool { left == right }
-```
 
 "
 )]
@@ -62,6 +58,71 @@ fn require_trait<T: core::hash::Hash>() {}
 require_trait::<Token<'static>>();
 ```
 
+
+```compile_fail,E0277
+use granit_parser::ScalarStyle;
+fn require_trait<T: Ord>() {}
+require_trait::<ScalarStyle>();
+```
+
+```compile_fail,E0277
+use granit_parser::Event;
+fn require_trait<T: Ord>() {}
+require_trait::<Event<'static>>();
+```
+
+```compile_fail,E0277
+use granit_parser::TokenType;
+fn require_trait<T: Ord>() {}
+require_trait::<TokenType<'static>>();
+```
+
+```compile_fail,E0277
+use granit_parser::Token;
+fn require_trait<T: Ord>() {}
+require_trait::<Token<'static>>();
+```
+
+
+```compile_fail,E0277
+use granit_parser::ScalarStyle;
+fn require_trait<T: PartialOrd>() {}
+require_trait::<ScalarStyle>();
+```
+
+```compile_fail,E0277
+use granit_parser::Event;
+fn require_trait<T: PartialOrd>() {}
+require_trait::<Event<'static>>();
+```
+
+```compile_fail,E0277
+use granit_parser::TokenType;
+fn require_trait<T: PartialOrd>() {}
+require_trait::<TokenType<'static>>();
+```
+
+```compile_fail,E0277
+use granit_parser::Token;
+fn require_trait<T: PartialOrd>() {}
+require_trait::<Token<'static>>();
+```
+
+
+"]
+pub struct ComparisonContract;
+
+#[cfg(feature = "extended_details")]
+#[cfg_attr(
+    not(feature = "test-equality"),
+    doc = r"
+```compile_fail,E0369
+use granit_parser::BlockScalarSyntax;
+fn equal(left: BlockScalarSyntax, right: BlockScalarSyntax) -> bool { left == right }
+```
+"
+)]
+#[doc = r"
 ```compile_fail,E0277
 use granit_parser::BlockScalarSyntax;
 fn require_trait<T: core::hash::Hash>() {}
@@ -69,57 +130,9 @@ require_trait::<BlockScalarSyntax>();
 ```
 
 ```compile_fail,E0277
-use granit_parser::ScalarStyle;
-fn require_trait<T: Ord>() {}
-require_trait::<ScalarStyle>();
-```
-
-```compile_fail,E0277
-use granit_parser::Event;
-fn require_trait<T: Ord>() {}
-require_trait::<Event<'static>>();
-```
-
-```compile_fail,E0277
-use granit_parser::TokenType;
-fn require_trait<T: Ord>() {}
-require_trait::<TokenType<'static>>();
-```
-
-```compile_fail,E0277
-use granit_parser::Token;
-fn require_trait<T: Ord>() {}
-require_trait::<Token<'static>>();
-```
-
-```compile_fail,E0277
 use granit_parser::BlockScalarSyntax;
 fn require_trait<T: Ord>() {}
 require_trait::<BlockScalarSyntax>();
-```
-
-```compile_fail,E0277
-use granit_parser::ScalarStyle;
-fn require_trait<T: PartialOrd>() {}
-require_trait::<ScalarStyle>();
-```
-
-```compile_fail,E0277
-use granit_parser::Event;
-fn require_trait<T: PartialOrd>() {}
-require_trait::<Event<'static>>();
-```
-
-```compile_fail,E0277
-use granit_parser::TokenType;
-fn require_trait<T: PartialOrd>() {}
-require_trait::<TokenType<'static>>();
-```
-
-```compile_fail,E0277
-use granit_parser::Token;
-fn require_trait<T: PartialOrd>() {}
-require_trait::<Token<'static>>();
 ```
 
 ```compile_fail,E0277
@@ -127,17 +140,74 @@ use granit_parser::BlockScalarSyntax;
 fn require_trait<T: PartialOrd>() {}
 require_trait::<BlockScalarSyntax>();
 ```
-
 "]
-pub struct ComparisonContract;
+pub struct ExtendedComparisonContract;
+
+#[cfg(not(feature = "extended_details"))]
+#[doc = r"
+Metadata types, fields, and builders are absent when extended details are disabled.
+
+```compile_fail,E0432
+use granit_parser::BlockScalarSyntax;
+```
+
+```compile_fail,E0432
+use granit_parser::Chomping;
+```
+
+```compile_fail,E0026
+use granit_parser::ScalarStyle;
+fn inspect(style: ScalarStyle) {
+    if let ScalarStyle::Plain { implicit, .. } = style {}
+}
+```
+
+```compile_fail,E0026
+use granit_parser::ScalarStyle;
+fn inspect(style: ScalarStyle) {
+    if let ScalarStyle::Literal { syntax, .. } = style {}
+}
+```
+
+```compile_fail,E0026
+use granit_parser::ScalarStyle;
+fn inspect(style: ScalarStyle) {
+    if let ScalarStyle::Folded { syntax, .. } = style {}
+}
+```
+
+```compile_fail,E0026
+use granit_parser::Event;
+fn inspect(event: Event<'_>) {
+    if let Event::DocumentEnd { explicit, .. } = event {}
+}
+```
+
+```compile_fail,E0599
+use granit_parser::ScalarStyle;
+let _ = ScalarStyle::plain().with_implicit(true);
+```
+
+```compile_fail,E0599
+use granit_parser::Event;
+let _ = Event::document_end().with_explicit_end(true);
+```
+
+```compile_fail,E0599
+use granit_parser::ScalarStyle;
+let _ = ScalarStyle::literal().block_syntax();
+```
+"]
+pub struct DisabledDetailsContract;
 
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
+    #[cfg(feature = "extended_details")]
+    use granit_parser::{BlockScalarSyntax, Chomping};
     use granit_parser::{
-        BlockScalarSyntax, Chomping, Event, Marker, ReplayParser, ScalarStyle, Span,
-        StructureStyle, Tag, Token, TokenType,
+        Event, Marker, ReplayParser, ScalarStyle, Span, StructureStyle, Tag, Token, TokenType,
     };
 
     #[test]
@@ -148,9 +218,9 @@ mod tests {
             Event::document_start(true, None),
             Event::mapping_start(StructureStyle::Block, 0, None),
             Event::new_scalar("key".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 7, None),
+            Event::new_scalar("~".into(), ScalarStyle::plain(), 7, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            Event::document_end(),
             Event::stream_end(),
         ];
         let mut replay =
@@ -162,7 +232,7 @@ mod tests {
         assert!(matches!(replayed[4].0,
             Event::Scalar {
                 ref value,
-                style: ScalarStyle::Plain { implicit: true, .. },
+                style: ScalarStyle::Plain { .. },
                 anchor_id: 7,
                 ..
             } if value == "~"
@@ -193,13 +263,7 @@ mod tests {
             panic!("scalar constructor returned a different variant");
         };
         assert!(matches!(value, Cow::Borrowed(value) if std::ptr::eq(value, text.as_str())));
-        assert!(matches!(
-            style,
-            ScalarStyle::Plain {
-                implicit: false,
-                ..
-            }
-        ));
+        assert!(matches!(style, ScalarStyle::Plain { .. }));
         assert_eq!(anchor_id, 3);
         assert!(matches!(actual_tag, Cow::Borrowed(value) if std::ptr::eq(value, &tag)));
 
@@ -250,11 +314,16 @@ mod tests {
         let owned = {
             let text = String::from("borrowed value");
             let tag = Tag::new("!", "Example");
-            let mut syntax = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
-            syntax.header_chars_before_span = 9;
+            let style = ScalarStyle::literal();
+            #[cfg(feature = "extended_details")]
+            let style = {
+                let mut syntax = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
+                syntax.header_chars_before_span = 9;
+                style.with_block_syntax(syntax)
+            };
             own_scalar(Event::new_scalar(
                 Cow::Borrowed(&text),
-                ScalarStyle::literal(syntax),
+                style,
                 6,
                 Some(Cow::Borrowed(&tag)),
             ))
@@ -272,13 +341,17 @@ mod tests {
         assert!(matches!(value, Cow::Owned(ref value) if value == "borrowed value"));
         assert_eq!(anchor_id, 6);
         assert!(matches!(tag, Some(Cow::Owned(ref tag)) if tag.original() == "!Example"));
-        let ScalarStyle::Literal { syntax, .. } = style else {
-            panic!("literal style was not retained");
-        };
-        assert_eq!(syntax.chomping, Chomping::Keep);
-        assert_eq!(syntax.indentation_indicator, Some(2));
-        assert_eq!(syntax.content_indent, 4);
-        assert_eq!(syntax.header_chars_before_span, 9);
+        assert!(matches!(style, ScalarStyle::Literal { .. }));
+        #[cfg(feature = "extended_details")]
+        {
+            let syntax = style
+                .block_syntax()
+                .expect("literal syntax was not retained");
+            assert_eq!(syntax.chomping, Chomping::Keep);
+            assert_eq!(syntax.indentation_indicator, Some(2));
+            assert_eq!(syntax.content_indent, 4);
+            assert_eq!(syntax.header_chars_before_span, 9);
+        }
     }
 
     #[test]
@@ -289,8 +362,9 @@ mod tests {
             };
         }
         check!(Event, stream_start => StreamStart, stream_end => StreamEnd,
-            sequence_end => SequenceEnd, mapping_end => MappingEnd);
-        check!(ScalarStyle, single_quoted => SingleQuoted, double_quoted => DoubleQuoted);
+            sequence_end => SequenceEnd, mapping_end => MappingEnd, document_end => DocumentEnd);
+        check!(ScalarStyle, plain => Plain, single_quoted => SingleQuoted,
+            double_quoted => DoubleQuoted, literal => Literal, folded => Folded);
         check!(TokenType,
             stream_start => StreamStart, stream_end => StreamEnd,
             document_start => DocumentStart, document_end => DocumentEnd,
@@ -350,15 +424,19 @@ mod tests {
             .unwrap();
         assert_eq!(string_tokens, streaming_tokens);
 
-        assert_ne!(ScalarStyle::plain(), ScalarStyle::implicit_plain());
         let written = Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None);
-        let omitted = Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None);
-        assert_ne!(written, omitted);
+        #[cfg(feature = "extended_details")]
+        {
+            assert_ne!(ScalarStyle::plain(), ScalarStyle::implicit_plain());
+            let omitted = Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None);
+            assert_ne!(written, omitted);
+        }
 
         require_eq::<ScalarStyle>();
         require_eq::<Event<'static>>();
         require_eq::<TokenType<'static>>();
         require_eq::<Token<'static>>();
+        #[cfg(feature = "extended_details")]
         require_eq::<BlockScalarSyntax>();
         assert_eq!(
             written,
@@ -378,7 +456,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "test-equality")]
+    #[cfg(all(feature = "test-equality", feature = "extended_details"))]
     #[test]
     fn opt_in_syntax_equality_tracks_fields_and_normalizes_optional_coordinates() {
         let syntax = BlockScalarSyntax::new(Chomping::Keep, Some(2), 4).unwrap();
@@ -391,5 +469,74 @@ mod tests {
         let mut order = syntax;
         order.digit_first = true;
         assert_ne!(syntax, order);
+    }
+    #[test]
+    fn basic_constructor_signatures_are_feature_independent() {
+        let plain: fn() -> ScalarStyle = ScalarStyle::plain;
+        let literal: fn() -> ScalarStyle = ScalarStyle::literal;
+        let folded: fn() -> ScalarStyle = ScalarStyle::folded;
+        let end: fn() -> Event<'static> = Event::document_end;
+        assert!(matches!(plain(), ScalarStyle::Plain { .. }));
+        assert!(matches!(literal(), ScalarStyle::Literal { .. }));
+        assert!(matches!(folded(), ScalarStyle::Folded { .. }));
+        assert!(matches!(end(), Event::DocumentEnd { .. }));
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn synthetic_metadata_defaults_are_explicit_and_builders_supply_details() {
+        assert!(matches!(
+            ScalarStyle::plain(),
+            ScalarStyle::Plain {
+                implicit: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            Event::document_end(),
+            Event::DocumentEnd {
+                explicit: false,
+                ..
+            }
+        ));
+        for style in [ScalarStyle::literal(), ScalarStyle::folded()] {
+            assert!(style.block_syntax().is_none());
+            let syntax = BlockScalarSyntax::new(Chomping::Strip, Some(2), 4).unwrap();
+            let detailed = style.with_block_syntax(syntax);
+            let actual = detailed.block_syntax().unwrap();
+            assert_eq!(actual.chomping, Chomping::Strip);
+            assert_eq!(actual.indentation_indicator, Some(2));
+            assert_eq!(actual.content_indent, 4);
+        }
+        assert!(matches!(
+            ScalarStyle::plain().with_implicit(true),
+            ScalarStyle::Plain { implicit: true, .. }
+        ));
+        assert!(matches!(
+            Event::document_end().with_explicit_end(true),
+            Event::DocumentEnd { explicit: true, .. }
+        ));
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn parsed_events_retain_metadata_with_extended_details() {
+        let events = granit_parser::Parser::new_from_str("literal: |-\n  value\nomitted:\n...\n")
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(events.iter().any(|(event, _)| matches!(event,
+            Event::Scalar { style: ScalarStyle::Literal { syntax: Some(syntax), .. }, .. }
+                if matches!(syntax.chomping, Chomping::Strip)
+        )));
+        assert!(events.iter().any(|(event, _)| matches!(
+            event,
+            Event::Scalar {
+                style: ScalarStyle::Plain { implicit: true, .. },
+                ..
+            }
+        )));
+        assert!(events
+            .iter()
+            .any(|(event, _)| matches!(event, Event::DocumentEnd { explicit: true, .. })));
     }
 }

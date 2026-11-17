@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{
     BufferedInput, ErrorKind, Event, Parser, ScalarStyle, ScanError, Scanner, StrInput,
     StructureStyle, TokenType,
@@ -41,7 +42,7 @@ fn colon_without_space_is_part_of_scalar_value() {
             Event::new_scalar("k".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("a:b".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -74,7 +75,7 @@ fn plain_scalar_dash_before_flow_delimiter() {
                     Event::new_scalar(expected_first.into(), ScalarStyle::plain(), 0, None),
                     Event::new_scalar("after".into(), ScalarStyle::plain(), 0, None),
                     Event::sequence_end(),
-                    Event::document_end(false),
+                    support::document_end(false),
                     Event::stream_end(),
                 ],
                 "input: {yaml:?}",

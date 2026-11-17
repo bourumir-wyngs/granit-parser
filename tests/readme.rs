@@ -1,3 +1,5 @@
+#![cfg(feature = "extended_details")]
+
 use granit_parser::{options, Event, Parser, ScalarStyle, ScanError};
 
 const README: &str = include_str!("../README.md");

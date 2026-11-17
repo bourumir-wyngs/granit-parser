@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{Event, Marker, Parser, ScalarStyle, ScanError, Span, StructureStyle};
 
 fn seq(style: StructureStyle) -> Event<'static> {
@@ -112,7 +113,7 @@ fn test_issue1() {
         Event::sequence_end(),
         Event::mapping_end(),
         Event::sequence_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     assert_eq!(run_parser(reference).unwrap(), expected);
@@ -127,7 +128,7 @@ fn test_issue1() {
         Event::sequence_end(),
         Event::mapping_end(),
         Event::sequence_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     assert_eq!(run_parser("[{a: [42]}]").unwrap(), expected_flow);
@@ -146,7 +147,7 @@ fn test_issue1() {
             Event::sequence_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -165,7 +166,7 @@ fn test_issue1() {
         Event::mapping_end(),
         Event::mapping_end(),
         Event::sequence_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     assert_eq!(run_parser("[a: {b: c, d: e}]").unwrap(), expected_mapping);
@@ -189,7 +190,7 @@ fn test_issue1() {
             Event::sequence_end(),
             Event::new_scalar("baz".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -202,11 +203,11 @@ fn test_issue1() {
             Event::document_start(false, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -219,16 +220,16 @@ fn test_issue1() {
             Event::document_start(false, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -252,14 +253,14 @@ fn test_issue1() {
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
             // No `MappingEnd` here.
             Event::sequence_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -281,7 +282,7 @@ fn test_issue1() {
             Event::sequence_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -296,11 +297,11 @@ fn test_flow_sequence_empty_key_with_value() {
             Event::document_start(false, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::new_scalar("value".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -315,13 +316,13 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
             Event::document_start(false, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             seq(StructureStyle::Flow),
             Event::new_scalar("foo".into(), ScalarStyle::plain(), 0, None),
             Event::sequence_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -333,14 +334,14 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
             Event::document_start(false, None),
             seq(StructureStyle::Flow),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             map(StructureStyle::Flow),
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -354,11 +355,11 @@ fn test_flow_sequence_empty_key_state_is_flow_scoped() {
             map(StructureStyle::Flow),
             Event::mapping_end(),
             map(StructureStyle::Flow),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
             Event::new_scalar("foo".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -375,7 +376,7 @@ fn test_flow_mapping_quoted_key_colon_on_next_line() {
             Event::new_scalar("foo".into(), ScalarStyle::double_quoted(), 0, None),
             Event::new_scalar("bar".into(), ScalarStyle::double_quoted(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -398,7 +399,7 @@ fn test_flow_mapping_plain_key_spans_line_break() {
             Event::new_scalar("value".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -418,7 +419,7 @@ fn test_flow_mapping_key_and_colon_on_separate_lines() {
             Event::new_scalar("v".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -435,21 +436,28 @@ fn test_pr12() {
             Event::new_scalar(
                 "a\n".into(),
                 {
-                    let mut syntax = granit_parser::BlockScalarSyntax::new(
-                        granit_parser::Chomping::Clip,
-                        None,
-                        2,
-                    )
-                    .unwrap();
-                    syntax.header_chars_before_span = 4;
-                    syntax.header_bytes_before_span = 4;
-                    ScalarStyle::literal(syntax)
+                    #[cfg(feature = "extended_details")]
+                    {
+                        let mut syntax = granit_parser::BlockScalarSyntax::new(
+                            granit_parser::Chomping::Clip,
+                            None,
+                            2,
+                        )
+                        .unwrap();
+                        syntax.header_chars_before_span = 4;
+                        syntax.header_bytes_before_span = 4;
+                        ScalarStyle::literal().with_block_syntax(syntax)
+                    }
+                    #[cfg(not(feature = "extended_details"))]
+                    {
+                        ScalarStyle::literal()
+                    }
                 },
                 0,
                 None
             ),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -512,7 +520,7 @@ fn test_granit_issue14_space_before_colon_keeps_alias_key_mapping_valid() {
             Event::alias(1),
             Event::new_scalar("bar".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -556,15 +564,22 @@ array:
             Event::new_scalar(
                 "Line 1 Line 2".into(),
                 {
-                    let mut syntax = granit_parser::BlockScalarSyntax::new(
-                        granit_parser::Chomping::Strip,
-                        None,
-                        18,
-                    )
-                    .unwrap();
-                    syntax.header_chars_before_span = 21;
-                    syntax.header_bytes_before_span = 21;
-                    ScalarStyle::folded(syntax)
+                    #[cfg(feature = "extended_details")]
+                    {
+                        let mut syntax = granit_parser::BlockScalarSyntax::new(
+                            granit_parser::Chomping::Strip,
+                            None,
+                            18,
+                        )
+                        .unwrap();
+                        syntax.header_chars_before_span = 21;
+                        syntax.header_bytes_before_span = 21;
+                        ScalarStyle::folded().with_block_syntax(syntax)
+                    }
+                    #[cfg(not(feature = "extended_details"))]
+                    {
+                        ScalarStyle::folded()
+                    }
                 },
                 0,
                 None
@@ -578,7 +593,7 @@ array:
             Event::mapping_end(),
             Event::sequence_end(),
             Event::mapping_end(),
-            Event::document_end(true),
+            support::document_end(true),
             Event::stream_end()
         ]
     );
@@ -598,7 +613,7 @@ fn test_issue22() {
             Event::new_scalar("comment".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("hello ... world".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end()
         ]
     );
@@ -631,7 +646,7 @@ fn test_issue37() {
             (map(StructureStyle::Block),                                                Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(8, 2, 4).with_byte_offset(Some(8)))),
             (Event::new_scalar("hash_block_null_value".into(), ScalarStyle::plain(), 0, None),  Span::new(Marker::new(8, 2, 4).with_byte_offset(Some(8)), Marker::new(29, 2, 25).with_byte_offset(Some(29))).with_indent(Some(4))),
 
-            (Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),                      Span::new(Marker::new(29, 2, 25).with_byte_offset(Some(29)), Marker::new(29, 2, 25).with_byte_offset(Some(29)))),
+            (Event::new_scalar("~".into(), support::implicit_plain(), 0, None),                      Span::new(Marker::new(29, 2, 25).with_byte_offset(Some(29)), Marker::new(29, 2, 25).with_byte_offset(Some(29)))),
 
             (Event::new_scalar("hash_flow".into(), ScalarStyle::plain(), 0, None),              Span::new(Marker::new(35, 3, 4).with_byte_offset(Some(35)), Marker::new(44, 3, 13).with_byte_offset(Some(44))).with_indent(Some(4))),
             (map(StructureStyle::Flow),                                                 Span::new(Marker::new(46, 3, 15).with_byte_offset(Some(46)), Marker::new(47, 3, 16).with_byte_offset(Some(47)))),
@@ -641,7 +656,7 @@ fn test_issue37() {
             (Event::new_scalar("array_block_null_value".into(), ScalarStyle::plain(), 0, None), Span::new(Marker::new(79, 4, 4).with_byte_offset(Some(79)), Marker::new(101, 4, 26).with_byte_offset(Some(101))).with_indent(Some(4))),
             (seq(StructureStyle::Block),                                               Span::new(Marker::new(109, 5, 6).with_byte_offset(Some(109)), Marker::new(109, 5, 6).with_byte_offset(Some(109)))),
 
-            (Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),                      Span::new(Marker::new(110, 5, 7).with_byte_offset(Some(110)), Marker::new(110, 5, 7).with_byte_offset(Some(110)))),
+            (Event::new_scalar("~".into(), support::implicit_plain(), 0, None),                      Span::new(Marker::new(110, 5, 7).with_byte_offset(Some(110)), Marker::new(110, 5, 7).with_byte_offset(Some(110)))),
 
             (Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None),                                 Span::new(Marker::new(119, 6, 8).with_byte_offset(Some(119)), Marker::new(120, 6, 9).with_byte_offset(Some(120)))),
             (Event::new_scalar("null".into(), ScalarStyle::plain(), 0, None),                              Span::new(Marker::new(129, 7, 8).with_byte_offset(Some(129)), Marker::new(133, 7, 12).with_byte_offset(Some(133)))),
@@ -654,14 +669,14 @@ fn test_issue37() {
             (Event::new_scalar("indentless_array_block_null_value".into(), ScalarStyle::plain(), 0, None), Span::new(Marker::new(175, 9, 4).with_byte_offset(Some(175)), Marker::new(208, 9, 37).with_byte_offset(Some(208))).with_indent(Some(4))),
             (seq(StructureStyle::Block),                                                          Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
 
-            (Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),    Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
+            (Event::new_scalar("~".into(), support::implicit_plain(), 0, None),    Span::new(Marker::new(215, 10, 5).with_byte_offset(Some(215)), Marker::new(215, 10, 5).with_byte_offset(Some(215)))),
 
             (Event::new_scalar("~".into(), ScalarStyle::plain(), 0, None),    Span::new(Marker::new(222, 11, 6).with_byte_offset(Some(222)), Marker::new(223, 11, 7).with_byte_offset(Some(223)))),
             (Event::new_scalar("null".into(), ScalarStyle::plain(), 0, None), Span::new(Marker::new(230, 12, 6).with_byte_offset(Some(230)), Marker::new(234, 12, 10).with_byte_offset(Some(234)))),
             // The input ends after four spaces on line 13, without a final line break.
             (Event::sequence_end(),                                        Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
             (Event::mapping_end(),                                         Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
-            (Event::document_end(false),                                        Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
+            (support::document_end(false),                                        Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239)))),
             (Event::stream_end(),                                          Span::new(Marker::new(239, 13, 4).with_byte_offset(Some(239)), Marker::new(239, 13, 4).with_byte_offset(Some(239))))
         ]
     );
@@ -691,7 +706,7 @@ fn test_issue84() {
             ),
             Event::mapping_end(),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -721,7 +736,7 @@ fn test_granit_issue14_anchor_and_alias_names_may_end_with_colon() {
             Event::new_scalar("value".into(), ScalarStyle::plain(), 1, None),
             Event::alias(1),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );

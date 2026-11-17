@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::ScalarStyle;
 use granit_parser::{
     options, BorrowedInput, ErrorKind, Event, EventReceiver, Parser, ScanError, Span,
@@ -32,7 +33,7 @@ fn scalar_document(value: &str, explicit: bool) -> Vec<Event<'_>> {
     vec![
         Event::document_start(explicit, None),
         Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ]
 }
@@ -103,7 +104,7 @@ fn recovers_nested_mapping_after_unclosed_flow_sequence() {
             Event::new_scalar("true".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ],
     );

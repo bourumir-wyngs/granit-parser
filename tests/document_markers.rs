@@ -90,19 +90,19 @@ fn root_block_scalars_stop_at_document_markers() {
                         Event::stream_start(),
                         Event::document_start(false, None),
                         Event::new_scalar(expected.into(), actual_style, 0, None),
-                        Event::document_end(!explicit),
+                        support::document_end(!explicit),
                         Event::document_start(explicit, None),
                         Event::new_scalar(
                             second.into(),
                             if second == "~" {
-                                ScalarStyle::implicit_plain()
+                                support::implicit_plain()
                             } else {
                                 ScalarStyle::plain()
                             },
                             0,
                             None
                         ),
-                        Event::document_end(false),
+                        support::document_end(false),
                         Event::stream_end(),
                     ],
                     "input: {yaml:?}",
@@ -136,12 +136,12 @@ fn root_block_scalars_preserve_folding_and_unicode_positions_before_document_mar
                         Event::stream_start(),
                         Event::document_start(false, None),
                         Event::new_scalar(format!("{body}{tail}").into(), actual_style, 0, None),
-                        Event::document_end(false),
+                        support::document_end(false),
                         Event::document_start(true, None),
                         #[cfg(feature = "comments")]
                         Event::comment(" next document".into(), Placement::Right),
                         Event::new_scalar("second".into(), ScalarStyle::plain(), 0, None),
-                        Event::document_end(false),
+                        support::document_end(false),
                         Event::stream_end(),
                     ]
                     .into_iter()
@@ -196,7 +196,7 @@ fn block_scalars_preserve_content_resembling_document_markers() {
                     Event::stream_start(),
                     Event::document_start(false, None),
                     Event::new_scalar(expected.into(), actual_style, 0, None),
-                    Event::document_end(false),
+                    support::document_end(false),
                     Event::stream_end(),
                 ],
                 "input: {yaml:?}",

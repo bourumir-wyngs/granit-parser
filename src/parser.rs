@@ -164,10 +164,11 @@ pub enum Event<'input> {
     /// The end of a YAML document.
     ///
     /// This event is emitted for both explicit document end markers (`...`) and implicit document
-    /// ends.
+    /// ends. The `extended_details` feature exposes whether the marker was written.
     #[non_exhaustive]
     DocumentEnd {
         /// Whether the source contains an explicit `...` end marker.
+        #[cfg(feature = "extended_details")]
         explicit: bool,
     },
     /// A resolved YAML alias.
@@ -572,10 +573,29 @@ impl<'input> Event<'input> {
         Self::DocumentStart { explicit, version }
     }
 
-    /// Create a document-end event; `explicit` indicates a written `...` marker.
+    /// Create a document-end event with no written end marker.
+    ///
+    /// This constructor takes no parameters in every feature configuration. With
+    /// `extended_details`, use `with_explicit_end` to describe a written `...` marker.
     #[must_use]
-    pub const fn document_end(explicit: bool) -> Self {
-        Self::DocumentEnd { explicit }
+    pub const fn document_end() -> Self {
+        Self::DocumentEnd {
+            #[cfg(feature = "extended_details")]
+            explicit: false,
+        }
+    }
+
+    /// Set whether a document-end event has a written `...` marker.
+    ///
+    /// Returns this event with the supplied flag. Events other than [`Self::DocumentEnd`]
+    /// are returned unchanged.
+    #[cfg(feature = "extended_details")]
+    #[must_use]
+    pub fn with_explicit_end(mut self, explicit: bool) -> Self {
+        if let Self::DocumentEnd { explicit: value } = &mut self {
+            *value = explicit;
+        }
+        self
     }
 
     /// Create a resolved alias referring to `anchor_id`.
@@ -756,7 +776,10 @@ impl<'input> Event<'input> {
         // a null scalar
         Event::Scalar {
             value: "~".into(),
-            style: ScalarStyle::Plain { implicit: true },
+            style: ScalarStyle::Plain {
+                #[cfg(feature = "extended_details")]
+                implicit: true,
+            },
             anchor_id: 0,
             tag: None,
         }
@@ -772,7 +795,10 @@ impl<'input> Event<'input> {
 
         Event::Scalar {
             value,
-            style: ScalarStyle::Plain { implicit: true },
+            style: ScalarStyle::Plain {
+                #[cfg(feature = "extended_details")]
+                implicit: true,
+            },
             anchor_id: anchor,
             tag,
         }
@@ -2448,6 +2474,7 @@ impl<'input, T: BorrowedInput<'input>> Parser<'input, T> {
 
         Ok((
             Event::DocumentEnd {
+                #[cfg(feature = "extended_details")]
                 explicit: explicit_end,
             },
             span,
@@ -3508,6 +3535,29 @@ mod test {
     }
 
     #[test]
+    fn document_end_constructor_is_feature_independent() {
+        let end = Event::document_end();
+        assert!(matches!(end, Event::DocumentEnd { .. }));
+
+        #[cfg(feature = "extended_details")]
+        assert!(matches!(end, Event::DocumentEnd { explicit: false }));
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
+    fn explicit_end_builder_changes_only_document_end_metadata() {
+        let end = Event::document_end().with_explicit_end(true);
+        assert!(matches!(end, Event::DocumentEnd { explicit: true }));
+        assert!(matches!(
+            end.with_explicit_end(false),
+            Event::DocumentEnd { explicit: false }
+        ));
+        let start = Event::document_start(true, None).with_explicit_end(false);
+        assert!(matches!(start, Event::DocumentStart { explicit: true, .. }));
+    }
+
+    #[cfg(feature = "extended_details")]
+    #[test]
     fn document_end_reports_explicit_markers() {
         for (source, expected) in [
             ("value\n", vec![false]),
@@ -3534,6 +3584,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "extended_details")]
     #[test]
     fn omitted_plain_scalars_are_distinct_from_written_nulls() {
         let source = "explicit: ~\nmissing:\nsequence:\n  -\ntagged: !!str\n";
@@ -3835,7 +3886,7 @@ mod test {
     fn attach_tag_span_preserves_node_span() {
         let event = Event::Scalar {
             value: "value".into(),
-            style: ScalarStyle::Plain { implicit: false },
+            style: ScalarStyle::plain(),
             anchor_id: 0,
             tag: None,
         };
@@ -3906,7 +3957,7 @@ mod test {
 
         let unanchored_scalar = Event::Scalar {
             value: "x".into(),
-            style: ScalarStyle::Plain { implicit: false },
+            style: ScalarStyle::plain(),
             anchor_id: 0,
             tag: None,
         };
@@ -4120,18 +4171,12 @@ a5: *x
             parser.next_event().unwrap().unwrap();
         }
 
-        assert_eq!(
-            parser.peek().unwrap().unwrap().0,
-            Event::DocumentEnd { explicit: false }
-        );
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::document_end());
 
         let mut sink = CollectingSink::default();
         parser.load(&mut sink, true).unwrap();
 
-        assert_eq!(
-            sink.events,
-            vec![Event::DocumentEnd { explicit: false }, Event::StreamEnd]
-        );
+        assert_eq!(sink.events, vec![Event::document_end(), Event::StreamEnd]);
         assert!(parser.next_event().is_none());
     }
 
@@ -4157,7 +4202,7 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "root".into(),
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     anchor_id: 0,
                     tag: None
                 },
@@ -4173,13 +4218,13 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "item".into(),
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     anchor_id: 0,
                     tag: None
                 },
                 Event::Scalar {
                     value: "value".into(),
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     anchor_id: 0,
                     tag: None
                 },
@@ -4191,20 +4236,20 @@ a5: *x
                 },
                 Event::Scalar {
                     value: "a".into(),
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     anchor_id: 0,
                     tag: None
                 },
                 Event::Scalar {
                     value: "b".into(),
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     anchor_id: 0,
                     tag: None
                 },
                 Event::SequenceEnd,
                 Event::SequenceEnd,
                 Event::MappingEnd,
-                Event::DocumentEnd { explicit: false },
+                Event::document_end(),
                 Event::StreamEnd,
             ]
         );
@@ -4356,7 +4401,7 @@ a5: *x
         parser.current = Some((
             Event::Scalar {
                 value: "value".into(),
-                style: ScalarStyle::Plain { implicit: false },
+                style: ScalarStyle::plain(),
                 anchor_id: 0,
                 tag: None,
             },
@@ -4402,18 +4447,12 @@ a5: *x
             parser.next_event().unwrap().unwrap();
         }
 
-        assert_eq!(
-            parser.peek().unwrap().unwrap().0,
-            Event::DocumentEnd { explicit: false }
-        );
+        assert_eq!(parser.peek().unwrap().unwrap().0, Event::document_end());
 
         let mut sink = FailingSink { events: Vec::new() };
         parser.try_load(&mut sink, true).unwrap();
 
-        assert_eq!(
-            sink.events,
-            vec![Event::DocumentEnd { explicit: false }, Event::StreamEnd]
-        );
+        assert_eq!(sink.events, vec![Event::document_end(), Event::StreamEnd]);
         assert!(parser.next_event().is_none());
     }
 

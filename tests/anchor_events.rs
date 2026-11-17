@@ -1,3 +1,4 @@
+mod support;
 use std::borrow::Cow;
 
 use granit_parser::{
@@ -628,7 +629,7 @@ fn loading_documents_separately_delivers_each_anchor_once() {
                 Event::document_start(true, None),
                 Event::new_scalar(value.into(), ScalarStyle::plain(), id, None),
                 Event::anchor(id, name.into()),
-                Event::document_end(false),
+                support::document_end(false),
             ];
             if index == 0 {
                 expected.insert(0, Event::stream_start());
@@ -681,7 +682,7 @@ fn loading_after_peeking_anchor_delivers_the_metadata_once() {
                 .collect::<Vec<_>>(),
             [
                 Event::anchor(offset, "a".into()),
-                Event::document_end(false),
+                support::document_end(false),
                 Event::stream_end()
             ]
         );
@@ -803,7 +804,7 @@ fn skipping_a_document_discards_pending_or_peeked_anchor_metadata() {
                     Event::document_start(true, None),
                     Event::new_scalar("second".into(), ScalarStyle::plain(), offset + 1, None),
                     Event::anchor(offset + 1, "kept".into()),
-                    Event::document_end(false),
+                    support::document_end(false),
                     Event::stream_end(),
                 ]
             );

@@ -10,6 +10,7 @@ cargo-fuzz = true
 [features]
 default = ["comments"]
 comments = ["granit-parser/comments"]
+extended_details = ["granit-parser/extended_details"]
 
 [dependencies]
 libfuzzer-sys = "0.4"

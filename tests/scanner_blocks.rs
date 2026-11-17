@@ -11,6 +11,7 @@
 //!   `slice_bytes`) but without zero-copy borrowing (`slice_borrowed` returns `None`), which
 //!   forces the owned-copy fallbacks when finalizing quoted scalars.
 
+mod support;
 use granit_parser::{
     input::{is_breakz, BorrowedInput, Input},
     Event, Parser, ScalarKind, ScalarStyle, ScanError, StructureStyle,
@@ -426,7 +427,7 @@ fn empty_flow_sequence_key_in_existing_block_mapping() {
             Event::sequence_end(),
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -450,7 +451,7 @@ fn sequence_indented_one_column_under_mapping_key() {
             Event::new_scalar("b".into(), ScalarStyle::plain(), 0, None),
             Event::sequence_end(),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );

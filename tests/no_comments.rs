@@ -420,10 +420,10 @@ fn disabled_comments_preserve_non_comment_event_spans() {
 fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
     // YAML 1.2.2 §§6.6, 6.9 and 7.2 permit EOF-terminated comments and empty nodes
     // whose anchor/tag properties remain significant, including an empty explicit key.
-    let null = |anchor| Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), anchor, None);
+    let null = |anchor| Event::new_scalar("~".into(), support::implicit_plain(), anchor, None);
     let local_empty = Event::new_scalar(
         "".into(),
-        ScalarStyle::implicit_plain(),
+        support::implicit_plain(),
         1,
         Some(Cow::Owned(Tag::new("!", "local"))),
     );
@@ -450,7 +450,7 @@ fn empty_node_comment_cases() -> [(&'static str, Vec<Event<'static>>); 5] {
             "!!str # café",
             vec![Event::new_scalar(
                 "".into(),
-                ScalarStyle::implicit_plain(),
+                support::implicit_plain(),
                 0,
                 Some(Cow::Owned(Tag::with_original_handle(
                     "tag:yaml.org,2002:",
@@ -470,7 +470,7 @@ fn comments_at_eof_preserve_empty_nodes_and_properties_across_backends() {
     for (template, body) in empty_node_comment_cases() {
         let mut expected_events = vec![Event::stream_start(), Event::document_start(false, None)];
         expected_events.extend(body);
-        expected_events.extend([Event::document_end(false), Event::stream_end()]);
+        expected_events.extend([support::document_end(false), Event::stream_end()]);
         for line_break in ["\n", "\r", "\r\n"] {
             let yaml = format!("# pré{line_break}{}", template.replace('\n', line_break));
             let eof = Marker::new(

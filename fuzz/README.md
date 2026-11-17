@@ -4,11 +4,15 @@ Run the deterministic checks of the fuzz oracles with the normal test suite:
 
 ```sh
 cargo test --test fuzz_targets
+cargo test --test fuzz_targets --features extended_details
 ```
 
 These tests call the same functions as libFuzzer, including accepted/rejected resource-limit
 boundaries, every scalar chomping variant, and the parser-stack backend and document-tail matrix.
 They require no fuzzing dependencies or nightly compiler.
+The second command also compares the optional source metadata. Standalone fuzz targets
+forward the same opt-in feature; pass `--features extended_details` to `cargo fuzz` to
+exercise it while keeping the default targets free of metadata collection.
 
 For a bounded fuzzing run from the repository root:
 

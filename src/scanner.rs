@@ -28,8 +28,10 @@ use crate::{
     Options,
 };
 
+#[cfg(feature = "extended_details")]
+use crate::scalar_style::BlockScalarSyntax;
+use crate::scalar_style::Chomping;
 pub use crate::scalar_style::ScalarStyle;
-use crate::scalar_style::{BlockScalarSyntax, Chomping};
 
 /// Offset information for a [`Marker`].
 ///
@@ -3611,7 +3613,9 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
     #[allow(clippy::too_many_lines)]
     fn scan_block_scalar(&mut self, literal: bool) -> Result<Token<'input>, ScanError> {
         let start_mark = self.mark;
+        #[cfg(feature = "extended_details")]
         let header_start = start_mark;
+        #[cfg(feature = "extended_details")]
         let mut syntax = BlockScalarSyntax::default();
         let mut chomping = Chomping::Clip;
         let mut increment: u8 = 0;
@@ -3658,7 +3662,10 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_non_blank();
             self.input.lookahead(1);
             if self.input.peek() == '+' || self.input.peek() == '-' {
-                syntax.digit_first = true;
+                #[cfg(feature = "extended_details")]
+                {
+                    syntax.digit_first = true;
+                }
                 if self.input.peek() == '+' {
                     chomping = Chomping::Keep;
                 } else {
@@ -3668,8 +3675,11 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             }
         }
 
-        syntax.chomping = chomping;
-        syntax.indentation_indicator = (increment > 0).then_some(increment);
+        #[cfg(feature = "extended_details")]
+        {
+            syntax.chomping = chomping;
+            syntax.indentation_indicator = (increment > 0).then_some(increment);
+        }
         self.skip_ws_to_eol(SkipTabs::Yes)?;
 
         // Check if we are at the end of the line.
@@ -3715,11 +3725,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // Without a header line break there are no content lines from which to infer
         // indentation. The scanner's cursor is still on the header (possibly after a
         // comment), so its column must not become the reported content indentation.
-        syntax.content_indent = if increment == 0 && self.mark.line() == header_start.line() {
-            (self.indent + 1).max(0) as usize
-        } else {
-            indent
-        };
+        #[cfg(feature = "extended_details")]
+        {
+            syntax.content_indent = if increment == 0 && self.mark.line() == header_start.line() {
+                (self.indent + 1).max(0) as usize
+            } else {
+                indent
+            };
+        }
         self.ensure_current_char_is_printable()?;
 
         // We have an end-of-stream with no content, e.g.:
@@ -3747,10 +3760,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             };
 
             let style = if literal {
-                ScalarStyle::Literal { syntax }
+                ScalarStyle::literal()
             } else {
-                ScalarStyle::Folded { syntax }
+                ScalarStyle::folded()
             };
+            #[cfg(feature = "extended_details")]
+            let style = style.with_block_syntax(syntax);
             return Ok(Token(
                 Span::new(start_mark, self.mark),
                 TokenType::Scalar {
@@ -3779,11 +3794,14 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         }
 
         let start_mark = self.mark;
-        syntax.header_chars_before_span = start_mark.index() - header_start.index();
-        syntax.header_bytes_before_span = start_mark
-            .byte_offset()
-            .zip(header_start.byte_offset())
-            .map_or(0, |(body, header)| body - header);
+        #[cfg(feature = "extended_details")]
+        {
+            syntax.header_chars_before_span = start_mark.index() - header_start.index();
+            syntax.header_bytes_before_span = start_mark
+                .byte_offset()
+                .zip(header_start.byte_offset())
+                .map_or(0, |(body, header)| body - header);
+        }
         while self.mark.col == indent && !self.input.next_is_z() {
             self.ensure_current_char_is_printable()?;
 
@@ -3865,10 +3883,12 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         };
 
         let style = if literal {
-            ScalarStyle::Literal { syntax }
+            ScalarStyle::literal()
         } else {
-            ScalarStyle::Folded { syntax }
+            ScalarStyle::folded()
         };
+        #[cfg(feature = "extended_details")]
+        let style = style.with_block_syntax(syntax);
         Ok(Token(
             span,
             TokenType::Scalar {
@@ -4693,7 +4713,7 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             Ok(Token(
                 Span::new(start_mark, end_mark),
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     value: contents,
                 },
             ))
@@ -5513,7 +5533,7 @@ mod test {
                     Token(
                         _,
                         TokenType::Scalar {
-                            style: ScalarStyle::Plain { implicit: false },
+                            style: ScalarStyle::Plain { .. },
                             value,
                         },
                     ) => Some(value.into_owned()),
@@ -5658,7 +5678,7 @@ mod test {
             .all(|token| !matches!(token.1, TokenType::Comment { comment: _ })));
         assert!(tokens.iter().any(|token| matches!(
             token.1,
-            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, value: ref text } if text == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { .. }, value: ref text } if text == "value"
         )));
     }
 
@@ -5711,9 +5731,7 @@ mod test {
             Token(
                 span,
                 TokenType::Scalar {
-                    style: ScalarStyle::Literal {
-                        syntax: crate::BlockScalarSyntax::default(),
-                    },
+                    style: ScalarStyle::literal(),
                     value: Cow::Borrowed("scalar"),
                 },
             ),
@@ -5825,7 +5843,7 @@ mod test {
         ));
         assert!(matches!(
             scanner.next_token().unwrap().unwrap().1,
-            TokenType::Scalar { style: ScalarStyle::Plain { implicit: false }, ref value } if value == "value"
+            TokenType::Scalar { style: ScalarStyle::Plain { .. }, ref value } if value == "value"
         ));
         #[cfg(feature = "comments")]
         assert!(scanner
@@ -6836,13 +6854,13 @@ mod test {
                 TokenType::BlockMappingStart,
                 TokenType::Key,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     value: "a".into()
                 },
                 TokenType::Value,
                 TokenType::FlowSequenceStart,
                 TokenType::Scalar {
-                    style: ScalarStyle::Plain { implicit: false },
+                    style: ScalarStyle::plain(),
                     value: "foo".into()
                 },
                 TokenType::FlowSequenceEnd,

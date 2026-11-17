@@ -4,7 +4,17 @@
 
 **Source syntax and API migration**
 
-- Expose `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
+- Add `extended_details` (default off) for new block-header metadata, the plain-scalar
+  `implicit` flag, and the document-end `explicit` flag. Without it, the fields and their
+  metadata capture code are absent; decoding, existing spans, and basic styles stay available.
+  `BlockScalarSyntax`, the public `Chomping` type, and detail accessors/builders require it.
+- Keep basic constructor signatures the same with or without the feature. `literal()`,
+  `folded()`, and `document_end()` take no arguments. With details enabled, synthetic block
+  styles default to `syntax: None`, plain styles to `implicit: false`, and document ends to
+  `explicit: false`. Use `with_block_syntax`, `with_implicit`, and `with_explicit_end` to set
+  optional metadata; parsed block scalars contain `Some(syntax)`.
+
+- With `extended_details`, expose optional `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
   `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
   [#42, section 3](https://github.com/bourumir-wyngs/granit-parser/issues/42).
   Retain chomping, the explicit indentation digit, their order, and effective content
@@ -26,13 +36,13 @@
   remain unavailable for these types. Block-header equality ignores optional byte coordinates
   and irrelevant indicator order; exhaustive field destructuring requires an explicit equality
   decision whenever new block-header fields are added.
-- Add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
+- With `extended_details`, add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.
   Replace `style == ScalarStyle::Plain` with `matches!(style, ScalarStyle::Plain { .. })`
   to cover both cases. Tags and anchors do not affect whether scalar content was omitted.
   Add `ScalarKind` and optional style predicates for category checks independent of metadata.
-- Add `Event::DocumentEnd { explicit }` to distinguish a written `...` marker from an
-  implicit document end.
+- With `extended_details`, add `Event::DocumentEnd { explicit }` to distinguish a written
+  `...` marker from an implicit document end.
 
 
 **Support user cases**

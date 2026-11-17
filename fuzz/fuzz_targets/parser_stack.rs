@@ -179,7 +179,7 @@ fn parent_events() -> [Event<'static>; 5] {
         Event::stream_start(),
         Event::document_start(false, None),
         scalar("parent"),
-        Event::document_end(false),
+        Event::document_end(),
         Event::stream_end(),
     ]
 }

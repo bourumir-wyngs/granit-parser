@@ -19,7 +19,9 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy --no-self-update
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy checks
-        run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
+        run: |
+          cargo clippy --all-targets -- -D warnings -D clippy::pedantic
+          cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
       - name: Run format checks
         run: |
           cargo fmt --check
@@ -50,6 +52,10 @@ jobs:
         run: cargo check --lib --no-default-features --target wasm32v1-none
       - name: Check parser comments for no_std target
         run: cargo check --lib --no-default-features --features comments --target wasm32v1-none
+      - name: Check extended details for no_std target
+        run: cargo check --lib --no-default-features --features extended_details --target wasm32v1-none
+      - name: Check all metadata for no_std target
+        run: cargo check --lib --no-default-features --features comments,extended_details --target wasm32v1-none
 
   test:
     name: Test using Rust ${{ matrix.rust }} on ${{ matrix.os }}
@@ -69,12 +75,20 @@ jobs:
         run: cargo build
       - name: Run tests
         run: cargo test -v --features test-equality
+      - name: Run tests with extended details
+        run: cargo test --features extended_details,test-equality
       - name: Run tests without parser comments
         run: cargo test --no-default-features --features std,error_messages,test-equality
+      - name: Run extended tests without parser comments
+        run: cargo test --no-default-features --features std,error_messages,extended_details,test-equality
       - name: Check default consumer API
         run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked
       - name: Check opt-in consumer equality
         run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
+      - name: Check extended consumer API
+        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details
+      - name: Check extended consumer equality
+        run: cargo test --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test-equality
       # cargo test compiles examples but does not execute the assertions in main.
       - name: Run learning examples with default features
         run: |

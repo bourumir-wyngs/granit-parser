@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::{
     ErrorKind, Event, InputIoError, Marker, Parser, ScalarKind, ScalarStyle, ScanError, Span,
     StructureStyle, Tag,
@@ -331,7 +332,7 @@ fn tagged_block_scalars_keep_properties_and_chomping_with_indentation_only_eof()
                             Some(Cow::Owned(Tag::new("!", "custom")))
                         ),
                         Event::sequence_end(),
-                        Event::document_end(false),
+                        support::document_end(false),
                         Event::stream_end(),
                     ],
                     "{source:?}"

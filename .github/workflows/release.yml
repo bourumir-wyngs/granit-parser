@@ -69,8 +69,11 @@ jobs:
       - name: Run tests
         run: cargo test  --offline --features test-equality
 
+      - name: Run tests with extended details
+        run: cargo test --offline --features extended_details,test-equality
+
       - name: Run tests with debug_prints
-        run: cargo test  --offline --features debug_prints,test-equality
+        run: cargo test --offline --features debug_prints,extended_details,test-equality
 
       - name: Run no-default-features library tests
         run: cargo test  --offline --lib --no-default-features --features test-equality
@@ -78,17 +81,32 @@ jobs:
       - name: Run tests without parser comments
         run: cargo test  --offline --no-default-features --features std,error_messages,test-equality
 
+      - name: Run extended tests without parser comments
+        run: cargo test --offline --no-default-features --features std,error_messages,extended_details,test-equality
+
       - name: Check default consumer API
         run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked
 
       - name: Check opt-in consumer equality
         run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked --features test-equality
 
+      - name: Check extended consumer API
+        run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details
+
+      - name: Check extended consumer equality
+        run: cargo test --offline --manifest-path tests/api-contract/Cargo.toml --locked --features extended_details,test-equality
+
       - name: Check no_std target
         run: cargo check  --offline --lib --no-default-features --target wasm32v1-none
 
       - name: Check parser comments on no_std target
         run: cargo check  --offline --lib --no-default-features --features comments --target wasm32v1-none
+
+      - name: Check extended details on no_std target
+        run: cargo check --offline --lib --no-default-features --features extended_details --target wasm32v1-none
+
+      - name: Check all metadata on no_std target
+        run: cargo check --offline --lib --no-default-features --features comments,extended_details --target wasm32v1-none
 
       - name: Check MSRV
         run: cargo +"${MSRV}" check --lib --all-features --locked

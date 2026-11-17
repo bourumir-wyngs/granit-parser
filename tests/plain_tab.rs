@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::ScalarStyle;
 use granit_parser::{ErrorKind, Event, Options, Parser, ScanError, StructureStyle};
 
@@ -98,7 +99,7 @@ fn tabs_separate_mapping_values_in_block_and_flow_contexts() {
                         Event::new_scalar("key".into(), key_style, 0, None),
                         Event::new_scalar(value.into(), ScalarStyle::plain(), 0, None),
                         Event::mapping_end(),
-                        Event::document_end(false),
+                        support::document_end(false),
                         Event::stream_end(),
                     ],
                     "input: {yaml:?}",
@@ -180,7 +181,7 @@ fn explicit_key_tabs_after_comments_require_space_indentation() {
         plain("key"),
         plain("value"),
         Event::mapping_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     let mapping_key_events = [
@@ -193,7 +194,7 @@ fn explicit_key_tabs_after_comments_require_space_indentation() {
         Event::mapping_end(),
         plain("value"),
         Event::mapping_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     for (yaml, expected) in [
@@ -287,7 +288,7 @@ fn explicit_key_properties_survive_tab_separation_and_comment_lines() {
         plain("next"),
         plain("done"),
         Event::mapping_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     for properties in [
@@ -322,7 +323,7 @@ fn explicit_key_tab_state_ends_at_a_line_break_and_respects_parent_dedents() {
         Event::mapping_end(),
         plain("tail"),
         Event::sequence_end(),
-        Event::document_end(false),
+        support::document_end(false),
         Event::stream_end(),
     ];
     for line_break in ["\n", "\r", "\r\n"] {
@@ -375,7 +376,7 @@ fn explicit_key_property_indentation_is_strict_only() {
         if in_sequence {
             expected.push(Event::sequence_end());
         }
-        expected.extend([Event::document_end(false), Event::stream_end()]);
+        expected.extend([support::document_end(false), Event::stream_end()]);
 
         for emit_comments in [false, true] {
             let strict = granit_parser::options! {
@@ -448,7 +449,7 @@ fn tabs_after_flow_explicit_keys_preserve_collection_keys_and_alias_values() {
                 Event::mapping_end(),
                 Event::alias(1),
                 Event::mapping_end(),
-                Event::document_end(false),
+                support::document_end(false),
                 Event::stream_end(),
             ],
             "{yaml:?}"
@@ -540,7 +541,7 @@ fn tabs_after_colons_preserve_tagged_anchors_and_aliases() {
                 plain("copy"),
                 Event::alias(1),
                 Event::mapping_end(),
-                Event::document_end(false),
+                support::document_end(false),
                 Event::stream_end(),
             ],
             "input: {yaml:?}",

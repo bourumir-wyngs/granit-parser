@@ -34,6 +34,9 @@ exclude = [
   "/tools/codspeed"
 ]
 
+[package.metadata.docs.rs]
+features = ["extended_details"]
+
 [features]
 default = ["error_messages", "std", "comments"]
 # Capture and emit comments; without this feature, YAML comments are validated and then ignored
@@ -41,6 +44,8 @@ comments = []
 error_messages = []
 std = []
 debug_prints = ["std"]
+# Retain optional block-header syntax, omitted-node flags, and document-end markers.
+extended_details = []
 # Opt in to full-value equality for regression tests; normal consumers should match variants.
 test-equality = []
 

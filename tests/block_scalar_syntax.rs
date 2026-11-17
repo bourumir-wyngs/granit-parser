@@ -1,3 +1,5 @@
+#![cfg(feature = "extended_details")]
+
 use granit_parser::{
     BlockScalarSyntax, Chomping, ErrorKind, Event, Marker, Options, Parser, ScalarKind,
     ScalarStyle, Scanner, Span, StrInput, TokenType,
@@ -18,8 +20,14 @@ fn block_scalar<'events>(
             Event::Scalar {
                 value,
                 style:
-                    style @ (ScalarStyle::Literal { syntax, .. }
-                    | ScalarStyle::Folded { syntax, .. }),
+                    style @ (ScalarStyle::Literal {
+                        syntax: Some(syntax),
+                        ..
+                    }
+                    | ScalarStyle::Folded {
+                        syntax: Some(syntax),
+                        ..
+                    }),
                 ..
             } => Some((value.as_ref(), *style, *syntax, *span)),
             _ => None,
@@ -269,7 +277,11 @@ fn scanner_and_parser_expose_identical_header_ranges() {
         .iter()
         .find_map(|token| match token.token_type() {
             TokenType::Scalar {
-                style: style @ ScalarStyle::Literal { syntax, .. },
+                style:
+                    style @ ScalarStyle::Literal {
+                        syntax: Some(syntax),
+                        ..
+                    },
                 ..
             } => Some((*style, *syntax, token.span())),
             _ => None,

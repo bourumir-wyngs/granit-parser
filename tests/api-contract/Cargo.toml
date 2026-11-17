@@ -11,6 +11,7 @@ publish = false
 [features]
 default = ["comments"]
 comments = ["granit-parser/comments"]
+extended_details = ["granit-parser/extended_details"]
 test-equality = ["granit-parser/test-equality"]
 
 [dependencies]

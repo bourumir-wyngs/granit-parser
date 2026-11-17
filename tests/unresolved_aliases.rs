@@ -1,3 +1,4 @@
+mod support;
 use granit_parser::ScalarStyle;
 use std::borrow::Cow;
 
@@ -65,7 +66,7 @@ fn unresolved_alias_preserves_name_span_and_following_structure() {
             Event::new_scalar("third".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("hello".into(), ScalarStyle::double_quoted(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );

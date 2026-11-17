@@ -34,3 +34,28 @@ pub fn comment_modes() -> &'static [bool] {
         &[false]
     }
 }
+
+/// Construct the omitted plain style, retaining its metadata when enabled.
+pub fn implicit_plain() -> granit_parser::ScalarStyle {
+    #[cfg(feature = "extended_details")]
+    {
+        granit_parser::ScalarStyle::plain().with_implicit(true)
+    }
+    #[cfg(not(feature = "extended_details"))]
+    {
+        granit_parser::ScalarStyle::plain()
+    }
+}
+
+/// Construct a document end and retain its explicit-marker flag when enabled.
+pub fn document_end(explicit: bool) -> granit_parser::Event<'static> {
+    #[cfg(feature = "extended_details")]
+    {
+        granit_parser::Event::document_end().with_explicit_end(explicit)
+    }
+    #[cfg(not(feature = "extended_details"))]
+    {
+        let _ = explicit;
+        granit_parser::Event::document_end()
+    }
+}

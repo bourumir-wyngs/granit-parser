@@ -142,8 +142,8 @@ fn test_empty_doc() {
         [
             Event::stream_start(),
             Event::document_start(true, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
-            Event::document_end(false),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -160,7 +160,7 @@ fn test_utf() {
             Event::new_scalar("a".into(), ScalarStyle::plain(), 0, None),
             Event::new_scalar("\u{4F60}\u{5273}".into(), ScalarStyle::plain(), 0, None),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -192,7 +192,7 @@ a: b # This is another comment
             #[cfg(feature = "comments")]
             Event::comment("".into(), Placement::Above),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ])
     );
@@ -216,7 +216,7 @@ fn test_quoting() {
             Event::new_scalar("squote".into(), ScalarStyle::single_quoted(), 0, None),
             Event::new_scalar("dquote".into(), ScalarStyle::double_quoted(), 0, None),
             Event::sequence_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -237,13 +237,13 @@ a scalar
             Event::stream_start(),
             Event::document_start(false, None),
             Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::document_start(true, None),
             Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::document_start(true, None),
             Event::new_scalar("a scalar".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -257,8 +257,8 @@ fn test_github_27() {
         [
             Event::stream_start(),
             Event::document_start(false, None),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 1, None),
-            Event::document_end(false),
+            Event::new_scalar("~".into(), support::implicit_plain(), 1, None),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -292,7 +292,7 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
         scalar_events("a: &x\n"),
         vec![
             ("a".to_string(), ScalarStyle::plain(), 0, None),
-            ("~".to_string(), ScalarStyle::implicit_plain(), 1, None),
+            ("~".to_string(), support::implicit_plain(), 1, None),
         ]
     );
     assert_eq!(
@@ -301,7 +301,7 @@ fn test_missing_node_with_anchor_is_null_scalar_but_tag_keeps_empty_content() {
             ("a".to_string(), ScalarStyle::plain(), 0, None),
             (
                 String::new(),
-                ScalarStyle::implicit_plain(),
+                support::implicit_plain(),
                 0,
                 Some("!!str".to_string()),
             ),
@@ -349,7 +349,7 @@ foobar";
             #[cfg(feature = "comments")]
             Event::comment("-------".into(), Placement::Right),
             Event::new_scalar("foobar".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ])
     );
@@ -410,21 +410,28 @@ a: |-
             Event::new_scalar(
                 "a\n    b".into(),
                 {
-                    let mut syntax = granit_parser::BlockScalarSyntax::new(
-                        granit_parser::Chomping::Strip,
-                        None,
-                        18,
-                    )
-                    .unwrap();
-                    syntax.header_chars_before_span = 21;
-                    syntax.header_bytes_before_span = 21;
-                    ScalarStyle::literal(syntax)
+                    #[cfg(feature = "extended_details")]
+                    {
+                        let mut syntax = granit_parser::BlockScalarSyntax::new(
+                            granit_parser::Chomping::Strip,
+                            None,
+                            18,
+                        )
+                        .unwrap();
+                        syntax.header_chars_before_span = 21;
+                        syntax.header_bytes_before_span = 21;
+                        ScalarStyle::literal().with_block_syntax(syntax)
+                    }
+                    #[cfg(not(feature = "extended_details"))]
+                    {
+                        ScalarStyle::literal()
+                    }
                 },
                 0,
                 None
             ),
             Event::mapping_end(),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -439,7 +446,7 @@ fn test_bad_docstart() {
             Event::stream_start(),
             Event::document_start(false, None),
             Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ]
     );
@@ -451,8 +458,8 @@ fn test_bad_docstart() {
             Event::document_start(true, None),
             #[cfg(feature = "comments")]
             Event::comment("comment".into(), Placement::Right),
-            Event::new_scalar("~".into(), ScalarStyle::implicit_plain(), 0, None),
-            Event::document_end(false),
+            Event::new_scalar("~".into(), support::implicit_plain(), 0, None),
+            support::document_end(false),
             Event::stream_end(),
         ])
     );
@@ -465,7 +472,7 @@ fn test_bad_docstart() {
             Event::new_scalar("----".into(), ScalarStyle::plain(), 0, None),
             #[cfg(feature = "comments")]
             Event::comment("comment".into(), Placement::Right),
-            Event::document_end(false),
+            support::document_end(false),
             Event::stream_end(),
         ])
     );
