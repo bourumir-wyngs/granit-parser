@@ -155,11 +155,13 @@ use granit_parser::BlockScalarSyntax;
 use granit_parser::Chomping;
 ```
 
-```compile_fail,E0026
+Omitted-node identity remains available without extended details:
+
+```
 use granit_parser::ScalarStyle;
-fn inspect(style: ScalarStyle) {
-    if let ScalarStyle::Plain { implicit, .. } = style {}
-}
+let style = ScalarStyle::implicit_plain();
+assert!(style.is_omitted());
+assert!(matches!(style, ScalarStyle::Plain { implicit: true, .. }));
 ```
 
 ```compile_fail,E0026
@@ -183,9 +185,9 @@ fn inspect(event: Event<'_>) {
 }
 ```
 
-```compile_fail,E0599
+```
 use granit_parser::ScalarStyle;
-let _ = ScalarStyle::plain().with_implicit(true);
+assert!(ScalarStyle::plain().with_implicit(true).is_omitted());
 ```
 
 ```compile_fail,E0599

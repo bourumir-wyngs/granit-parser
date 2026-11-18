@@ -96,15 +96,16 @@ impl YamlVersion {
 ///
 /// Normal builds provide no whole-event equality. Classify an event by its variant, then inspect
 /// only the fields you need. The opt-in `test_equality` feature enables equality for tests,
-/// comparing the event variant and its core fields. It ignores `extended_details` metadata:
-/// scalar implicitness, block-header syntax, and document-end explicitness. This optional
-/// source information may be unavailable on synthetic events; enabling its capture (including
+/// comparing the event variant and its core fields. It ignores scalar implicitness and
+/// `extended_details` metadata (block-header syntax and document-end explicitness). Source
+/// information may be unavailable on synthetic events; enabling optional capture (including
 /// through another dependency) must not change equality. Compare those fields explicitly
 /// when testing source syntax. Existing document-start explicitness and version are compared.
 ///
 /// Constructors support synthetic events, [`ParserTrait`] implementations, and
-/// [`crate::ReplayParser`] streams. They also let adapters rebuild events while retaining a
-/// decoded value, style, anchor, and tag. Construction does not enable equality in normal builds.
+/// [`crate::ReplayParser`] streams. To retain an existing event beyond its source's lifetime,
+/// use [`Self::into_owned`], which preserves all metadata. [`Self::as_borrowed`] provides a view
+/// without cloning owned payloads. Construction does not enable equality in normal builds.
 ///
 /// ```
 /// use granit_parser::{Event, Parser};
@@ -621,6 +622,159 @@ impl Display for Tag {
 }
 
 impl<'input> Event<'input> {
+    /// Retain this event independently of its source, preserving every field.
+    ///
+    /// Owned strings and tags are moved without cloning. Borrowed payloads are copied into
+    /// owned storage. All source metadata is retained, including optional extended details.
+    ///
+    /// ```
+    /// use granit_parser::{Event, Parser};
+    /// let events: Vec<Event<'static>> = {
+    ///     let input = String::from("message: hello");
+    ///     Parser::new_from_str(&input)
+    ///         .map(|result| result.unwrap().0.into_owned())
+    ///         .collect()
+    /// };
+    /// assert!(events.iter().any(|event| event.scalar().is_some()));
+    /// ```
+    #[must_use]
+    pub fn into_owned(self) -> Event<'static> {
+        // Exhaustive field patterns ensure new metadata receives an ownership policy.
+        match self {
+            Self::StreamStart => Event::StreamStart,
+            Self::StreamEnd => Event::StreamEnd,
+            Self::DocumentStart { explicit, version } => Event::DocumentStart { explicit, version },
+            Self::DocumentEnd {
+                #[cfg(feature = "extended_details")]
+                explicit,
+            } => Event::DocumentEnd {
+                #[cfg(feature = "extended_details")]
+                explicit,
+            },
+            Self::Alias { anchor_id } => Event::Alias { anchor_id },
+            Self::Anchor { anchor_id, name } => Event::Anchor {
+                anchor_id,
+                name: Cow::Owned(name.into_owned()),
+            },
+            Self::UnresolvedAlias { name } => Event::UnresolvedAlias {
+                name: Cow::Owned(name.into_owned()),
+            },
+            #[cfg(feature = "comments")]
+            Self::Comment { value, placement } => Event::Comment {
+                value: Cow::Owned(value.into_owned()),
+                placement,
+            },
+            Self::Scalar {
+                value,
+                style,
+                anchor_id,
+                tag,
+            } => Event::Scalar {
+                value: Cow::Owned(value.into_owned()),
+                style,
+                anchor_id,
+                tag: tag.map(|tag| Cow::Owned(tag.into_owned())),
+            },
+            Self::SequenceStart {
+                style,
+                anchor_id,
+                tag,
+            } => Event::SequenceStart {
+                style,
+                anchor_id,
+                tag: tag.map(|tag| Cow::Owned(tag.into_owned())),
+            },
+            Self::SequenceEnd => Event::SequenceEnd,
+            Self::MappingStart {
+                style,
+                anchor_id,
+                tag,
+            } => Event::MappingStart {
+                style,
+                anchor_id,
+                tag: tag.map(|tag| Cow::Owned(tag.into_owned())),
+            },
+            Self::MappingEnd => Event::MappingEnd,
+        }
+    }
+
+    /// Borrow this event's payloads without allocating, preserving every field.
+    ///
+    /// The returned event borrows from `self`, even when its payloads are owned. Use
+    /// [`Self::into_owned`] on the result if it must outlive this borrow.
+    ///
+    /// ```
+    /// use granit_parser::{Event, ScalarStyle};
+    /// let event = Event::new_scalar(String::from("hello").into(), ScalarStyle::plain(), 0, None);
+    /// let borrowed = event.as_borrowed();
+    /// assert_eq!(borrowed.scalar().unwrap().0, "hello");
+    /// ```
+    #[must_use]
+    pub fn as_borrowed(&self) -> Event<'_> {
+        // Exhaustive field patterns ensure new metadata is included in borrowed views.
+        match self {
+            Self::StreamStart => Event::StreamStart,
+            Self::StreamEnd => Event::StreamEnd,
+            Self::DocumentStart { explicit, version } => Event::DocumentStart {
+                explicit: *explicit,
+                version: *version,
+            },
+            Self::DocumentEnd {
+                #[cfg(feature = "extended_details")]
+                explicit,
+            } => Event::DocumentEnd {
+                #[cfg(feature = "extended_details")]
+                explicit: *explicit,
+            },
+            Self::Alias { anchor_id } => Event::Alias {
+                anchor_id: *anchor_id,
+            },
+            Self::Anchor { anchor_id, name } => Event::Anchor {
+                anchor_id: *anchor_id,
+                name: Cow::Borrowed(name.as_ref()),
+            },
+            Self::UnresolvedAlias { name } => Event::UnresolvedAlias {
+                name: Cow::Borrowed(name.as_ref()),
+            },
+            #[cfg(feature = "comments")]
+            Self::Comment { value, placement } => Event::Comment {
+                value: Cow::Borrowed(value.as_ref()),
+                placement: *placement,
+            },
+            Self::Scalar {
+                value,
+                style,
+                anchor_id,
+                tag,
+            } => Event::Scalar {
+                value: Cow::Borrowed(value.as_ref()),
+                style: *style,
+                anchor_id: *anchor_id,
+                tag: tag.as_deref().map(Cow::Borrowed),
+            },
+            Self::SequenceStart {
+                style,
+                anchor_id,
+                tag,
+            } => Event::SequenceStart {
+                style: *style,
+                anchor_id: *anchor_id,
+                tag: tag.as_deref().map(Cow::Borrowed),
+            },
+            Self::SequenceEnd => Event::SequenceEnd,
+            Self::MappingStart {
+                style,
+                anchor_id,
+                tag,
+            } => Event::MappingStart {
+                style: *style,
+                anchor_id: *anchor_id,
+                tag: tag.as_deref().map(Cow::Borrowed),
+            },
+            Self::MappingEnd => Event::MappingEnd,
+        }
+    }
+
     /// Create a stream-start event.
     #[must_use]
     pub const fn stream_start() -> Self {
@@ -854,10 +1008,7 @@ impl<'input> Event<'input> {
         // a null scalar
         Event::Scalar {
             value: "~".into(),
-            style: ScalarStyle::Plain {
-                #[cfg(feature = "extended_details")]
-                implicit: true,
-            },
+            style: ScalarStyle::implicit_plain(),
             anchor_id: 0,
             tag: None,
         }
@@ -873,10 +1024,7 @@ impl<'input> Event<'input> {
 
         Event::Scalar {
             value,
-            style: ScalarStyle::Plain {
-                #[cfg(feature = "extended_details")]
-                implicit: true,
-            },
+            style: ScalarStyle::implicit_plain(),
             anchor_id: anchor,
             tag,
         }
@@ -3662,7 +3810,6 @@ mod test {
         }
     }
 
-    #[cfg(feature = "extended_details")]
     #[test]
     fn omitted_plain_scalars_are_distinct_from_written_nulls() {
         let source = "explicit: ~\nmissing:\nsequence:\n  -\ntagged: !!str\n";

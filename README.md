@@ -35,7 +35,7 @@ Its primary goals are:
 `granit-parser` 3.0 uses named, non-exhaustive fields on variants carrying data.
 The optional `extended_details` feature exposes additional source syntax metadata; it is off
 by default. Without it, the new metadata fields and their capture code are compiled out,
-while decoded values, existing spans, and basic style categories remain available. See [Migrating to 3.0](#migrating-to-30) below and
+while decoded values, existing spans, basic style categories, and omitted-node identity remain available. See [Migrating to 3.0](#migrating-to-30) below and
 [`CHANGELOG.md`](CHANGELOG.md) for earlier migrations.
 
 See [releases](https://github.com/bourumir-wyngs/granit-parser/releases)
@@ -308,7 +308,10 @@ enums, `Token`, or `BlockScalarSyntax`. Inspect only the fields relevant to your
 `Event::scalar()` remains a read accessor.
 
 Constructors serve a different purpose: creating synthetic values for custom `ParserTrait`
-implementations, event transformations, ownership conversions, and `ReplayParser` streams.
+implementations, event transformations, and `ReplayParser` streams. Use `event.into_owned()`
+when buffering events beyond their source lifetime: it preserves every field, including
+optional metadata. Owned payloads move without cloning; borrowed payloads become owned.
+`event.as_borrowed()` provides a borrowed view without copying payloads.
 Use `Event::new_scalar(value, style, anchor_id, tag)`, `ScalarStyle::plain()`, and the
 corresponding constructors for other variants.
 Unit variants also have constructors, such as `Event::stream_end()`; every variant remains
@@ -316,12 +319,12 @@ non-exhaustive. Construction is supported independently of whether comparison is
 
 Constructor signatures are stable across feature configurations. `ScalarStyle::literal()`,
 `ScalarStyle::folded()`, and `Event::document_end()` take no arguments. When `extended_details`
-is enabled, synthetic block styles have `syntax: None`, plain styles default to
-`implicit: false`, and synthetic document ends default to `explicit: false`. The parser fills
-`Some(syntax)` for parsed block scalars when their details fit in `u32`, and records the two flags. Use `with_block_syntax`,
-`with_implicit`, and `with_explicit_end` to supply those details explicitly. These builders
-are available only with the feature and leave unrelated variants unchanged.
-`ScalarStyle::implicit_plain()` is a feature-gated shorthand for `plain().with_implicit(true)`.
+is enabled, synthetic block styles have `syntax: None` and synthetic document ends default
+to `explicit: false`. The parser fills `Some(syntax)` for parsed block scalars when their details
+fit in `u32`. Use feature-gated `with_block_syntax` and `with_explicit_end` to supply those
+details explicitly. Plain styles default to `implicit: false` in every configuration.
+`ScalarStyle::implicit_plain()` is shorthand for `plain().with_implicit(true)`; both are
+always available. These builders leave unrelated variants unchanged.
 Future optional metadata must receive a documented default and an opt-in setter rather than
 adding required parameters to existing constructors.
 
@@ -381,13 +384,14 @@ The unit-only enums `ScalarKind`, `StructureStyle`, `Placement`, and the feature
 `matches!(chomping, Chomping::Keep)` is equivalent to `chomping == Chomping::Keep`.
 Use `style.kind()` when an equality-comparable or hashable notation category is needed.
 
-With `extended_details`, `ScalarStyle::Plain { implicit, .. }` distinguishes an omitted YAML node (`key:`) from
-written content (`key: ~`). An explicit tag or anchor does not make omitted content written.
-Quoted and block styles describe written scalars even when their decoded value is empty.
-Decoded values retain their existing behavior. Document-end events expose `explicit`,
-which is true only for a written `...` marker.
+`ScalarStyle::is_omitted()` and `ScalarStyle::Plain { implicit, .. }` distinguish an omitted
+YAML node (`key:`) from written content (`key: ~`) in every build. An explicit tag or anchor
+does not make omitted content written. Quoted and block styles describe written scalars
+even when their decoded value is empty. Decoded values retain their existing behavior.
+With `extended_details`, document-end events expose `explicit`, which is true only for a
+written `...` marker.
 
-With that feature, literal and folded styles carry `Option<BlockScalarSyntax>`: chomping, an optional explicit
+With `extended_details`, literal and folded styles carry `Option<BlockScalarSyntax>`: chomping, an optional explicit
 indentation digit, their order (`digit_first`), and effective content indentation.
 The `chomping_offset()` and `indentation_offset()` methods compute indicator positions
 from these values; the order flag has no effect when either indicator is absent.

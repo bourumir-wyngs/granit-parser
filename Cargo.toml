@@ -46,7 +46,7 @@ comments = []
 error_messages = []
 std = []
 debug_prints = ["std"]
-# Retain optional block-header syntax, omitted-node flags, and document-end markers.
+# Retain optional block-header syntax and document-end markers.
 extended_details = []
 # Opt in to core-output equality for tests, ignoring optional extended source details.
 test_equality = []

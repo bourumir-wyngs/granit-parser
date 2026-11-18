@@ -1,5 +1,3 @@
-#[cfg(feature = "extended_details")]
-use granit_parser::ScalarStyle;
 use granit_parser::{Parser, ScalarKind};
 
 #[test]
@@ -21,9 +19,8 @@ fn scalar_predicates_classify_parsed_notation_independently_of_metadata() {
             .find_map(|(event, _)| event.scalar())
             .unwrap();
         assert_eq!(style.kind(), expected_kind, "source: {source:?}");
-        #[cfg(feature = "extended_details")]
         assert_eq!(
-            matches!(style, ScalarStyle::Plain { implicit: true, .. }),
+            style.is_omitted(),
             source == "missing:",
             "source: {source:?}"
         );
@@ -36,5 +33,28 @@ fn scalar_predicates_classify_parsed_notation_independently_of_metadata() {
         ] {
             assert_eq!(applies, kind == expected_kind, "{kind:?}: {source:?}");
         }
+    }
+}
+
+#[test]
+fn omission_is_not_inferred_from_scalar_text_or_notation() {
+    for (source, omitted) in [
+        ("---\n", true),
+        ("missing:", true),
+        ("missing: &missing", true),
+        ("!!str", true),
+        ("~", false),
+        ("null", false),
+        ("''", false),
+        ("\"\"", false),
+        ("|\n", false),
+        (">\n", false),
+    ] {
+        let style = Parser::new_from_str(source)
+            .map(Result::unwrap)
+            .filter_map(|(event, _)| event.scalar().map(|(_, style)| style))
+            .last()
+            .expect("fixture produces a scalar");
+        assert_eq!(style.is_omitted(), omitted, "{source:?}");
     }
 }

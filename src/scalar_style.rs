@@ -304,17 +304,18 @@ pub enum ScalarKind {
 /// make classification depend on all present and future metadata. Match the variant instead,
 /// then inspect the fields relevant to your use case. [`Self::kind`] returns a comparable,
 /// fieldless category when a map key or ordering is needed. The opt-in `test_equality` feature
-/// compares only the notation category for tests. It ignores all `extended_details` fields:
-/// optional source information may be absent on synthetic values, and enabling its capture
-/// through another dependency must not change equality. Compare `implicit` or `syntax`
+/// compares only the notation category for tests. It ignores the `implicit` flag and all
+/// `extended_details` fields: source information may be absent on synthetic values, and enabling
+/// optional capture through another dependency must not change equality. Compare `implicit` or `syntax`
 /// explicitly when testing those details. Metadata defaults are not equality wildcards;
 /// source metadata is always excluded so equality remains transitive.
 ///
 /// Constructors create styles for synthetic events and alternative parser implementations.
 /// They are independent of classification: use patterns to inspect the resulting values.
 /// Their signatures are the same with and without `extended_details`. The feature adds
-/// optional syntax fields and `with_*` methods; synthetic block styles start without known
-/// source syntax. This keeps construction independent of future metadata additions.
+/// optional block syntax fields and builders; synthetic block styles start without known
+/// source syntax. Omitted-node identity and [`Self::is_omitted`] are available in every build.
+/// This keeps construction independent of future metadata additions.
 ///
 /// ```
 /// use granit_parser::{Parser, ScalarStyle};
@@ -378,8 +379,7 @@ pub enum ScalarStyle {
         ///
         /// Explicit tags and anchors can decorate an omitted node. Written empty quoted or
         /// block scalars have their own styles and are never implicit plain scalars.
-        /// Available only with `extended_details`.
-        #[cfg(feature = "extended_details")]
+        /// This distinction is available without `extended_details`.
         implicit: bool,
     },
     /// A single-quoted scalar.
@@ -426,16 +426,10 @@ impl ScalarStyle {
     /// Return the style of explicitly written plain scalar text.
     #[must_use]
     pub const fn plain() -> Self {
-        Self::Plain {
-            #[cfg(feature = "extended_details")]
-            implicit: false,
-        }
+        Self::Plain { implicit: false }
     }
 
     /// Return the style of an omitted node synthesized by a parser.
-    ///
-    /// Available only with `extended_details`.
-    #[cfg(feature = "extended_details")]
     #[must_use]
     pub const fn implicit_plain() -> Self {
         Self::plain().with_implicit(true)
@@ -444,8 +438,6 @@ impl ScalarStyle {
     /// Set whether a plain scalar represents an omitted node.
     ///
     /// Other styles are returned unchanged because this detail applies only to plain scalars.
-    /// Available only with `extended_details`.
-    #[cfg(feature = "extended_details")]
     #[must_use]
     pub const fn with_implicit(self, implicit: bool) -> Self {
         match self {
@@ -528,6 +520,15 @@ impl ScalarStyle {
     #[must_use]
     pub const fn is_plain(&self) -> bool {
         matches!(self, Self::Plain { .. })
+    }
+
+    /// Return whether the parser synthesized an omitted node rather than reading scalar text.
+    ///
+    /// Written null spellings such as `~` and `null`, empty quoted strings, and empty block
+    /// scalars return `false`. An omitted node can still have an explicit tag or anchor.
+    #[must_use]
+    pub const fn is_omitted(&self) -> bool {
+        matches!(self, Self::Plain { implicit: true })
     }
 
     /// Return whether this is single-quoted notation.
@@ -616,6 +617,23 @@ mod tests {
         ];
         for (construct, kind) in constructors {
             assert_eq!(construct().kind(), kind);
+        }
+    }
+
+    #[test]
+    fn omission_builders_only_change_plain_scalars() {
+        assert!(ScalarStyle::implicit_plain().is_omitted());
+        assert!(!ScalarStyle::implicit_plain()
+            .with_implicit(false)
+            .is_omitted());
+        assert!(ScalarStyle::plain().with_implicit(true).is_omitted());
+        for style in [
+            ScalarStyle::single_quoted(),
+            ScalarStyle::double_quoted(),
+            ScalarStyle::literal(),
+            ScalarStyle::folded(),
+        ] {
+            assert!(!style.with_implicit(true).is_omitted());
         }
     }
 

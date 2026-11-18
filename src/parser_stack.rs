@@ -7,6 +7,26 @@ use crate::{
 };
 use alloc::{borrow::Cow, boxed::Box, string::String, vec::Vec};
 
+/// An opaque source key supplied by a caller of [`ParserStack`].
+///
+/// The parser does not interpret this value or assign meaning to equal source names.
+/// Callers can use different keys for separate inclusions of the same named source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct SourceId(pub u64);
+
+/// A value together with the source that produced it.
+///
+/// Sources pushed without an explicit key have `source_id: None`. On an error,
+/// the key still identifies the failing source even if its parser has been popped.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Sourced<T> {
+    /// The caller-supplied source key, if any.
+    pub source_id: Option<SourceId>,
+    /// The event, parse result, or error associated with the source.
+    pub value: T,
+}
+
 /// A lightweight parser that replays a pre-collected event stream.
 pub struct ReplayParser<'input> {
     events: alloc::vec::IntoIter<(Event<'input>, Span)>,
@@ -95,6 +115,8 @@ where
         parser: Parser<'input, StrInput<'input>>,
         /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
+        /// Opaque caller-supplied source identity.
+        source_id: Option<SourceId>,
     },
     /// A parser over an iterator of characters.
     Iter {
@@ -102,6 +124,8 @@ where
         parser: Parser<'static, BufferedInput<I>>,
         /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
+        /// Opaque caller-supplied source identity.
+        source_id: Option<SourceId>,
     },
     /// A parser over a custom input.
     Custom {
@@ -109,6 +133,8 @@ where
         parser: Parser<'input, T>,
         /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
+        /// Opaque caller-supplied source identity.
+        source_id: Option<SourceId>,
     },
     /// A parser over a replayed event stream.
     Replay {
@@ -116,6 +142,8 @@ where
         parser: ReplayParser<'input>,
         /// Human-readable source name returned by [`ParserStack::stack`].
         name: String,
+        /// Opaque caller-supplied source identity.
+        source_id: Option<SourceId>,
     },
 }
 
@@ -124,6 +152,33 @@ where
     I: Iterator<Item = char>,
     T: BorrowedInput<'input>,
 {
+    fn name(&self) -> &str {
+        match self {
+            Self::String { name, .. }
+            | Self::Iter { name, .. }
+            | Self::Custom { name, .. }
+            | Self::Replay { name, .. } => name,
+        }
+    }
+
+    fn source_id(&self) -> Option<SourceId> {
+        match self {
+            Self::String { source_id, .. }
+            | Self::Iter { source_id, .. }
+            | Self::Custom { source_id, .. }
+            | Self::Replay { source_id, .. } => *source_id,
+        }
+    }
+
+    fn set_source_id(&mut self, id: SourceId) {
+        match self {
+            Self::String { source_id, .. }
+            | Self::Iter { source_id, .. }
+            | Self::Custom { source_id, .. }
+            | Self::Replay { source_id, .. } => *source_id = Some(id),
+        }
+    }
+
     fn anchor_offset(&self) -> usize {
         match self {
             AnyParser::String { parser, .. } => parser.anchor_offset(),
@@ -141,6 +196,108 @@ where
             AnyParser::Replay { parser, .. } => parser.set_anchor_offset(offset),
         }
     }
+}
+
+/// Borrowed names of active parser sources, from bottom to top.
+///
+/// Created by [`ParserStack::source_names`] without allocating.
+pub struct SourceNames<'stack, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    parsers: core::slice::Iter<'stack, AnyParser<'input, I, T>>,
+}
+
+impl<'stack, 'input, I, T> Iterator for SourceNames<'stack, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    type Item = &'stack str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.parsers.next().map(AnyParser::name)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.parsers.size_hint()
+    }
+}
+
+impl<'input, I, T> DoubleEndedIterator for SourceNames<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.parsers.next_back().map(AnyParser::name)
+    }
+}
+
+impl<'input, I, T> ExactSizeIterator for SourceNames<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+}
+
+impl<'input, I, T> core::iter::FusedIterator for SourceNames<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+}
+
+/// Caller-supplied keys of active parser sources, from bottom to top.
+///
+/// Created by [`ParserStack::source_ids`] without allocating.
+pub struct SourceIds<'stack, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    parsers: core::slice::Iter<'stack, AnyParser<'input, I, T>>,
+}
+
+impl<'input, I, T> Iterator for SourceIds<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    type Item = Option<SourceId>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.parsers.next().map(AnyParser::source_id)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.parsers.size_hint()
+    }
+}
+
+impl<'input, I, T> DoubleEndedIterator for SourceIds<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.parsers.next_back().map(AnyParser::source_id)
+    }
+}
+
+impl<'input, I, T> ExactSizeIterator for SourceIds<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
+}
+
+impl<'input, I, T> core::iter::FusedIterator for SourceIds<'_, 'input, I, T>
+where
+    I: Iterator<Item = char>,
+    T: BorrowedInput<'input>,
+{
 }
 
 /// A parser implementation that uses a stack for include-style parsing.
@@ -163,10 +320,11 @@ where
 /// combined stream. If relying on adjacency, consume any pending anchor metadata before
 /// calling [`Self::push_include`] or another push method.
 ///
-/// Included [`Span`] values remain local to the included source, just like every other event span
-/// from an included parser. `ParserStack` does not attach file names, source IDs, or other include
-/// provenance to events or spans. Errors do retain the nested source names through
-/// [`ScanError::source_stack`].
+/// Included [`Span`] values remain local to the included source. Use source-aware push methods
+/// such as [`Self::push_str_parser_with_source_id`] and consume [`Self::next_sourced`] to associate
+/// each result with an opaque caller-supplied key. This does not change events or spans, and the
+/// existing iterator continues to return ordinary parse results. Errors also retain the nested
+/// source names through [`ScanError::source_stack`].
 pub struct ParserStack<'input, I = core::iter::Empty<char>, T = StrInput<'input>>
 where
     I: Iterator<Item = char>,
@@ -178,7 +336,11 @@ where
     #[cfg(feature = "comments")]
     pending_document_ends: Vec<(usize, Span)>,
     current: Option<(Event<'input>, Span)>,
+    current_source_id: Option<SourceId>,
     current_error: Option<ScanError>,
+    current_error_source_id: Option<SourceId>,
+    /// Source of the buffered or most recently emitted result, including popped sources.
+    emitted_source_id: Option<SourceId>,
     stream_end_emitted: bool,
     #[allow(clippy::type_complexity)]
     include_resolver: Option<Box<dyn FnMut(&str) -> Result<Cow<'input, str>, ScanError> + 'input>>,
@@ -213,7 +375,10 @@ where
             #[cfg(feature = "comments")]
             pending_document_ends: Vec::new(),
             current: None,
+            current_source_id: None,
             current_error: None,
+            current_error_source_id: None,
+            emitted_source_id: None,
             stream_end_emitted: false,
             include_resolver: None,
         }
@@ -314,6 +479,33 @@ where
         Ok(())
     }
 
+    /// Resolve and push an include with a caller-supplied source key.
+    ///
+    /// Eager resolution or parsing failures carry the supplied key. Successfully pushed content
+    /// carries it on every result returned by [`Self::next_sourced`].
+    ///
+    /// # Errors
+    /// Returns a sourced error under the same conditions as [`Self::push_include`].
+    pub fn push_include_with_source_id(
+        &mut self,
+        include_str: &str,
+        source_id: SourceId,
+    ) -> Result<(), Sourced<ScanError>> {
+        self.push_include(include_str).map_err(|value| Sourced {
+            source_id: Some(source_id),
+            value,
+        })?;
+        self.set_pushed_source_id(source_id);
+        Ok(())
+    }
+
+    fn set_pushed_source_id(&mut self, source_id: SourceId) {
+        // Every caller has just successfully pushed a parser.
+        if let Some(parser) = self.parsers.last_mut() {
+            parser.set_source_id(source_id);
+        }
+    }
+
     fn contextualize_include_error(&self, error: ScanError, include_str: &str) -> ScanError {
         let mut source_stack = self.stack();
         source_stack.push(include_str.into());
@@ -323,6 +515,7 @@ where
     fn prepare_for_push(&mut self) {
         if matches!(self.current.as_ref(), Some((Event::StreamEnd, _))) {
             self.current = None;
+            self.current_source_id = None;
         }
     }
 
@@ -335,7 +528,11 @@ where
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.anchor_offset());
         }
-        self.parsers.push(AnyParser::String { parser, name });
+        self.parsers.push(AnyParser::String {
+            parser,
+            name,
+            source_id: None,
+        });
     }
 
     /// Push an iterator-backed parser onto the stack.
@@ -351,7 +548,11 @@ where
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.anchor_offset());
         }
-        self.parsers.push(AnyParser::Iter { parser, name });
+        self.parsers.push(AnyParser::Iter {
+            parser,
+            name,
+            source_id: None,
+        });
     }
 
     /// Push a custom-input parser onto the stack.
@@ -363,7 +564,11 @@ where
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.anchor_offset());
         }
-        self.parsers.push(AnyParser::Custom { parser, name });
+        self.parsers.push(AnyParser::Custom {
+            parser,
+            name,
+            source_id: None,
+        });
     }
 
     /// Push a replay parser onto the stack.
@@ -377,7 +582,11 @@ where
             parser.set_anchor_offset(parser.anchor_offset().max(inherited));
         }
 
-        self.parsers.push(AnyParser::Replay { parser, name });
+        self.parsers.push(AnyParser::Replay {
+            parser,
+            name,
+            source_id: None,
+        });
     }
 
     /// Push a custom parser and set the first event that should be returned from it.
@@ -394,7 +603,12 @@ where
         if let Some(parent) = self.parsers.last() {
             parser.set_anchor_offset(parent.anchor_offset());
         }
-        self.parsers.push(AnyParser::Custom { parser, name });
+        self.parsers.push(AnyParser::Custom {
+            parser,
+            name,
+            source_id: None,
+        });
+        self.current_source_id = None;
         #[cfg(feature = "comments")]
         {
             self.current =
@@ -410,24 +624,123 @@ where
         }
     }
 
+    /// Push a string parser with a source key returned by [`Self::next_sourced`].
+    pub fn push_str_parser_with_source_id(
+        &mut self,
+        parser: Parser<'input, StrInput<'input>>,
+        name: String,
+        source_id: SourceId,
+    ) {
+        self.push_str_parser(parser, name);
+        self.set_pushed_source_id(source_id);
+    }
+
+    /// Push an iterator parser with a source key returned by [`Self::next_sourced`].
+    pub fn push_iter_parser_with_source_id(
+        &mut self,
+        parser: Parser<'static, BufferedInput<I>>,
+        name: String,
+        source_id: SourceId,
+    ) {
+        self.push_iter_parser(parser, name);
+        self.set_pushed_source_id(source_id);
+    }
+
+    /// Push a custom parser with a source key returned by [`Self::next_sourced`].
+    pub fn push_custom_parser_with_source_id(
+        &mut self,
+        parser: Parser<'input, T>,
+        name: String,
+        source_id: SourceId,
+    ) {
+        self.push_custom_parser(parser, name);
+        self.set_pushed_source_id(source_id);
+    }
+
+    /// Push replayed events with a source key returned by [`Self::next_sourced`].
+    pub fn push_replay_parser_with_source_id(
+        &mut self,
+        parser: ReplayParser<'input>,
+        name: String,
+        source_id: SourceId,
+    ) {
+        self.push_replay_parser(parser, name);
+        self.set_pushed_source_id(source_id);
+    }
+
+    /// Push a custom parser and its already consumed first event with a source key.
+    ///
+    /// Both the supplied event and subsequent parser results retain `source_id`.
+    pub fn push_custom_parser_with_current_and_source_id(
+        &mut self,
+        parser: Parser<'input, T>,
+        name: String,
+        current: (Event<'input>, Span),
+        source_id: SourceId,
+    ) {
+        self.push_custom_parser_with_current(parser, name, current);
+        self.set_pushed_source_id(source_id);
+        self.current_source_id = Some(source_id);
+    }
+
     /// Return the anchor offset that a newly pushed parser should inherit.
     #[must_use]
     pub fn current_anchor_offset(&self) -> usize {
         self.parsers.last().map_or(0, AnyParser::anchor_offset)
     }
 
-    /// Return the names of the parsers currently in the stack, from bottom to top.
+    /// Return the number of active parsers without allocating.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        self.parsers.len()
+    }
+
+    /// Borrow active source names from bottom to top without allocating.
+    #[must_use]
+    pub fn source_names(&self) -> SourceNames<'_, 'input, I, T> {
+        SourceNames {
+            parsers: self.parsers.iter(),
+        }
+    }
+
+    /// Return active source keys from bottom to top without allocating.
+    #[must_use]
+    pub fn source_ids(&self) -> SourceIds<'_, 'input, I, T> {
+        SourceIds {
+            parsers: self.parsers.iter(),
+        }
+    }
+
+    /// Return the key of the currently active top parser, if one was supplied.
+    ///
+    /// This describes the active stack, not the source of a previously emitted event or error.
+    /// Use [`Self::next_sourced`] for that association, which survives source removal.
+    #[must_use]
+    pub fn current_source_id(&self) -> Option<SourceId> {
+        self.parsers.last().and_then(AnyParser::source_id)
+    }
+
+    /// Return owned names of active sources, from bottom to top.
+    ///
+    /// Use [`Self::source_names`] to inspect names without cloning, or [`Self::depth`] when only
+    /// the number of active parsers is needed.
     #[must_use]
     pub fn stack(&self) -> Vec<String> {
-        self.parsers
-            .iter()
-            .map(|p| match p {
-                AnyParser::String { name, .. }
-                | AnyParser::Iter { name, .. }
-                | AnyParser::Custom { name, .. }
-                | AnyParser::Replay { name, .. } => name.clone(),
-            })
-            .collect()
+        self.source_names().map(String::from).collect()
+    }
+
+    /// Consume the next parse result together with its caller-supplied source key.
+    ///
+    /// This shares iteration and lookahead state with [`ParserTrait::peek`] and
+    /// [`Iterator::next`]. A result buffered by `peek` retains its original key even if another
+    /// parser is subsequently pushed. An error retains the failing key after that source is
+    /// popped. Sources pushed through the ordinary methods have no key.
+    pub fn next_sourced(&mut self) -> Option<Sourced<ParseResult<'input>>> {
+        let value = self.next_event()?;
+        Some(Sourced {
+            source_id: self.emitted_source_id,
+            value,
+        })
     }
 
     fn contextualize_error(&self, error: ScanError) -> ScanError {
@@ -468,12 +781,14 @@ where
     fn next_event_impl(&mut self) -> Result<(Event<'input>, Span), ScanError> {
         loop {
             let Some(any_parser) = self.parsers.last_mut() else {
+                self.emitted_source_id = None;
                 return Ok((
                     Event::StreamEnd,
                     Span::empty(crate::scanner::Marker::new(0, 1, 0)),
                 ));
             };
 
+            self.emitted_source_id = any_parser.source_id();
             let res = match any_parser {
                 AnyParser::String { parser, .. } => parser.next_event(),
                 AnyParser::Iter { parser, .. } => parser.next_event(),
@@ -604,10 +919,12 @@ where
             match self.next_event_impl() {
                 Ok(token) => {
                     self.current = Some(token);
+                    self.current_source_id = self.emitted_source_id;
                     Some(Ok(self.current.as_ref().unwrap()))
                 }
                 Err(e) => {
                     self.current_error = Some(e.clone());
+                    self.current_error_source_id = self.emitted_source_id;
                     Some(Err(e))
                 }
             }
@@ -616,11 +933,13 @@ where
 
     fn next_event(&mut self) -> Option<ParseResult<'input>> {
         if let Some(error) = self.current_error.take() {
+            self.emitted_source_id = self.current_error_source_id.take();
             self.stream_end_emitted = true;
             return Some(Err(error));
         }
 
         if let Some(token) = self.current.take() {
+            self.emitted_source_id = self.current_source_id.take();
             if let Event::StreamEnd = token.0 {
                 self.stream_end_emitted = true;
             }

@@ -4,15 +4,23 @@
 
 **Source syntax and API migration**
 
-- Add `extended_details` (default off) for new block-header metadata, the plain-scalar
-  `implicit` flag, and the document-end `explicit` flag. Without it, the fields and their
+- Add `Event::into_owned()` and `as_borrowed()` to preserve all event metadata while changing
+  payload ownership. Generalize buffered streaming inputs to implement `BorrowedInput` for
+  any output lifetime, without forwarding adapters.
+- Add allocation-free stack depth/source queries and optional caller-supplied `SourceId`s.
+  `ParserStack::next_sourced()` retains event and error provenance across parser pops and
+  lookahead. Existing iteration and parser-stack APIs remain available.
+
+- Add `extended_details` (default off) for new block-header metadata and the document-end
+  `explicit` flag. Without it, the fields and their
   metadata capture code are absent; decoding, existing spans, and basic styles stay available.
   `BlockScalarSyntax`, the public `Chomping` type, and detail accessors/builders require it.
 - Keep basic constructor signatures the same with or without the feature. `literal()`,
   `folded()`, and `document_end()` take no arguments. With details enabled, synthetic block
-  styles default to `syntax: None`, plain styles to `implicit: false`, and document ends to
-  `explicit: false`. Use `with_block_syntax`, `with_implicit`, and `with_explicit_end` to set
-  optional metadata; parsed block scalars contain `Some(syntax)` when representable.
+  styles default to `syntax: None` and document ends to `explicit: false`. Use
+  `with_block_syntax` and `with_explicit_end` to set optional metadata; parsed block scalars
+  contain `Some(syntax)` when representable. Plain styles default to `implicit: false` in
+  every build; `implicit_plain()`, `with_implicit()`, and `is_omitted()` are always available.
 
 - With `extended_details`, expose optional `BlockScalarSyntax` on `ScalarStyle::Literal { syntax }` and
   `ScalarStyle::Folded { syntax }`, addressing the block-header metadata proposal in
@@ -41,7 +49,7 @@
   source syntax must compare metadata explicitly. Direct block-header equality ignores optional byte coordinates
   and irrelevant indicator order; exhaustive field destructuring requires an explicit equality
   decision whenever new block-header fields are added.
-- With `extended_details`, add `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
+- Add unconditional `ScalarStyle::Plain { implicit }` to distinguish an omitted node from explicitly
   written plain text, retaining the existing decoded representation of empty nodes.
   Replace `style == ScalarStyle::Plain` with `matches!(style, ScalarStyle::Plain { .. })`
   to cover both cases. Tags and anchors do not affect whether scalar content was omitted.

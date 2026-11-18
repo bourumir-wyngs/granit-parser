@@ -147,9 +147,9 @@
 //! with this feature.
 //!
 //! #### `extended_details` (disabled by default)
-//! Adds block-scalar header syntax, the plain-scalar `implicit` flag, and the document-end
-//! `explicit` flag. Their fields, accessors, builders, and metadata capture are compiled out
-//! without the feature. Decoded values, event spans, and basic style classification are unchanged.
+//! Adds block-scalar header syntax and the document-end `explicit` flag. Their fields,
+//! accessors, builders, and metadata capture are compiled out without the feature. Decoded
+//! values, event spans, style classification, and omitted-scalar identity remain available.
 //! `BlockScalarSyntax` and `Chomping` are public only with this feature.
 //!
 //! Basic constructors have the same signatures in either configuration. Synthetic block styles
@@ -211,7 +211,9 @@ pub use crate::parser::{
     Event, EventReceiver, ParseResult, Parser, ParserTrait, SpannedEventReceiver, StructureStyle,
     Tag, TryEventReceiver, TryLoadError, TrySpannedEventReceiver, YamlVersion,
 };
-pub use crate::parser_stack::{ParserStack, ReplayParser};
+pub use crate::parser_stack::{
+    ParserStack, ReplayParser, SourceId, SourceIds, SourceNames, Sourced,
+};
 pub use crate::scalar_style::ScalarKind;
 #[cfg(feature = "extended_details")]
 pub use crate::scalar_style::{BlockScalarSyntax, Chomping};
@@ -261,8 +263,5 @@ mod comments_disabled_doctests {}
 /// ```
 /// ```compile_fail
 /// let _ = granit_parser::ScalarStyle::literal().block_syntax();
-/// ```
-/// ```compile_fail
-/// if let granit_parser::ScalarStyle::Plain { implicit, .. } = granit_parser::ScalarStyle::plain() {}
 /// ```
 mod extended_details_disabled_doctests {}

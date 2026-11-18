@@ -226,10 +226,11 @@ impl<T: Iterator<Item = char>> Input for BufferedInput<T> {
 }
 
 /// `BufferedInput` does not support zero-copy slicing since it's a streaming input
-/// without stable backing storage.
-impl<T: Iterator<Item = char>> BorrowedInput<'static> for BufferedInput<T> {
+/// without stable backing storage. It can therefore participate in parsers with any
+/// source lifetime without promising borrowed data from its iterator.
+impl<'input, T: Iterator<Item = char>> BorrowedInput<'input> for BufferedInput<T> {
     #[inline]
-    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'static str> {
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
         None
     }
 }
@@ -357,11 +358,12 @@ impl<T: Iterator<Item = Result<char, ErrorKind>>> Input for FallibleBufferedInpu
 }
 
 /// `FallibleBufferedInput` is a streaming input and cannot provide stable borrowed slices.
-impl<T: Iterator<Item = Result<char, ErrorKind>>> BorrowedInput<'static>
+/// Its iterator may borrow data independently of the parser's source lifetime.
+impl<'input, T: Iterator<Item = Result<char, ErrorKind>>> BorrowedInput<'input>
     for FallibleBufferedInput<T>
 {
     #[inline]
-    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'static str> {
+    fn slice_borrowed(&self, _start: usize, _end: usize) -> Option<&'input str> {
         None
     }
 }
