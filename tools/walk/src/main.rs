@@ -71,12 +71,14 @@ fn load_first_document(contents: &str) -> Result<WalkNode> {
         match event {
             Event::StreamStart { .. } | Event::Comment { .. } => {}
             Event::DocumentStart { .. } => return load_document_node(&mut parser, span),
-            Event::StreamEnd { .. } => bail!("No YAML document found"),
+            Event::StreamEnd { .. } => {
+                bail!("No YAML document found");
+            }
             event => return build_node(&event, span, &mut parser),
         }
     }
 
-    bail!("No YAML document found")
+    Err(miette!("No YAML document found"))
 }
 
 fn load_document_node<'input>(
@@ -97,7 +99,7 @@ fn load_document_node<'input>(
         }
     }
 
-    bail!("Document ended before a node was emitted")
+    Err(miette!("Document ended before a node was emitted"))
 }
 
 fn build_node<'input>(
@@ -112,14 +114,16 @@ fn build_node<'input>(
         }),
         Event::SequenceStart { .. } => build_sequence(span, parser),
         Event::MappingStart { .. } => build_mapping(span, parser),
-        Event::Comment { .. } => bail!("Unexpected comment while building node"),
+        Event::Comment { .. } => Err(miette!("Unexpected comment while building node")),
         Event::StreamStart { .. }
         | Event::StreamEnd { .. }
         | Event::DocumentStart { .. }
         | Event::DocumentEnd { .. }
         | Event::SequenceEnd { .. }
-        | Event::MappingEnd { .. } => bail!("Unexpected event while building node: {event:?}"),
-        _ => bail!("Unsupported event while building node: {event:?}"),
+        | Event::MappingEnd { .. } => {
+            Err(miette!("Unexpected event while building node: {event:?}"))
+        }
+        _ => Err(miette!("Unsupported event while building node: {event:?}")),
     }
 }
 
@@ -193,7 +197,7 @@ fn next_event<'input>(
     match parser.next() {
         Some(Ok(event)) => Ok(event),
         Some(Err(err)) => Err(miette!("{err}")),
-        None => bail!("Unexpected end of parser event stream"),
+        None => Err(miette!("Unexpected end of parser event stream")),
     }
 }
 
@@ -219,7 +223,9 @@ fn step_in(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
         WalkData::Sequence(seq) => do_step_in_seq(stack, seq)?,
         WalkData::Mapping(map) => do_step_in_value(stack, map)?,
-        WalkData::Scalar => bail!("Not in a mapping or a sequence"),
+        WalkData::Scalar => {
+            bail!("Not in a mapping or a sequence");
+        }
     }
     Ok(())
 }
@@ -227,14 +233,14 @@ fn step_in(stack: &mut Stack<'_>) -> Result<()> {
 fn step_in_key(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
         WalkData::Mapping(map) => do_step_in_key(stack, map),
-        _ => bail!("Not in a mapping"),
+        _ => Err(miette!("Not in a mapping")),
     }
 }
 
 fn step_in_value(stack: &mut Stack<'_>) -> Result<()> {
     match &stack.last().unwrap().data {
         WalkData::Mapping(map) => do_step_in_value(stack, map),
-        _ => bail!("Not in a mapping"),
+        _ => Err(miette!("Not in a mapping")),
     }
 }
 
@@ -251,20 +257,18 @@ fn next(stack: &mut Stack<'_>) -> Result<()> {
         WalkData::Sequence(seq) => {
             if pos.idx == seq.len() {
                 bail!("Reached end of the sequence");
-            } else {
-                stack.push(&seq[pos.idx]);
             }
+            stack.push(&seq[pos.idx]);
         }
         WalkData::Mapping(map) => {
             if pos.idx == map.len() {
                 bail!("Reached end of the map");
+            }
+            let (key, value) = &map[pos.idx];
+            if pos.kvtype == KVType::Key {
+                stack.push(key);
             } else {
-                let (key, value) = &map[pos.idx];
-                if pos.kvtype == KVType::Key {
-                    stack.push(key);
-                } else {
-                    stack.push(value);
-                }
+                stack.push(value);
             }
         }
         WalkData::Scalar => unreachable!(),
@@ -313,10 +317,9 @@ fn fin(stack: &mut Stack<'_>) -> Result<()> {
 fn do_step_in_seq<'a>(stack: &mut Stack<'a>, seq: &'a YamlSeq) -> Result<()> {
     if seq.is_empty() {
         bail!("Sequence is empty");
-    } else {
-        stack.push(&seq[0]);
-        Ok(())
     }
+    stack.push(&seq[0]);
+    Ok(())
 }
 
 fn do_step_in_key<'a>(stack: &mut Stack<'a>, map: &'a YamlMap) -> Result<()> {

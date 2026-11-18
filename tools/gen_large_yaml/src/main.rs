@@ -256,6 +256,6 @@ impl Generator {
     /// Pops the last indent.
     fn pop_indent(&mut self) {
         self.indents.pop();
-        assert!(!self.indents.is_empty());
+        assert_ne!(self.indents.len(), 0);
     }
 }
