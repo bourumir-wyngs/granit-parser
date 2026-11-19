@@ -3725,6 +3725,13 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             self.skip_block_scalar_indent(indent, &mut trailing_breaks);
         }
 
+        // Only a floor raised from zero ends an unindented root scalar. Indentation
+        // inferred from leading blank lines must still be validated below.
+        let indent_floor_applied = self.options.block_scalar_indent_at_least_one && indent == 0;
+        if indent_floor_applied {
+            indent = 1;
+        }
+
         // Without a header line break there are no content lines from which to infer
         // indentation. The scanner's cursor is still on the header (possibly after a
         // comment), so its column must not become the reported content indentation.
@@ -3788,7 +3795,8 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
             ));
         }
 
-        if self.mark.col < indent && (self.mark.col as isize) > self.indent {
+        if !indent_floor_applied && self.mark.col < indent && (self.mark.col as isize) > self.indent
+        {
             if self.indent < 0 && self.mark.col == 0 {
                 self.input.lookahead(4);
                 if self.input.next_is_document_start()
@@ -4007,9 +4015,6 @@ impl<'input, T: BorrowedInput<'input>> Scanner<'input, T> {
         // We need to set the indent to 0 and not 1. In all other cases, the indent must be at
         // least 1. When in the above example, `self.indent` will be set to -1.
         *indent = max_indent.max((self.indent + 1) as usize);
-        if self.options.block_scalar_indent_at_least_one {
-            *indent = (*indent).max(1);
-        }
     }
 
     fn fetch_flow_scalar(&mut self, single: bool) -> ScanResult {
