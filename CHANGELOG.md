@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in `Options::block_scalar_indent_at_least_one` (default `false`). When set, an
+  auto-detected block scalar gets at least one column of indentation, as in libyaml: a
+  column-0 line after a top-level `|` or `>` ends the scalar and is scanned as the next token.
+
 ## 3.0.0 (breaking changes)
 
 **Source syntax and API migration**

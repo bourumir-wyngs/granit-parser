@@ -56,6 +56,13 @@ pub struct Options {
     /// as libyaml, `PyYAML` and `ruamel.yaml` do. This applies to literal and folded scalars with
     /// clip or keep chomping; strip chomping adds no line feed either way. Defaults to false.
     pub block_scalar_eof_without_line_feed: bool,
+    /// Give an auto-detected block scalar at least one column of indentation, as libyaml does.
+    ///
+    /// By default a top-level block scalar (`|` or `>` with no indentation indicator) may hold
+    /// content at column 0. When `true`, its content must be indented by at least one space, so
+    /// a column-0 line ends the scalar and is scanned as the next token (for example `>\n@`
+    /// then reports [`crate::ErrorKind::UnexpectedCharacter`]). Defaults to false.
+    pub block_scalar_indent_at_least_one: bool,
     /// Emit unresolved alias nodes instead of stopping at an unknown anchor.
     ///
     /// Defaults to `false`. When omitted or explicitly set to `false`, an alias without a
@@ -176,6 +183,7 @@ impl Default for Options {
             disallow_directives: false,
             bom_inside_document_as_content: false,
             block_scalar_eof_without_line_feed: false,
+            block_scalar_indent_at_least_one: false,
             emit_unresolved_aliases: false,
             emit_anchor_events: false,
             emit_comments: cfg!(feature = "comments"),
