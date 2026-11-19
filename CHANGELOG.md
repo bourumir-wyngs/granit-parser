@@ -7,6 +7,8 @@
   column-0 line after a top-level `|` or `>` ends the scalar and is scanned as the next token.
 - Fix `block_scalar_indent_at_least_one` to emit the block scalar before scanning column-0
   content, preserving the following token's diagnostic and existing indentation validation.
+  YAML 1.2.2 (9.1.3, example 9.3) permits column-0 block scalar content. This is for libyaml
+  compatibility.
 
 ## 3.0.0 (breaking changes)
 
