@@ -1,0 +1,6 @@
+version: 2
+
+# Development-only packages, excluded from Socket repository dependency scans.
+projectIgnorePaths:
+  - "/fuzz/"
+  - "/tools/"
