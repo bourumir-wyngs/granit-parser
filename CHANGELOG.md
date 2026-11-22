@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Exclude CI workflows and coverage configuration from published crates, and exclude
+  these paths plus the CI-only API contract test crate from Socket repository scans.
 - Add opt-in `Options::block_scalar_indent_at_least_one` (default `false`). When set, an
   auto-detected block scalar gets at least one column of indentation, as in libyaml: a
   column-0 line after a top-level `|` or `>` ends the scalar and is scanned as the next token.

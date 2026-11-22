@@ -23,6 +23,9 @@ rust-version = "1.81.0"
 version = "3.0.0-rc1"
 
 exclude = [
+  # CI workflows and coverage configuration are only used in the repository.
+  "/.github",
+  "/codecov.yml",
   # Exclude the `yaml-test-suite` from the package. This removes the need to
   # add its license to the package.
   "/tests/yaml-test-suite",
