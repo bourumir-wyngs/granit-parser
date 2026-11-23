@@ -1,7 +1,11 @@
 version: 2
 
-# Development tooling and test fixtures excluded from Socket repository dependency scans.
+# CI configuration, development tooling, and test fixtures excluded from Socket
+# repository dependency scans. Published package contents are controlled by Cargo.toml.
 projectIgnorePaths:
+  - "/.github/"
+  - "/codecov.yml"
+  - "/tests/api-contract/"
   - "/fuzz/"
   - "/tools/"
   - "/tests/yaml-test-suite/"
