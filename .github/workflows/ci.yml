@@ -20,6 +20,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy checks
         run: |
+          # Library-only checks avoid enabling test_equality through dev-dependencies.
+          cargo clippy --lib -- -D warnings -D clippy::pedantic
+          cargo clippy --lib --features extended_details -- -D warnings -D clippy::pedantic
           cargo clippy --all-targets -- -D warnings -D clippy::pedantic
           cargo clippy --all-targets --all-features -- -D warnings -D clippy::pedantic
       - name: Run format checks

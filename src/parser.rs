@@ -118,7 +118,7 @@ impl YamlVersion {
 ///
 #[cfg_attr(
     not(feature = "test_equality"),
-    doc = r#"
+    doc = r"
 Whole-event equality is intentionally unavailable by default:
 
 ```compile_fail,E0369
@@ -127,7 +127,7 @@ fn equal_events(left: Event<'_>, right: Event<'_>) -> bool {
     left == right
 }
 ```
-"#
+"
 )]
 /// Direct struct-literal construction outside this crate is not supported:
 ///

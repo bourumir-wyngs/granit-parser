@@ -471,14 +471,14 @@ impl AsRef<str> for Comment<'_> {
 ///
 #[cfg_attr(
     not(feature = "test_equality"),
-    doc = r#"
+    doc = r"
 ```compile_fail,E0369
 use granit_parser::TokenType;
 fn equal_tokens(left: TokenType<'_>, right: TokenType<'_>) -> bool {
     left == right
 }
 ```
-"#
+"
 )]
 ///
 /// ```

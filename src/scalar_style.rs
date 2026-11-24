@@ -44,7 +44,7 @@ pub enum Chomping {
 /// whether `extended_details` is enabled.
 #[cfg_attr(
     not(feature = "test_equality"),
-    doc = r#"
+    doc = r"
 Comparing synthetic syntax with parsed syntax is intentionally unavailable by default:
 
 ```compile_fail,E0369
@@ -52,7 +52,7 @@ use granit_parser::BlockScalarSyntax;
 let syntax = BlockScalarSyntax::default();
 let _ = syntax == BlockScalarSyntax::default();
 ```
-"#
+"
 )]
 #[cfg(feature = "extended_details")]
 #[derive(Clone, Copy, Debug, Default)]
@@ -327,7 +327,7 @@ pub enum ScalarKind {
 ///
 #[cfg_attr(
     not(feature = "test_equality"),
-    doc = r#"
+    doc = r"
 Whole-style equality is intentionally unavailable by default:
 
 ```compile_fail,E0369
@@ -336,7 +336,7 @@ fn equal_styles(left: ScalarStyle, right: ScalarStyle) -> bool {
     left == right
 }
 ```
-"#
+"
 )]
 /// Styles are not hash keys; use [`ScalarKind`] when only the notation category matters:
 ///
