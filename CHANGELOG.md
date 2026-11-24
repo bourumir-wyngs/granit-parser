@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 rc.2
 
 - Exclude CI workflows and coverage configuration from published crates, and exclude
   these paths plus the CI-only API contract test crate from Socket repository scans.
@@ -12,7 +12,7 @@
   YAML 1.2.2 (9.1.3, example 9.3) permits column-0 block scalar content. This is for libyaml
   compatibility.
 
-## 3.0.0 (breaking changes)
+## 3.0.0 rc.1 (breaking changes)
 
 **Source syntax and API migration**
 
